@@ -1,0 +1,8 @@
+{"type":"session.start","data":{"sessionId":"corrupt0-0000-0000-0000-000000000000","version":1,"producer":"copilot-agent","copilotVersion":"1.0.2","startTime":"2026-03-07T08:00:00.000Z","context":{"cwd":"/Users/testuser"}},"id":"c-start","timestamp":"2026-03-07T08:00:00.000Z","parentId":null}
+{"type":"user.message","data":{"content":"First message.","transformedContent":"First message.","attachments":[],"interactionId":"c-int-1"},"id":"c-user1","timestamp":"2026-03-07T08:01:00.000Z","parentId":"c-start"}
+THIS IS NOT VALID JSON AT ALL {{{
+{"type":"assistant.turn_start","data":{"turnId":"0","interactionId":"c-int-1"},"id":"c-turn1","timestamp":"2026-03-07T08:01:01.000Z","parentId":"c-user1"}
+ANOTHER CORRUPT LINE !!!
+{"type":"assistant.message","data":{"messageId":"c-msg-1","content":"Reply to first.","toolRequests":[],"interactionId":"c-int-1","outputTokens":100},"id":"c-asst1","timestamp":"2026-03-07T08:01:05.000Z","parentId":"c-turn1"}
+{"type":"assistant.turn_end","data":{"turnId":"0"},"id":"c-turn-end1","timestamp":"2026-03-07T08:01:06.000Z","parentId":"c-asst1"}
+{"type":"session.shutdown","data":{"shutdownType":"normal","totalPremiumRequests":2,"totalApiDurationMs":1000,"sessionStartTime":0,"modelMetrics":{"gpt-5-mini":{"requests":{"count":2,"cost":0},"usage":{"inputTokens":500,"outputTokens":100,"cacheReadTokens":0,"cacheWriteTokens":0}}},"currentModel":"gpt-5-mini"},"id":"c-shutdown","timestamp":"2026-03-07T09:00:00.000Z","parentId":"c-asst1","currentModel":"gpt-5-mini"}
