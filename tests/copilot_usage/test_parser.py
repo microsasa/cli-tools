@@ -1,0 +1,1924 @@
+"""Tests for copilot_usage.parser — session discovery, parsing, and summary."""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from copilot_usage.models import (
+    AssistantMessageData,
+    CodeChanges,
+    EventType,
+    GenericEventData,
+    ModelMetrics,
+    RequestMetrics,
+    SessionContext,
+    SessionEvent,
+    SessionShutdownData,
+    SessionStartData,
+    SessionSummary,
+    TokenUsage,
+    ToolExecutionData,
+    ToolTelemetry,
+    UserMessageData,
+)
+from copilot_usage.parser import (
+    build_session_summary,
+    discover_sessions,
+    get_all_sessions,
+    parse_events,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures — synthetic events.jsonl content
+# ---------------------------------------------------------------------------
+
+_START_EVENT = json.dumps(
+    {
+        "type": "session.start",
+        "data": {
+            "sessionId": "test-session-001",
+            "version": 1,
+            "producer": "copilot-agent",
+            "copilotVersion": "1.0.0",
+            "startTime": "2026-03-07T10:00:00.000Z",
+            "context": {"cwd": "/home/user/project"},
+        },
+        "id": "ev-start",
+        "timestamp": "2026-03-07T10:00:00.000Z",
+        "parentId": None,
+    }
+)
+
+_USER_MSG = json.dumps(
+    {
+        "type": "user.message",
+        "data": {
+            "content": "hello",
+            "transformedContent": "hello",
+            "attachments": [],
+            "interactionId": "int-1",
+        },
+        "id": "ev-user1",
+        "timestamp": "2026-03-07T10:01:00.000Z",
+        "parentId": "ev-start",
+    }
+)
+
+_ASSISTANT_MSG = json.dumps(
+    {
+        "type": "assistant.message",
+        "data": {
+            "messageId": "msg-1",
+            "content": "hi there",
+            "toolRequests": [],
+            "interactionId": "int-1",
+            "outputTokens": 150,
+        },
+        "id": "ev-asst1",
+        "timestamp": "2026-03-07T10:01:05.000Z",
+        "parentId": "ev-user1",
+    }
+)
+
+_ASSISTANT_MSG_2 = json.dumps(
+    {
+        "type": "assistant.message",
+        "data": {
+            "messageId": "msg-2",
+            "content": "more content",
+            "toolRequests": [],
+            "interactionId": "int-1",
+            "outputTokens": 200,
+        },
+        "id": "ev-asst2",
+        "timestamp": "2026-03-07T10:01:10.000Z",
+        "parentId": "ev-asst1",
+    }
+)
+
+_TOOL_EXEC = json.dumps(
+    {
+        "type": "tool.execution_complete",
+        "data": {
+            "toolCallId": "tc-1",
+            "model": "claude-sonnet-4",
+            "interactionId": "int-1",
+            "success": True,
+        },
+        "id": "ev-tool1",
+        "timestamp": "2026-03-07T10:01:07.000Z",
+        "parentId": "ev-asst1",
+    }
+)
+
+_TURN_START_1 = json.dumps(
+    {
+        "type": "assistant.turn_start",
+        "data": {"turnId": "0", "interactionId": "int-1"},
+        "id": "ev-turn-start-1",
+        "timestamp": "2026-03-07T10:01:01.000Z",
+        "parentId": "ev-user1",
+    }
+)
+
+_TURN_START_2 = json.dumps(
+    {
+        "type": "assistant.turn_start",
+        "data": {"turnId": "1", "interactionId": "int-1"},
+        "id": "ev-turn-start-2",
+        "timestamp": "2026-03-07T10:01:08.000Z",
+        "parentId": "ev-asst1",
+    }
+)
+
+_SHUTDOWN_EVENT = json.dumps(
+    {
+        "type": "session.shutdown",
+        "data": {
+            "shutdownType": "routine",
+            "totalPremiumRequests": 5,
+            "totalApiDurationMs": 12000,
+            "sessionStartTime": 1772895600000,
+            "codeChanges": {
+                "linesAdded": 50,
+                "linesRemoved": 10,
+                "filesModified": ["a.py", "b.py"],
+            },
+            "modelMetrics": {
+                "claude-sonnet-4": {
+                    "requests": {"count": 8, "cost": 5},
+                    "usage": {
+                        "inputTokens": 5000,
+                        "outputTokens": 350,
+                        "cacheReadTokens": 1000,
+                        "cacheWriteTokens": 0,
+                    },
+                }
+            },
+            "currentModel": "claude-sonnet-4",
+        },
+        "id": "ev-shutdown",
+        "timestamp": "2026-03-07T11:00:00.000Z",
+        "parentId": "ev-asst2",
+        "currentModel": "claude-sonnet-4",
+    }
+)
+
+_RESUME_EVENT = json.dumps(
+    {
+        "type": "session.resume",
+        "data": {},
+        "id": "ev-resume",
+        "timestamp": "2026-03-07T12:00:00.000Z",
+        "parentId": "ev-shutdown",
+    }
+)
+
+_POST_RESUME_USER_MSG = json.dumps(
+    {
+        "type": "user.message",
+        "data": {
+            "content": "continue working",
+            "transformedContent": "continue working",
+            "attachments": [],
+            "interactionId": "int-2",
+        },
+        "id": "ev-user2",
+        "timestamp": "2026-03-07T12:01:00.000Z",
+        "parentId": "ev-resume",
+    }
+)
+
+_POST_RESUME_ASSISTANT_MSG = json.dumps(
+    {
+        "type": "assistant.message",
+        "data": {
+            "messageId": "msg-3",
+            "content": "resuming work",
+            "toolRequests": [],
+            "interactionId": "int-2",
+            "outputTokens": 250,
+        },
+        "id": "ev-asst3",
+        "timestamp": "2026-03-07T12:01:05.000Z",
+        "parentId": "ev-user2",
+    }
+)
+
+_POST_RESUME_TURN_START = json.dumps(
+    {
+        "type": "assistant.turn_start",
+        "data": {"turnId": "2", "interactionId": "int-2"},
+        "id": "ev-turn-start-post-resume",
+        "timestamp": "2026-03-07T12:01:01.000Z",
+        "parentId": "ev-user2",
+    }
+)
+
+_SHUTDOWN_EVENT_2 = json.dumps(
+    {
+        "type": "session.shutdown",
+        "data": {
+            "shutdownType": "routine",
+            "totalPremiumRequests": 10,
+            "totalApiDurationMs": 20000,
+            "sessionStartTime": 1772895600000,
+            "codeChanges": {
+                "linesAdded": 80,
+                "linesRemoved": 20,
+                "filesModified": ["a.py", "b.py", "c.py"],
+            },
+            "modelMetrics": {
+                "claude-sonnet-4": {
+                    "requests": {"count": 15, "cost": 10},
+                    "usage": {
+                        "inputTokens": 9000,
+                        "outputTokens": 700,
+                        "cacheReadTokens": 2000,
+                        "cacheWriteTokens": 0,
+                    },
+                }
+            },
+            "currentModel": "claude-sonnet-4",
+        },
+        "id": "ev-shutdown-2",
+        "timestamp": "2026-03-07T13:00:00.000Z",
+        "parentId": "ev-asst3",
+        "currentModel": "claude-sonnet-4",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_events(path: Path, *lines: str) -> Path:
+    """Write event lines to an events.jsonl file and return the path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _completed_events(
+    tmp_path: Path,
+) -> tuple[list[SessionEvent], Path]:
+    p = tmp_path / "s" / "events.jsonl"
+    _write_events(
+        p,
+        _START_EVENT,
+        _USER_MSG,
+        _ASSISTANT_MSG,
+        _ASSISTANT_MSG_2,
+        _SHUTDOWN_EVENT,
+    )
+    return parse_events(p), p.parent
+
+
+def _active_events(
+    tmp_path: Path,
+) -> tuple[list[SessionEvent], Path]:
+    p = tmp_path / "s" / "events.jsonl"
+    _write_events(
+        p,
+        _START_EVENT,
+        _USER_MSG,
+        _ASSISTANT_MSG,
+        _ASSISTANT_MSG_2,
+        _TOOL_EXEC,
+    )
+    return parse_events(p), p.parent
+
+
+# ---------------------------------------------------------------------------
+# discover_sessions
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverSessions:
+    def test_finds_sessions(self, tmp_path: Path) -> None:
+        s1 = tmp_path / "session-a" / "events.jsonl"
+        s2 = tmp_path / "session-b" / "events.jsonl"
+        _write_events(s1, _START_EVENT)
+        _write_events(s2, _START_EVENT)
+        result = discover_sessions(tmp_path)
+        assert len(result) == 2
+        assert all(p.name == "events.jsonl" for p in result)
+
+    def test_sorted_newest_first(self, tmp_path: Path) -> None:
+        older = tmp_path / "old" / "events.jsonl"
+        newer = tmp_path / "new" / "events.jsonl"
+        _write_events(older, _START_EVENT)
+        time.sleep(0.05)
+        _write_events(newer, _START_EVENT)
+        result = discover_sessions(tmp_path)
+        assert result[0] == newer
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        assert discover_sessions(tmp_path) == []
+
+    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+        assert discover_sessions(tmp_path / "nope") == []
+
+    def test_stat_race_file_deleted_between_glob_and_sort(self, tmp_path: Path) -> None:
+        """TOCTOU: session dir deleted after glob but before stat()."""
+        s1 = tmp_path / "session-a" / "events.jsonl"
+        s2 = tmp_path / "session-b" / "events.jsonl"
+        _write_events(s1, _START_EVENT)
+        _write_events(s2, _START_EVENT)
+
+        original_stat = Path.stat
+
+        def _flaky_stat(self: Path) -> object:
+            if self == s1:
+                raise FileNotFoundError(f"deleted: {self}")
+            return original_stat(self)
+
+        with patch.object(Path, "stat", _flaky_stat):
+            result = discover_sessions(tmp_path)
+
+        # s2 still returned; s1 may also be present (with mtime 0)
+        assert any(p == s2 for p in result)
+        # The call must not raise
+        assert isinstance(result, list)
+
+    def test_get_all_sessions_skips_vanished_session(self, tmp_path: Path) -> None:
+        """TOCTOU: events.jsonl deleted after discover but before parse."""
+        s1 = tmp_path / "session-a" / "events.jsonl"
+        s2 = tmp_path / "session-b" / "events.jsonl"
+        _write_events(s1, _START_EVENT)
+        _write_events(s2, _START_EVENT)
+
+        original_open = Path.open
+
+        def _flaky_open(self: Path, *args: object, **kwargs: object) -> object:  # type: ignore[override]
+            if self == s1:
+                raise FileNotFoundError(f"deleted: {self}")
+            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "open", _flaky_open):
+            summaries = get_all_sessions(tmp_path)
+
+        # Only s2 should produce a summary
+        assert len(summaries) == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_events
+# ---------------------------------------------------------------------------
+
+
+class TestParseEvents:
+    def test_parses_valid_events(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        assert len(events) == 3
+        assert events[0].type == "session.start"
+        assert events[1].type == "user.message"
+        assert events[2].type == "assistant.message"
+
+    def test_skips_malformed_json(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, "NOT-JSON{{{", _USER_MSG)
+        events = parse_events(p)
+        assert len(events) == 2
+
+    def test_skips_empty_lines(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True)
+        p.write_text(_START_EVENT + "\n\n\n" + _USER_MSG + "\n", encoding="utf-8")
+        events = parse_events(p)
+        assert len(events) == 2
+
+    def test_empty_file(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p)
+        events = parse_events(p)
+        assert events == []
+
+    def test_skips_validation_errors(self, tmp_path: Path) -> None:
+        bad_event = json.dumps({"no_type_field": True})
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, bad_event)
+        events = parse_events(p)
+        assert len(events) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — completed session
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryCompleted:
+    def test_session_id(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.session_id == "test-session-001"
+
+    def test_not_active(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.is_active is False
+
+    def test_uses_shutdown_data(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.total_premium_requests == 5
+        assert summary.total_api_duration_ms == 12000
+        assert "claude-sonnet-4" in summary.model_metrics
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 350
+
+    def test_code_changes(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.code_changes is not None
+        assert summary.code_changes.linesAdded == 50
+
+    def test_message_count(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.user_messages == 1  # 1 user message
+        assert summary.model_calls == 0  # no turn_starts in _completed_events
+
+    def test_model(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.model == "claude-sonnet-4"
+
+    def test_timestamps(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.start_time == datetime(2026, 3, 7, 10, 0, tzinfo=UTC)
+        assert summary.end_time == datetime(2026, 3, 7, 11, 0, tzinfo=UTC)
+
+    def test_session_name_from_plan(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        plan = sdir / "plan.md"
+        plan.write_text("# My Cool Project\n\nSome details.\n", encoding="utf-8")
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.name == "My Cool Project"
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — active session (no shutdown)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryActive:
+    def test_is_active(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.is_active is True
+
+    def test_sums_output_tokens(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        # 150 + 200 = 350 total output tokens
+        assert summary.model is not None
+        total = sum(m.usage.outputTokens for m in summary.model_metrics.values())
+        assert total == 350
+
+    def test_zero_premium_requests(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.total_premium_requests == 0
+
+    def test_no_code_changes(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.code_changes is None
+
+    def test_model_from_tool_exec(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.model == "claude-sonnet-4"
+
+    def test_cwd(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.cwd == "/home/user/project"
+
+    def test_last_resume_time_none_for_active(self, tmp_path: Path) -> None:
+        """Active session with no resume event → last_resume_time is None."""
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.last_resume_time is None
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — resumed session (shutdown followed by more events)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryResumed:
+    def test_resumed_session_is_active(self, tmp_path: Path) -> None:
+        """Session with shutdown followed by new messages → is_active=True."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+
+    def test_resumed_session_sums_post_shutdown_tokens(self, tmp_path: Path) -> None:
+        """Post-shutdown tokens go to active_output_tokens, not merged into metrics."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # Shutdown had 350 — stays at 350 in historical metrics
+        assert "claude-sonnet-4" in summary.model_metrics
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 350
+        # Post-resume 250 goes to active_output_tokens
+        assert summary.active_output_tokens == 250
+
+    def test_multiple_shutdowns_uses_latest(self, tmp_path: Path) -> None:
+        """Session shut down and resumed multiple times → last shutdown wins."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+            _SHUTDOWN_EVENT_2,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # Two shutdowns: 5 + 10 = 15 total premium requests
+        assert summary.is_active is False
+        assert summary.total_premium_requests == 15
+        # Output tokens summed: 350 + 700 = 1050
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 1050
+
+    def test_shutdown_as_last_event_is_completed(self, tmp_path: Path) -> None:
+        """Normal completed session (shutdown is last) → is_active=False."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _ASSISTANT_MSG_2,
+            _SHUTDOWN_EVENT,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is False
+        assert summary.end_time == datetime(2026, 3, 7, 11, 0, tzinfo=UTC)
+
+    def test_last_resume_time_none_for_completed(self, tmp_path: Path) -> None:
+        """Completed session (no resume) → last_resume_time is None."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.last_resume_time is None
+
+    def test_last_resume_time_set_for_resumed(self, tmp_path: Path) -> None:
+        """Resumed session → last_resume_time equals resume event timestamp."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+
+    def test_resumed_session_no_current_model_infers_from_metrics(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown with modelMetrics but no currentModel → model inferred, tokens kept."""
+        shutdown_no_model = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 5000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 3, "cost": 3},
+                            "usage": {
+                                "inputTokens": 2000,
+                                "outputTokens": 400,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "hi", "attachments": []},
+                "id": "ev-u",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        post_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-p",
+                    "content": "ok",
+                    "toolRequests": [],
+                    "interactionId": "int-r",
+                    "outputTokens": 100,
+                },
+                "id": "ev-a",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            shutdown_no_model,
+            resume_ev,
+            post_user,
+            post_asst,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is True
+        assert summary.model == "claude-sonnet-4"
+        assert "claude-sonnet-4" in summary.model_metrics
+        # 400 from shutdown stays at 400 in historical
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 400
+        # 100 post-resume goes to active
+        assert summary.active_output_tokens == 100
+
+    def test_model_inferred_from_highest_request_count(self, tmp_path: Path) -> None:
+        """Shutdown with multiple models, no currentModel → picks highest requests.count."""
+        shutdown_multi = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 12,
+                    "totalApiDurationMs": 8000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "gpt-4": {
+                            "requests": {"count": 2, "cost": 2},
+                            "usage": {
+                                "inputTokens": 500,
+                                "outputTokens": 100,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        },
+                        "claude-sonnet-4": {
+                            "requests": {"count": 10, "cost": 10},
+                            "usage": {
+                                "inputTokens": 4000,
+                                "outputTokens": 800,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        },
+                    },
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        post_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-p",
+                    "content": "ok",
+                    "toolRequests": [],
+                    "interactionId": "int-r",
+                    "outputTokens": 50,
+                },
+                "id": "ev-a",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, shutdown_multi, resume_ev, post_asst)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        # claude-sonnet-4 has count=10 > gpt-4 count=2
+        assert summary.model == "claude-sonnet-4"
+        # Historical stays at 800 (from shutdown)
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 800
+        # 50 post-resume goes to active
+        assert summary.active_output_tokens == 50
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — multi-shutdown resumed (2+ shutdowns then still active)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryMultiShutdownResumed:
+    """Two shutdowns followed by a resume with post-resume activity (still active)."""
+
+    @staticmethod
+    def _build(tmp_path: Path) -> SessionSummary:
+        shutdown_1 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 4000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 3, "cost": 3},
+                            "usage": {
+                                "inputTokens": 800,
+                                "outputTokens": 150,
+                                "cacheReadTokens": 200,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-sonnet-4",
+                },
+                "id": "ev-sd1",
+                "timestamp": "2026-03-07T09:00:00.000Z",
+                "currentModel": "claude-sonnet-4",
+            }
+        )
+        resume_1 = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume1",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        mid_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "mid", "attachments": []},
+                "id": "ev-mid-u",
+                "timestamp": "2026-03-07T11:01:00.000Z",
+            }
+        )
+        mid_turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "1", "interactionId": "int-mid"},
+                "id": "ev-mid-ts",
+                "timestamp": "2026-03-07T11:01:01.000Z",
+            }
+        )
+        mid_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-mid",
+                    "content": "ok",
+                    "toolRequests": [],
+                    "interactionId": "int-mid",
+                    "outputTokens": 250,
+                },
+                "id": "ev-mid-a",
+                "timestamp": "2026-03-07T11:01:05.000Z",
+            }
+        )
+        shutdown_2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 7,
+                    "totalApiDurationMs": 9000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-opus-4.6": {
+                            "requests": {"count": 5, "cost": 7},
+                            "usage": {
+                                "inputTokens": 1500,
+                                "outputTokens": 350,
+                                "cacheReadTokens": 400,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-opus-4.6",
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+                "currentModel": "claude-opus-4.6",
+            }
+        )
+        resume_2 = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume2",
+                "timestamp": "2026-03-07T14:00:00.000Z",
+            }
+        )
+        post_user_1 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "post1", "attachments": []},
+                "id": "ev-post-u1",
+                "timestamp": "2026-03-07T14:01:00.000Z",
+            }
+        )
+        post_turn_start_1 = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "2", "interactionId": "int-post1"},
+                "id": "ev-post-ts1",
+                "timestamp": "2026-03-07T14:01:01.000Z",
+            }
+        )
+        post_asst_1 = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-p1",
+                    "content": "reply1",
+                    "toolRequests": [],
+                    "interactionId": "int-post1",
+                    "outputTokens": 100,
+                },
+                "id": "ev-post-a1",
+                "timestamp": "2026-03-07T14:01:05.000Z",
+            }
+        )
+        post_user_2 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "post2", "attachments": []},
+                "id": "ev-post-u2",
+                "timestamp": "2026-03-07T14:05:00.000Z",
+            }
+        )
+        post_turn_start_2 = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "3", "interactionId": "int-post2"},
+                "id": "ev-post-ts2",
+                "timestamp": "2026-03-07T14:05:01.000Z",
+            }
+        )
+        post_asst_2 = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-p2",
+                    "content": "reply2",
+                    "toolRequests": [],
+                    "interactionId": "int-post2",
+                    "outputTokens": 125,
+                },
+                "id": "ev-post-a2",
+                "timestamp": "2026-03-07T14:05:05.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            shutdown_1,
+            resume_1,
+            mid_user,
+            mid_turn_start,
+            mid_asst,
+            shutdown_2,
+            resume_2,
+            post_user_1,
+            post_turn_start_1,
+            post_asst_1,
+            post_user_2,
+            post_turn_start_2,
+            post_asst_2,
+        )
+        events = parse_events(p)
+        return build_session_summary(events)
+
+    def test_is_active(self, tmp_path: Path) -> None:
+        """2 shutdowns + resume with post-resume activity → is_active=True."""
+        summary = self._build(tmp_path)
+        assert summary.is_active is True
+
+    def test_total_premium_requests_summed(self, tmp_path: Path) -> None:
+        """Premium requests aggregated from both shutdowns: 3 + 7 = 10."""
+        summary = self._build(tmp_path)
+        assert summary.total_premium_requests == 10
+
+    def test_merged_model_metrics_has_both_models(self, tmp_path: Path) -> None:
+        """Merged metrics contain keys for both sonnet and opus."""
+        summary = self._build(tmp_path)
+        assert "claude-sonnet-4" in summary.model_metrics
+        assert "claude-opus-4.6" in summary.model_metrics
+
+    def test_merged_model_metrics_values(self, tmp_path: Path) -> None:
+        """Each model has correct metrics from its respective shutdown."""
+        summary = self._build(tmp_path)
+        sonnet = summary.model_metrics["claude-sonnet-4"]
+        assert sonnet.requests.count == 3
+        assert sonnet.usage.inputTokens == 800
+        assert sonnet.usage.outputTokens == 150
+
+        opus = summary.model_metrics["claude-opus-4.6"]
+        assert opus.requests.count == 5
+        assert opus.usage.inputTokens == 1500
+        assert opus.usage.outputTokens == 350
+
+    def test_active_turn_starts_only_after_last_shutdown(self, tmp_path: Path) -> None:
+        """active_model_calls counts only turn_starts after last shutdown."""
+        summary = self._build(tmp_path)
+        assert summary.active_model_calls == 2
+
+    def test_active_user_messages_only_after_last_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        """active_user_messages counts only user.messages after last shutdown."""
+        summary = self._build(tmp_path)
+        assert summary.active_user_messages == 2
+
+    def test_active_output_tokens_only_after_last_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        """active_output_tokens sums only outputTokens after last shutdown: 100+125."""
+        summary = self._build(tmp_path)
+        assert summary.active_output_tokens == 225
+
+    def test_last_resume_time_is_latest_resume(self, tmp_path: Path) -> None:
+        """last_resume_time is set to the timestamp of the last session.resume."""
+        summary = self._build(tmp_path)
+        # resume_2 timestamp is 2026-03-07T14:00:00.000Z
+        assert summary.last_resume_time == datetime(2026, 3, 7, 14, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# get_all_sessions
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessions:
+    def test_returns_summaries(self, tmp_path: Path) -> None:
+        s1 = tmp_path / "a" / "events.jsonl"
+        s2 = tmp_path / "b" / "events.jsonl"
+        _write_events(s1, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        _write_events(s2, _START_EVENT, _SHUTDOWN_EVENT)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 2
+
+    def test_sorted_newest_first(self, tmp_path: Path) -> None:
+        older_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "old",
+                    "version": 1,
+                    "startTime": "2026-01-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e1",
+                "timestamp": "2026-01-01T00:00:00.000Z",
+            }
+        )
+        newer_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "new",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", older_start)
+        _write_events(tmp_path / "b" / "events.jsonl", newer_start)
+        result = get_all_sessions(tmp_path)
+        assert result[0].session_id == "new"
+        assert result[1].session_id == "old"
+
+    def test_empty_base(self, tmp_path: Path) -> None:
+        assert get_all_sessions(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# Real data smoke test (against ~/.copilot/session-state/)
+# ---------------------------------------------------------------------------
+
+_REAL_BASE = Path.home() / ".copilot" / "session-state"
+
+
+class TestRealData:
+    """Smoke tests against actual session data — skipped if not present."""
+
+    @pytest.mark.skipif(
+        not _REAL_BASE.is_dir(),
+        reason="No real session data available",
+    )
+    def test_discover_finds_sessions(self) -> None:
+        paths = discover_sessions(_REAL_BASE)
+        assert len(paths) >= 1
+
+    @pytest.mark.skipif(
+        not _REAL_BASE.is_dir(),
+        reason="No real session data available",
+    )
+    def test_get_all_sessions_returns_summaries(self) -> None:
+        summaries = get_all_sessions(_REAL_BASE)
+        assert len(summaries) >= 1
+        for s in summaries:
+            assert s.session_id != ""
+
+
+# ---------------------------------------------------------------------------
+# Pydantic model unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestTokenUsageModel:
+    def test_defaults(self) -> None:
+        t = TokenUsage()
+        assert t.inputTokens == 0
+        assert t.outputTokens == 0
+        assert t.cacheReadTokens == 0
+        assert t.cacheWriteTokens == 0
+
+    def test_custom_values(self) -> None:
+        t = TokenUsage(inputTokens=100, outputTokens=50)
+        assert t.inputTokens == 100
+        assert t.outputTokens == 50
+
+
+class TestRequestMetricsModel:
+    def test_defaults(self) -> None:
+        r = RequestMetrics()
+        assert r.count == 0
+        assert r.cost == 0
+
+
+class TestModelMetricsModel:
+    def test_defaults(self) -> None:
+        m = ModelMetrics()
+        assert m.requests.count == 0
+        assert m.usage.outputTokens == 0
+
+    def test_nested(self) -> None:
+        m = ModelMetrics(
+            requests=RequestMetrics(count=3, cost=10),
+            usage=TokenUsage(inputTokens=500, outputTokens=200),
+        )
+        assert m.requests.count == 3
+        assert m.usage.inputTokens == 500
+
+
+class TestCodeChangesModel:
+    def test_defaults(self) -> None:
+        c = CodeChanges()
+        assert c.linesAdded == 0
+        assert c.linesRemoved == 0
+        assert c.filesModified == []
+
+    def test_with_files(self) -> None:
+        c = CodeChanges(linesAdded=10, filesModified=["a.py"])
+        assert c.filesModified == ["a.py"]
+
+
+class TestSessionContextModel:
+    def test_defaults(self) -> None:
+        ctx = SessionContext()
+        assert ctx.cwd is None
+
+    def test_with_cwd(self) -> None:
+        ctx = SessionContext(cwd="/home/user")
+        assert ctx.cwd == "/home/user"
+
+
+class TestSessionStartDataModel:
+    def test_required_session_id(self) -> None:
+        d = SessionStartData(sessionId="abc")
+        assert d.sessionId == "abc"
+        assert d.version == 1
+        assert d.producer == ""
+        assert d.startTime is None
+        assert d.context.cwd is None
+
+    def test_missing_session_id_raises(self) -> None:
+        with pytest.raises(Exception):  # noqa: B017
+            SessionStartData.model_validate({})
+
+
+class TestAssistantMessageDataModel:
+    def test_defaults(self) -> None:
+        d = AssistantMessageData()
+        assert d.messageId == ""
+        assert d.content == ""
+        assert d.outputTokens == 0
+        assert d.reasoningText is None
+        assert d.toolRequests == []
+
+    def test_optional_reasoning(self) -> None:
+        d = AssistantMessageData(reasoningText="thinking...", reasoningOpaque="x")
+        assert d.reasoningText == "thinking..."
+        assert d.reasoningOpaque == "x"
+
+
+class TestSessionShutdownDataModel:
+    def test_defaults(self) -> None:
+        d = SessionShutdownData()
+        assert d.shutdownType == ""
+        assert d.totalPremiumRequests == 0
+        assert d.codeChanges is None
+        assert d.modelMetrics == {}
+        assert d.currentModel is None
+
+    def test_with_model_metrics(self) -> None:
+        d = SessionShutdownData(
+            modelMetrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                )
+            }
+        )
+        assert d.modelMetrics["gpt-4"].usage.outputTokens == 100
+
+    def test_empty_model_metrics(self) -> None:
+        d = SessionShutdownData(modelMetrics={})
+        assert d.modelMetrics == {}
+
+
+class TestToolExecutionDataModel:
+    def test_defaults(self) -> None:
+        d = ToolExecutionData()
+        assert d.toolCallId == ""
+        assert d.model is None
+        assert d.success is False
+        assert d.toolTelemetry is None
+
+    def test_with_telemetry(self) -> None:
+        d = ToolExecutionData(
+            toolCallId="tc-1",
+            success=True,
+            toolTelemetry=ToolTelemetry(properties={"key": "value"}),
+        )
+        assert d.toolTelemetry is not None
+        assert d.toolTelemetry.properties["key"] == "value"
+
+
+class TestUserMessageDataModel:
+    def test_defaults(self) -> None:
+        d = UserMessageData()
+        assert d.content == ""
+        assert d.transformedContent is None
+        assert d.attachments == []
+        assert d.interactionId is None
+
+
+class TestGenericEventDataModel:
+    def test_allows_extra_fields(self) -> None:
+        d = GenericEventData.model_validate({"foo": "bar", "num": 42})
+        assert d.model_extra is not None
+        assert d.model_extra["foo"] == "bar"
+
+
+class TestSessionSummaryModel:
+    def test_defaults(self) -> None:
+        s = SessionSummary(session_id="s1")
+        assert s.session_id == "s1"
+        assert s.is_active is False
+        assert s.user_messages == 0
+        assert s.model_calls == 0
+        assert s.model_metrics == {}
+        assert s.code_changes is None
+
+
+class TestEventTypeEnum:
+    def test_values(self) -> None:
+        assert EventType.SESSION_START == "session.start"
+        assert EventType.SESSION_SHUTDOWN == "session.shutdown"
+        assert EventType.ASSISTANT_MESSAGE == "assistant.message"
+        assert EventType.TOOL_EXECUTION_COMPLETE == "tool.execution_complete"
+        assert EventType.USER_MESSAGE == "user.message"
+        assert EventType.ABORT == "abort"
+
+
+# ---------------------------------------------------------------------------
+# SessionEvent.parse_data() — all branches
+# ---------------------------------------------------------------------------
+
+
+class TestSessionEventParseData:
+    def test_parse_session_start(self) -> None:
+        ev = SessionEvent(
+            type="session.start",
+            data={"sessionId": "s1", "version": 1, "context": {}},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, SessionStartData)
+        assert result.sessionId == "s1"
+
+    def test_parse_assistant_message(self) -> None:
+        ev = SessionEvent(
+            type="assistant.message",
+            data={"messageId": "m1", "content": "hi", "outputTokens": 10},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, AssistantMessageData)
+        assert result.outputTokens == 10
+
+    def test_parse_session_shutdown(self) -> None:
+        ev = SessionEvent(
+            type="session.shutdown",
+            data={"shutdownType": "routine", "totalPremiumRequests": 3},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, SessionShutdownData)
+        assert result.totalPremiumRequests == 3
+
+    def test_parse_tool_execution_complete(self) -> None:
+        ev = SessionEvent(
+            type="tool.execution_complete",
+            data={"toolCallId": "tc-1", "model": "gpt-4", "success": True},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, ToolExecutionData)
+        assert result.model == "gpt-4"
+
+    def test_parse_user_message(self) -> None:
+        ev = SessionEvent(
+            type="user.message",
+            data={"content": "hello"},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, UserMessageData)
+        assert result.content == "hello"
+
+    def test_parse_unknown_event_type(self) -> None:
+        ev = SessionEvent(
+            type="some.unknown.event",
+            data={"arbitrary": "data", "count": 42},
+        )
+        result = ev.parse_data()
+        assert isinstance(result, GenericEventData)
+
+    def test_parse_abort_event(self) -> None:
+        ev = SessionEvent(type="abort", data={"reason": "user"})
+        result = ev.parse_data()
+        assert isinstance(result, GenericEventData)
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — build_session_summary
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryEdgeCases:
+    def test_empty_events(self) -> None:
+        summary = build_session_summary([])
+        assert summary.session_id == ""
+        assert summary.is_active is True
+
+    def test_no_session_dir(self, tmp_path: Path) -> None:
+        events, _ = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=None)
+        assert summary.name is None
+
+    def test_plan_md_without_heading(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        plan = sdir / "plan.md"
+        plan.write_text("Just some text without heading\n", encoding="utf-8")
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.name is None
+
+    def test_no_plan_md(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.name is None
+
+    def test_shutdown_without_code_changes(self, tmp_path: Path) -> None:
+        shutdown_no_cc = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 2,
+                    "totalApiDurationMs": 500,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, shutdown_no_cc)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.code_changes is None
+        assert summary.model_metrics == {}
+
+    def test_active_session_no_tool_exec_no_model(self, tmp_path: Path) -> None:
+        """Active session with assistant messages but no tool.execution_complete."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.is_active is True
+        assert summary.model is None
+        # No model so tokens can't be attributed
+        assert summary.model_metrics == {}
+
+    def test_active_session_with_model_tokens(self, tmp_path: Path) -> None:
+        """Active session where model is found via tool exec → tokens attributed."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.model == "claude-sonnet-4"
+        assert summary.model_metrics["claude-sonnet-4"].usage.outputTokens == 150
+
+    def test_unexpected_event_types_ignored(self, tmp_path: Path) -> None:
+        weird = json.dumps(
+            {
+                "type": "some.custom.event",
+                "data": {"x": 1},
+                "id": "ev-weird",
+                "timestamp": "2026-03-07T10:05:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, weird, _USER_MSG)
+        events = parse_events(p)
+        assert len(events) == 3
+        summary = build_session_summary(events)
+        assert summary.user_messages == 1
+
+    def test_shutdown_model_from_data_currentModel(self, tmp_path: Path) -> None:
+        """When top-level currentModel is absent, use data.currentModel."""
+        shutdown_ev = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 100,
+                    "sessionStartTime": 0,
+                    "currentModel": "gpt-4",
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, shutdown_ev)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.model == "gpt-4"
+
+    def test_assistant_message_without_output_tokens(self, tmp_path: Path) -> None:
+        msg_no_tokens = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m1", "content": "hi"},
+                "id": "ev-m",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, msg_no_tokens, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        # No outputTokens → model_metrics should be empty even though model is known
+        assert summary.model_metrics == {}
+
+
+# ---------------------------------------------------------------------------
+# get_all_sessions — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessionsEdgeCases:
+    def test_skips_empty_events_files(self, tmp_path: Path) -> None:
+        _write_events(tmp_path / "empty" / "events.jsonl")
+        _write_events(tmp_path / "valid" / "events.jsonl", _START_EVENT)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 1
+
+    def test_sessions_without_start_time_sort_last(self, tmp_path: Path) -> None:
+        no_time_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {"sessionId": "no-time", "version": 1, "context": {}},
+                "id": "e1",
+            }
+        )
+        with_time_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "has-time",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", no_time_start)
+        _write_events(tmp_path / "b" / "events.jsonl", with_time_start)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 2
+        assert result[0].session_id == "has-time"
+        assert result[1].session_id == "no-time"
+
+    def test_nonexistent_base(self, tmp_path: Path) -> None:
+        result = get_all_sessions(tmp_path / "does_not_exist")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap tests — parser.py
+# ---------------------------------------------------------------------------
+
+
+class TestParserCoverageGaps:
+    """Tests targeting specific uncovered lines in parser.py."""
+
+    def test_extract_session_name_os_error(self, tmp_path: Path) -> None:
+        """plan.md exists but is unreadable → name is None (lines 103-104)."""
+        events, sdir = _completed_events(tmp_path)
+        plan = sdir / "plan.md"
+        plan.write_text("# Title\n", encoding="utf-8")
+        plan.chmod(0o000)
+        try:
+            summary = build_session_summary(events, session_dir=sdir)
+            assert summary.name is None
+        finally:
+            plan.chmod(0o644)
+
+    def test_session_start_validation_error(self, tmp_path: Path) -> None:
+        """Malformed session.start data → skipped (lines 155-156)."""
+        bad_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {"sessionId": 12345},  # sessionId should be str
+                "id": "ev-bad",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, bad_start, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # session.start was skipped, so no session_id extracted
+        assert summary.session_id == ""
+        assert summary.is_active is True
+
+    def test_session_shutdown_validation_error(self, tmp_path: Path) -> None:
+        """Malformed session.shutdown data → skipped (lines 166-167)."""
+        bad_shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": "not-a-number",
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+                "currentModel": "gpt-4",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, bad_shutdown)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # Shutdown was skipped → session is active
+        assert summary.is_active is True
+        assert summary.session_id == "test-session-001"
+
+    def test_resumed_session_new_model_not_in_metrics(self, tmp_path: Path) -> None:
+        """Resumed session uses model not in shutdown metrics → new entry (line 226)."""
+        # Shutdown with model A, resume uses model B
+        shutdown_model_a = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 5,
+                    "totalApiDurationMs": 1000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 5, "cost": 5},
+                            "usage": {
+                                "inputTokens": 1000,
+                                "outputTokens": 200,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-sonnet-4",
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+                "currentModel": "gpt-5.1",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        post_resume_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-post",
+                    "content": "resumed",
+                    "toolRequests": [],
+                    "interactionId": "int-r",
+                    "outputTokens": 300,
+                },
+                "id": "ev-post",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, shutdown_model_a, resume_ev, post_resume_msg
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        # Post-resume tokens go to active, not merged into model_metrics
+        assert summary.active_output_tokens == 300
+        # gpt-5.1 should NOT be in historical model_metrics (it's post-resume activity)
+        assert "gpt-5.1" not in summary.model_metrics
+        # Original model metrics preserved
+        assert "claude-sonnet-4" in summary.model_metrics
+
+    def test_active_session_tool_exec_validation_error(self, tmp_path: Path) -> None:
+        """Bad tool.execution_complete in active session → skipped (lines 252-253)."""
+        bad_tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": 999, "success": "not-bool"},
+                "id": "ev-bad-tool",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, bad_tool)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.is_active is True
+        # No model could be extracted from the bad tool event
+        assert summary.model is None
+
+
+# ---------------------------------------------------------------------------
+# model_calls and user_messages
+# ---------------------------------------------------------------------------
+
+
+class TestModelCallsAndUserMessages:
+    """Tests for model_calls and user_messages fields."""
+
+    def test_active_session_counts_turn_starts(self, tmp_path: Path) -> None:
+        """Active session with 5 turn_starts → model_calls = 5."""
+        opus_tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": "claude-opus-4.6",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool-opus",
+                "timestamp": "2026-03-07T10:01:07.000Z",
+            }
+        )
+        turns = [
+            json.dumps(
+                {
+                    "type": "assistant.turn_start",
+                    "data": {"turnId": str(i), "interactionId": "int-1"},
+                    "id": f"ev-turn-{i}",
+                    "timestamp": f"2026-03-07T10:{i + 2:02d}:00.000Z",
+                }
+            )
+            for i in range(5)
+        ]
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, opus_tool, *turns, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.model_calls == 5
+        assert summary.user_messages == 1
+        assert summary.total_premium_requests == 0
+
+    def test_completed_session_counts_turn_starts(self, tmp_path: Path) -> None:
+        """Completed session records model_calls from turn_start events."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _TURN_START_2,
+            _ASSISTANT_MSG_2,
+            _SHUTDOWN_EVENT,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is False
+        assert summary.model_calls == 2
+        assert summary.user_messages == 1
+        assert summary.total_premium_requests == 5
+
+    def test_completed_session_uses_exact_premium_requests(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown as last event → uses shutdown's totalPremiumRequests."""
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.is_active is False
+        assert summary.total_premium_requests == 5
+
+    def test_active_session_zero_multiplier_model(self, tmp_path: Path) -> None:
+        """Active session using gpt-5-mini (0×) → no estimation, just raw counts."""
+        free_tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-free",
+                    "model": "gpt-5-mini",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool-free",
+                "timestamp": "2026-03-07T10:01:07.000Z",
+            }
+        )
+        turns = [
+            json.dumps(
+                {
+                    "type": "assistant.turn_start",
+                    "data": {"turnId": str(i), "interactionId": "int-1"},
+                    "id": f"ev-turn-{i}",
+                    "timestamp": f"2026-03-07T10:{i + 2:02d}:00.000Z",
+                }
+            )
+            for i in range(3)
+        ]
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, free_tool, *turns, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.model_calls == 3
+        assert summary.total_premium_requests == 0
+
+
+# ---------------------------------------------------------------------------
+# config.json model reading
+# ---------------------------------------------------------------------------
+
+
+class TestConfigModelReading:
+    """Tests for reading model from config.json for active sessions."""
+
+    def test_active_session_reads_config_model(self, tmp_path: Path) -> None:
+        """Active session with no tool exec reads model from config.json."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-opus-4.6-1m"}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model == "claude-opus-4.6-1m"
+
+    def test_tool_exec_model_takes_precedence(self, tmp_path: Path) -> None:
+        """Model from tool.execution_complete overrides config.json."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model == "claude-sonnet-4"
+
+    def test_missing_config_returns_none(self, tmp_path: Path) -> None:
+        """No config.json → model stays None."""
+        config = tmp_path / "nonexistent" / "config.json"
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
+    def test_invalid_config_json(self, tmp_path: Path) -> None:
+        """Malformed config.json → model stays None."""
+        config = tmp_path / "config.json"
+        config.write_text("NOT JSON{{{", encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
+    def test_config_without_model_key(self, tmp_path: Path) -> None:
+        """config.json without 'model' key → model stays None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"reasoning_effort": "high"}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — empty session (only session.start)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryEmptySession:
+    """Session with only a session.start event and nothing else."""
+
+    def test_is_active(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.is_active is True
+
+    def test_session_id(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.session_id == "test-session-001"
+
+    def test_zero_premium_requests(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.total_premium_requests == 0
+
+    def test_zero_output_tokens(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.active_output_tokens == 0
+
+    def test_zero_model_calls(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.model_calls == 0
+
+    def test_zero_user_messages(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.user_messages == 0
+
+    def test_name_from_plan_md(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        (tmp_path / "s" / "plan.md").write_text(
+            "# Empty Session\n\nNothing here.", encoding="utf-8"
+        )
+        events = parse_events(p)
+        summary = build_session_summary(
+            events, session_dir=tmp_path / "s", config_path=Path("/dev/null")
+        )
+        assert summary.name == "Empty Session"
+
+    def test_no_plan_md_name_is_none(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(
+            events, session_dir=tmp_path / "s", config_path=Path("/dev/null")
+        )
+        assert summary.name is None
+
+    def test_model_is_none_without_config(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.model is None
+
+    def test_empty_model_metrics(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.model_metrics == {}
+
+    def test_end_time_is_none(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.end_time is None
+
+    def test_no_code_changes(self, tmp_path: Path) -> None:
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=Path("/dev/null"))
+        assert summary.code_changes is None

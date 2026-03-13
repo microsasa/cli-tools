@@ -1,0 +1,88 @@
+# CLI Tools — Architecture
+
+## Overview
+
+Monorepo containing Python CLI utilities that share tooling, CI, and common dependencies. Each tool is a separate package under `src/` with its own Click entry point.
+
+---
+
+## copilot-usage
+
+### Data Flow
+
+```
+~/.copilot/session-state/          src/copilot_usage/
+┌─────────────────────────┐
+│ {session-id}/           │        ┌──────────┐     ┌──────────┐     ┌──────────┐
+│   events.jsonl ─────────┼───────▶│ parser   │────▶│ models   │────▶│ report   │───▶ terminal
+│                         │        │          │     │          │     │          │
+│ {session-id}/           │        │ discover │     │ Pydantic │     │ Rich     │
+│   events.jsonl ─────────┼───────▶│ parse    │     │ validate │     │ tables   │
+│                         │        │ summarize│     │          │     │ panels   │
+│ ...                     │        └──────────┘     └──────────┘     └──────────┘
+└─────────────────────────┘                                │
+                                                    ┌──────┴──────┐
+                                                    │ pricing     │
+                                                    │             │
+                                                    │ multipliers │
+                                                    │ (reference) │
+                                                    └─────────────┘
+```
+
+### Components
+
+| Module | Responsibility |
+|--------|---------------|
+| `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Also contains the interactive loop (invoked when no subcommand is given) with watchdog-based auto-refresh (2-second debounce). |
+| `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session. Counts raw events (model calls via assistant.turn_start, user messages). |
+| `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
+| `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), session detail, live view, premium request breakdown. Reports raw counts, no estimation. |
+| `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers retained as reference data only; not used for estimation. |
+| `logging_config.py` | Loguru setup — stderr warnings only, no file output. Called once from CLI entry point. |
+
+### Event Processing Pipeline
+
+1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
+2. **Parsing** — `parse_events()` reads each line as JSON, creates `SessionEvent` objects via Pydantic validation. Malformed lines are skipped with a warning.
+3. **Typed dispatch** — `SessionEvent.parse_data()` uses match/case on event type to return the correct typed data model (`SessionStartData`, `AssistantMessageData`, etc.)
+4. **Summarization** — `build_session_summary()` walks the event list:
+   - Extracts session metadata from `session.start`
+   - Counts raw events: model calls (assistant.turn_start count), user messages (user.message count)
+   - For completed sessions: uses `session.shutdown` aggregate metrics directly — **sums all shutdown events** (shutdown metrics are per-lifecycle, not cumulative)
+   - For active/resumed sessions: sums `outputTokens` from individual `assistant.message` events
+   - Detects resumed sessions: if events exist after `session.shutdown`, marks `is_active = True`
+   - Tracks `last_resume_time` from `session.resume` events — used to calculate "Running" duration for active sessions
+   - Reports exact premium requests from shutdown data only — no multiplier-based estimation
+5. **Rendering** — Report functions receive `SessionSummary` objects and render Rich output
+
+### Key Design Decisions
+
+**Pydantic at the boundary, not everywhere.** Raw JSON is validated into Pydantic models during parsing. After that, typed Python objects flow through the system — no re-validation needed internally.
+
+**Shutdown event as source of truth.** The `session.shutdown` event contains pre-aggregated metrics (total tokens, premium requests, model breakdown). We use these directly instead of re-summing individual events — more accurate and faster.
+
+**Resumed session detection.** Sessions can be shut down and resumed. The parser checks for events after the last `session.shutdown` to detect this. Resumed sessions get `is_active = True` with shutdown metrics preserved as historical data.
+
+**Graceful degradation.** Unknown event types are parsed as `GenericEventData` (Pydantic `extra="allow"`). Missing fields get defaults. The tool never crashes on unexpected data.
+
+### Testing Strategy
+
+> For detailed implementation internals (shutdown aggregation, active detection, edge cases), see [implementation.md](implementation.md).
+
+```
+tests/
+├── copilot_usage/              Unit tests — synthetic data, test functions in isolation
+│   ├── test_models.py          Pydantic model creation and validation
+│   ├── test_parser.py          Event parsing, session summary building, edge cases
+│   ├── test_pricing.py         Pricing lookups, cost estimation
+│   ├── test_report.py          Rich output formatting, rendering functions
+│   └── test_cli.py             Click command invocation via CliRunner
+└── e2e/                        E2e tests — real CLI commands against fixture data
+    ├── fixtures/               Anonymized events from real Copilot sessions (8 fixtures)
+    └── test_e2e.py             Full pipeline: CLI → parser → models → report → output
+```
+
+- **327 total tests**: 272 unit tests + 55 e2e tests
+- **Unit tests**: 96% coverage, test individual functions with synthetic data
+- **E2e tests**: Run actual CLI commands against 8 anonymized fixture sessions, assert on output content
+- Coverage is measured on unit tests only (e2e coverage would be misleading)
