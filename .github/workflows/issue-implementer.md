@@ -26,6 +26,7 @@ safe-outputs:
   create-pull-request:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
     protected-files: fallback-to-issue
+    auto-merge: true
   push-to-pull-request-branch:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
@@ -39,4 +40,12 @@ Read the issue specified by the input, understand the problem, implement the sol
 
 Read all files in the repository. Read issue #${{ github.event.inputs.issue_number }} to understand what needs to be fixed. Implement the fix following the spec in the issue, including any testing requirements.
 
-Open a pull request with the fix. The PR title should reference the issue number. Include tests as specified in the issue.
+Before committing, run the full CI check suite locally:
+
+```
+uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v
+```
+
+Fix any lint or type errors found by ruff/pyright before committing. Iterate until all checks pass cleanly.
+
+Open a pull request with the fix. The PR title should reference the issue number. Include tests as specified in the issue. The PR must NOT be a draft — open it as a regular PR ready for review. Add the `aw` label to the PR.
