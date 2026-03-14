@@ -25,6 +25,9 @@ network: defaults
 safe-outputs:
   create-pull-request:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
+    protected-files: fallback-to-issue
+  push-to-pull-request-branch:
+    github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
 ---
 
