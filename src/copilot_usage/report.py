@@ -848,14 +848,18 @@ def render_full_summary(
 def render_cost_view(
     sessions: list[SessionSummary],
     *,
+    since: datetime | None = None,
+    until: datetime | None = None,
     target_console: Console | None = None,
 ) -> None:
     """Render per-session, per-model cost breakdown.
 
+    Filters sessions by date range when *since* and/or *until* are given.
     For active sessions, appends a "↳ Since last shutdown" row with N/A
     for premium and the active model calls / output tokens.
     """
     console = target_console or Console()
+    sessions = _filter_sessions(sessions, since, until)
 
     if not sessions:
         console.print("[yellow]No sessions found.[/yellow]")
