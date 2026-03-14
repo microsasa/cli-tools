@@ -580,6 +580,6 @@ class TestFileChangeHandler:
 
         event.clear()
         # Simulate passage of time by manipulating _last_trigger
-        handler._last_trigger = _time.monotonic() - 3.0
+        handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
         handler.dispatch(object())
         assert event.is_set()
