@@ -83,7 +83,12 @@ def _show_session_by_index(
         console.print("[red]No events path for this session.[/red]")
         return
 
-    events = parse_events(s.events_path)
+    try:
+        events = parse_events(s.events_path)
+    except (FileNotFoundError, OSError) as exc:
+        console.print(f"[red]Session file no longer available: {exc}[/red]")
+        return
+
     render_session_detail(events, s, target_console=console)
 
 
