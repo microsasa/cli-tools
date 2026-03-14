@@ -1,11 +1,14 @@
 """Tests for copilot_usage.report — rendering helpers."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
 
+import pytest
 from rich.console import Console
 
 from copilot_usage.models import (
@@ -18,6 +21,12 @@ from copilot_usage.models import (
     TokenUsage,
 )
 from copilot_usage.report import (
+    _aggregate_model_metrics,
+    _build_event_details,
+    _event_type_label,
+    _filter_sessions,
+    _format_detail_duration,
+    _format_relative_time,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -1337,3 +1346,277 @@ class TestRenderFullSummaryHelperReuse:
         output = _capture_cost_view([early, late], since=since, until=until)
         assert "Late" in output
         assert "Early" not in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — _build_event_details direct tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetails:
+    """Direct tests for _build_event_details covering untested branches."""
+
+    def test_tool_failure_shows_cross(self) -> None:
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "t1",
+                "success": False,
+                "toolTelemetry": {"properties": {"tool_name": "bash"}},
+            },
+        )
+        details = _build_event_details(ev)
+        assert "✗" in details
+        assert "✓" not in details
+
+    def test_tool_no_telemetry(self) -> None:
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE,
+            data={"toolCallId": "t1", "success": True},
+        )
+        details = _build_event_details(ev)
+        assert "✓" in details
+
+    def test_tool_no_tool_name_in_properties(self) -> None:
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "t1",
+                "success": True,
+                "toolTelemetry": {"properties": {}},
+            },
+        )
+        details = _build_event_details(ev)
+        assert "✓" in details
+
+    def test_session_shutdown_details(self) -> None:
+        ev = _make_event(
+            EventType.SESSION_SHUTDOWN,
+            data={
+                "shutdownType": "routine",
+                "totalPremiumRequests": 5,
+                "totalApiDurationMs": 1000,
+                "modelMetrics": {},
+            },
+        )
+        details = _build_event_details(ev)
+        assert "routine" in details
+
+    def test_assistant_message_zero_tokens_shows_content(self) -> None:
+        ev = _make_event(
+            EventType.ASSISTANT_MESSAGE,
+            data={"messageId": "m1", "content": "hello", "outputTokens": 0},
+        )
+        details = _build_event_details(ev)
+        assert "hello" in details
+        assert "tokens=0" not in details
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — _event_type_label tests covering all match arms
+# ---------------------------------------------------------------------------
+
+
+class TestEventTypeLabel:
+    """Tests for _event_type_label covering all match arms."""
+
+    @pytest.mark.parametrize(
+        "event_type,expected_text",
+        [
+            (EventType.TOOL_EXECUTION_START, "tool start"),
+            (EventType.ASSISTANT_TURN_END, "turn end"),
+            (EventType.SESSION_START, "session start"),
+            (EventType.SESSION_SHUTDOWN, "session end"),
+            ("some.future.event", "some.future.event"),
+        ],
+    )
+    def test_label_text(self, event_type: str, expected_text: str) -> None:
+        label = _event_type_label(event_type)
+        assert label.plain == expected_text
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — _format_relative_time hours branch
+# ---------------------------------------------------------------------------
+
+
+class TestFormatRelativeTime:
+    def test_hours_branch(self) -> None:
+        delta = timedelta(hours=2, minutes=5, seconds=30)
+        assert _format_relative_time(delta) == "+2:05:30"
+
+    def test_minutes_only(self) -> None:
+        delta = timedelta(minutes=3, seconds=15)
+        assert _format_relative_time(delta) == "+3:15"
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — _format_detail_duration hours and seconds branches
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDetailDuration:
+    def test_hours_branch(self) -> None:
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        end = start + timedelta(hours=2, minutes=30)
+        assert _format_detail_duration(start, end) == "2h 30m"
+
+    def test_seconds_branch(self) -> None:
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        end = start + timedelta(seconds=45)
+        assert _format_detail_duration(start, end) == "45s"
+
+
+# ---------------------------------------------------------------------------
+# Issue #18 — Integration: TOOL_EXECUTION_START and ASSISTANT_TURN_END
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailLabelIntegration:
+    """Labels for tool-start and turn-end appear in rendered output."""
+
+    def test_tool_start_and_turn_end_labels(self) -> None:
+        from copilot_usage.report import render_session_detail
+
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        summary = _make_session(start_time=start, is_active=False)
+        events = [
+            _make_event(
+                EventType.TOOL_EXECUTION_START,
+                data={},
+                timestamp=start + timedelta(seconds=10),
+            ),
+            _make_event(
+                EventType.ASSISTANT_TURN_END,
+                data={},
+                timestamp=start + timedelta(seconds=20),
+            ),
+        ]
+        output = _capture_console(render_session_detail, events, summary)
+        assert "tool start" in output
+        assert "turn end" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — _aggregate_model_metrics direct tests
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateModelMetrics:
+    """Direct unit tests for _aggregate_model_metrics."""
+
+    def test_same_model_two_sessions_sums_fields(self) -> None:
+        s1 = SessionSummary(
+            session_id="s1",
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=2),
+                    usage=TokenUsage(
+                        inputTokens=100,
+                        outputTokens=50,
+                        cacheReadTokens=10,
+                        cacheWriteTokens=5,
+                    ),
+                )
+            },
+        )
+        s2 = SessionSummary(
+            session_id="s2",
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=4),
+                    usage=TokenUsage(
+                        inputTokens=200,
+                        outputTokens=80,
+                        cacheReadTokens=20,
+                        cacheWriteTokens=15,
+                    ),
+                )
+            },
+        )
+        merged = _aggregate_model_metrics([s1, s2])
+        m = merged["claude-sonnet-4"]
+        assert m.requests.count == 10
+        assert m.requests.cost == 6
+        assert m.usage.inputTokens == 300
+        assert m.usage.outputTokens == 130
+        assert m.usage.cacheReadTokens == 30
+        assert m.usage.cacheWriteTokens == 20
+
+    def test_different_models_kept_separate(self) -> None:
+        s1 = SessionSummary(
+            session_id="s1",
+            model_metrics={"model-a": ModelMetrics(usage=TokenUsage(outputTokens=100))},
+        )
+        s2 = SessionSummary(
+            session_id="s2",
+            model_metrics={"model-b": ModelMetrics(usage=TokenUsage(outputTokens=200))},
+        )
+        merged = _aggregate_model_metrics([s1, s2])
+        assert "model-a" in merged and "model-b" in merged
+        assert merged["model-a"].usage.outputTokens == 100
+
+    def test_empty_list_returns_empty(self) -> None:
+        assert _aggregate_model_metrics([]) == {}
+
+    def test_session_with_empty_model_metrics(self) -> None:
+        s1 = SessionSummary(
+            session_id="s1",
+            model_metrics={
+                "model-a": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=3),
+                    usage=TokenUsage(outputTokens=100),
+                )
+            },
+        )
+        s2 = SessionSummary(session_id="s2", model_metrics={})
+        merged = _aggregate_model_metrics([s1, s2])
+        assert merged["model-a"].requests.count == 5
+        assert merged["model-a"].usage.outputTokens == 100
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — _filter_sessions with None start_time
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsNoneStartTime:
+    def test_none_start_time_excluded_when_filtering(self) -> None:
+        no_time = SessionSummary(session_id="no-time")
+        with_time = SessionSummary(
+            session_id="with-time",
+            start_time=datetime(2025, 6, 1, tzinfo=UTC),
+        )
+        since = datetime(2025, 1, 1, tzinfo=UTC)
+        result = _filter_sessions([no_time, with_time], since=since, until=None)
+        ids = [s.session_id for s in result]
+        assert "no-time" not in ids
+        assert "with-time" in ids
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — _render_totals singular grammar
+# ---------------------------------------------------------------------------
+
+
+class TestRenderTotalsSingularLabels:
+    def test_one_session_one_premium_request(self) -> None:
+        """render_summary with 1 session / 1 premium request uses singular labels."""
+        session = SessionSummary(
+            session_id="single-sess",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            total_premium_requests=1,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=1, cost=1),
+                    usage=TokenUsage(outputTokens=50),
+                )
+            },
+        )
+        output = _capture_summary([session])
+        # Output contains ANSI codes around numbers, so check label forms
+        assert "premium request " in output  # singular (trailing space)
+        assert "premium requests" not in output
+        # "session" appears without trailing 's'
+        stripped = output.replace("sessions", "")
+        assert "session" in stripped
