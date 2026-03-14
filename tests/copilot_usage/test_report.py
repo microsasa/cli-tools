@@ -1134,11 +1134,15 @@ class TestRenderFullSummary:
 # ---------------------------------------------------------------------------
 
 
-def _capture_cost_view(sessions: list[SessionSummary]) -> str:
+def _capture_cost_view(
+    sessions: list[SessionSummary],
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> str:
     """Capture Rich output from render_cost_view to a plain string."""
     buf = StringIO()
     console = Console(file=buf, force_terminal=True, width=120)
-    render_cost_view(sessions, target_console=console)
+    render_cost_view(sessions, since=since, until=until, target_console=console)
     return buf.getvalue()
 
 
@@ -1321,3 +1325,15 @@ class TestRenderFullSummaryHelperReuse:
         output = _capture_full_summary([session])
         assert "Per-Model Breakdown" in output
         assert "claude-sonnet-4" in output
+
+    def test_since_until_filters_sessions(self) -> None:
+        """render_cost_view since/until params exclude sessions outside range."""
+        early = _make_session(
+            start_time=datetime(2025, 1, 10, tzinfo=UTC), name="Early"
+        )
+        late = _make_session(start_time=datetime(2025, 1, 20, tzinfo=UTC), name="Late")
+        since = datetime(2025, 1, 15, tzinfo=UTC)
+        until = datetime(2025, 1, 25, tzinfo=UTC)
+        output = _capture_cost_view([early, late], since=since, until=until)
+        assert "Late" in output
+        assert "Early" not in output
