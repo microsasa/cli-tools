@@ -1826,6 +1826,39 @@ class TestConfigModelReading:
         summary = build_session_summary(events, config_path=config)
         assert summary.model is None
 
+    def test_config_model_integer_returns_none(self, tmp_path: Path) -> None:
+        """config.json with {"model": 42} → model is None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": 42}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
+    def test_config_model_null_returns_none(self, tmp_path: Path) -> None:
+        """config.json with {"model": null} → model is None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": null}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
+    def test_config_model_list_returns_none(self, tmp_path: Path) -> None:
+        """config.json with {"model": []} → model is None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": []}', encoding="utf-8")
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — empty session (only session.start)

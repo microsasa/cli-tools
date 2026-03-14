@@ -208,6 +208,27 @@ class TestRenderLiveSessions:
         output = _capture_output([session])
         assert "Active Copilot Sessions" in output
 
+    def test_last_resume_time_used_over_start_time(self) -> None:
+        """When last_resume_time is set, running time is measured from it."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="resume__12345678",
+            name="Resumed",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(days=2),
+            last_resume_time=now - timedelta(minutes=3),
+            user_messages=1,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                )
+            },
+        )
+        output = _capture_output([session])
+        # Should show minutes (from last_resume_time), NOT days (from start_time)
+        assert "2d" not in output and "48h" not in output
+
 
 # ---------------------------------------------------------------------------
 # Helpers for session detail tests
@@ -1136,6 +1157,26 @@ class TestRenderFullSummary:
         )
         output = _capture_full_summary([session])
         assert "No historical shutdown data" in output
+
+    def test_active_section_uses_last_resume_time(self) -> None:
+        """Active section shows running time from last_resume_time, not start_time."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="resu-5678-abcdef",
+            name="Resumed Session",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(days=3),
+            last_resume_time=now - timedelta(minutes=2),
+            is_active=True,
+            user_messages=1,
+            model_calls=1,
+            active_model_calls=1,
+            active_user_messages=1,
+            active_output_tokens=200,
+        )
+        output = _capture_full_summary([session])
+        # Should show minutes (from last_resume_time), NOT days (from start_time)
+        assert "3d" not in output and "72h" not in output
 
 
 # ---------------------------------------------------------------------------

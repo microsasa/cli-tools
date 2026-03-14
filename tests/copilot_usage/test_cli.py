@@ -518,3 +518,71 @@ def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
         assert observer.is_alive()  # type: ignore[union-attr]
     finally:
         _stop_observer(observer)  # pyright: ignore[reportUnknownArgumentType]
+
+
+# ---------------------------------------------------------------------------
+# _stop_observer(None) guard
+# ---------------------------------------------------------------------------
+
+
+def test_stop_observer_none_is_noop() -> None:
+    """_stop_observer(None) returns silently without raising."""
+    _stop_observer(None)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _FileChangeHandler tests
+# ---------------------------------------------------------------------------
+
+
+class TestFileChangeHandler:
+    """Tests for _FileChangeHandler debounce logic."""
+
+    def test_dispatch_sets_event_on_first_call(self) -> None:
+        """First dispatch call within a cold window sets the change_event."""
+        from copilot_usage.cli import (
+            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+        handler.dispatch(object())
+        assert event.is_set()
+
+    def test_dispatch_suppresses_within_debounce_window(self) -> None:
+        """Second dispatch call within 2 s is suppressed (debounce)."""
+        import time as _time
+
+        from copilot_usage.cli import (
+            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+        handler.dispatch(object())
+        assert event.is_set()
+
+        # Clear and force _last_trigger to now so second call is within debounce
+        event.clear()
+        handler._last_trigger = _time.monotonic()  # pyright: ignore[reportPrivateUsage]
+        handler.dispatch(object())
+        assert not event.is_set()
+
+    def test_dispatch_fires_again_after_debounce_gap(self) -> None:
+        """Dispatch fires again after > 2 s gap."""
+        import time as _time
+
+        from copilot_usage.cli import (
+            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+        handler.dispatch(object())
+        assert event.is_set()
+
+        event.clear()
+        # Simulate passage of time by manipulating _last_trigger
+        handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
+        handler.dispatch(object())
+        assert event.is_set()
