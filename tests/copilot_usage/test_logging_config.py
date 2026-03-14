@@ -1,5 +1,11 @@
 """Tests for copilot_usage.logging_config — setup_logging, _emoji_patcher, LEVEL_EMOJI."""
 
+# pyright: reportPrivateUsage=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import sys
@@ -8,10 +14,9 @@ from loguru import logger
 
 from copilot_usage.logging_config import (
     LEVEL_EMOJI,
-    _emoji_patcher,  # pyright: ignore[reportPrivateUsage]
+    _emoji_patcher,
     setup_logging,
 )
-
 
 # ---------------------------------------------------------------------------
 # setup_logging
@@ -21,28 +26,28 @@ from copilot_usage.logging_config import (
 def test_setup_logging_adds_exactly_one_sink() -> None:
     """After setup_logging(), logger has exactly one handler."""
     setup_logging()
-    assert len(logger._core.handlers) == 1  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert len(logger._core.handlers) == 1
 
 
 def test_setup_logging_idempotent() -> None:
     """Calling setup_logging() twice still results in exactly 1 sink."""
     setup_logging()
     setup_logging()
-    assert len(logger._core.handlers) == 1  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    assert len(logger._core.handlers) == 1
 
 
 def test_setup_logging_targets_stderr() -> None:
     """After setup_logging(), the single sink targets sys.stderr."""
     setup_logging()
-    handler = next(iter(logger._core.handlers.values()))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    assert handler._sink._stream is sys.stderr  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    handler = next(iter(logger._core.handlers.values()))
+    assert handler._sink._stream is sys.stderr
 
 
 def test_setup_logging_level_is_warning() -> None:
     """After setup_logging(), the minimum log level is WARNING."""
     setup_logging()
-    handler = next(iter(logger._core.handlers.values()))  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    assert handler.levelno == logger.level("WARNING").no  # pyright: ignore[reportPrivateUsage]
+    handler = next(iter(logger._core.handlers.values()))
+    assert handler.levelno == logger.level("WARNING").no
 
 
 # ---------------------------------------------------------------------------
