@@ -611,13 +611,18 @@ def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     console.print(Panel("\n".join(lines), title="Totals", border_style="cyan"))
 
 
-def _render_model_table(console: Console, sessions: list[SessionSummary]) -> None:
+def _render_model_table(
+    console: Console,
+    sessions: list[SessionSummary],
+    *,
+    title: str = "Per-Model Breakdown",
+) -> None:
     """Render the per-model breakdown table."""
     merged = _aggregate_model_metrics(sessions)
     if not merged:
         return
 
-    table = Table(title="Per-Model Breakdown", border_style="cyan")
+    table = Table(title=title, border_style="cyan")
     table.add_column("Model", style="bold")
     table.add_column("Requests", justify="right")
     table.add_column("Premium Cost", justify="right")
@@ -642,6 +647,8 @@ def _render_model_table(console: Console, sessions: list[SessionSummary]) -> Non
 def _render_session_table(
     console: Console,
     sessions: list[SessionSummary],
+    *,
+    title: str = "Sessions",
 ) -> None:
     """Render the per-session table sorted by start time (newest first)."""
     if not sessions:
@@ -653,7 +660,7 @@ def _render_session_table(
         reverse=True,
     )
 
-    table = Table(title="Sessions", border_style="cyan")
+    table = Table(title=title, border_style="cyan")
     table.add_column("Name", style="bold", max_width=40)
     table.add_column("Model")
     table.add_column("Premium", justify="right")
@@ -759,67 +766,10 @@ def _render_historical_section(
     )
 
     # Per-model table
-    merged = _aggregate_model_metrics(historical)
-    if merged:
-        table = Table(title="Per-Model Breakdown", border_style="cyan")
-        table.add_column("Model", style="bold")
-        table.add_column("Requests", justify="right")
-        table.add_column("Premium Cost", justify="right")
-        table.add_column("Input Tokens", justify="right")
-        table.add_column("Output Tokens", justify="right")
-        table.add_column("Cache Read", justify="right")
-
-        for model_name in sorted(merged):
-            mm = merged[model_name]
-            table.add_row(
-                model_name,
-                str(mm.requests.count),
-                str(mm.requests.cost),
-                format_tokens(mm.usage.inputTokens),
-                format_tokens(mm.usage.outputTokens),
-                format_tokens(mm.usage.cacheReadTokens),
-            )
-        console.print(table)
+    _render_model_table(console, historical)
 
     # Per-session table
-    sorted_sessions = sorted(
-        historical,
-        key=lambda s: s.start_time.isoformat() if s.start_time else "",
-        reverse=True,
-    )
-    session_table = Table(title="Sessions (Shutdown Data)", border_style="cyan")
-    session_table.add_column("Name", style="bold", max_width=40)
-    session_table.add_column("Model")
-    session_table.add_column("Premium", justify="right")
-    session_table.add_column("Model Calls", justify="right")
-    session_table.add_column("User Msgs", justify="right")
-    session_table.add_column("Output Tokens", justify="right")
-    session_table.add_column("Status")
-
-    for s in sorted_sessions:
-        name = s.name or s.session_id[:12]
-        model = s.model or "—"
-        output_tokens = sum(mm.usage.outputTokens for mm in s.model_metrics.values())
-        status = (
-            Text("Active 🟢", style="yellow")
-            if s.is_active
-            else Text("Completed", style="dim")
-        )
-        pr_display = (
-            str(s.total_premium_requests) if s.total_premium_requests > 0 else "—"
-        )
-
-        session_table.add_row(
-            name,
-            model,
-            pr_display,
-            str(s.model_calls),
-            str(s.user_messages),
-            format_tokens(output_tokens),
-            status,
-        )
-
-    console.print(session_table)
+    _render_session_table(console, historical, title="Sessions (Shutdown Data)")
 
 
 def _render_active_section(
@@ -966,7 +916,6 @@ def render_cost_view(
                 str(s.active_model_calls),
                 format_tokens(s.active_output_tokens),
             )
-            grand_model_calls += s.active_model_calls
             grand_output += s.active_output_tokens
 
     table.add_section()

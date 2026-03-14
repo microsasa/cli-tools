@@ -1239,3 +1239,84 @@ class TestRenderCostView:
         assert "claude-sonnet-4" in output
         assert "claude-haiku-4.5" in output
         assert "Grand Total" in output
+
+    def test_resumed_session_no_double_count(self) -> None:
+        """Regression: active_model_calls must not be added to grand_model_calls."""
+        import re
+
+        session = SessionSummary(
+            session_id="resume-5555-abcde",
+            name="Resumed",
+            model="claude-opus-4.6",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=10,
+            user_messages=4,
+            active_model_calls=3,
+            active_output_tokens=200,
+            model_metrics={
+                "claude-opus-4.6": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=21),
+                    usage=TokenUsage(outputTokens=1000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        # Grand Total Model Calls should be 10, not 13
+        clean = re.sub(r"\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        grand_line = next(line for line in lines if "Grand Total" in line)
+        cols = [c.strip() for c in grand_line.split("│")]
+        model_calls_col = cols[5]  # 0=empty, 1=Session, 2=Model, 3=Req, 4=Prem, 5=MC
+        assert model_calls_col == "10"
+
+
+class TestRenderFullSummaryHelperReuse:
+    """Verify _render_historical_section delegates to shared table helpers."""
+
+    def test_historical_session_table_title(self) -> None:
+        """Historical section must use Sessions (Shutdown Data) title."""
+        session = SessionSummary(
+            session_id="hist-7777-abcdef",
+            name="HistReuse",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=5,
+            user_messages=2,
+            model_calls=3,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(
+                        inputTokens=300, outputTokens=600, cacheReadTokens=50
+                    ),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Sessions (Shutdown Data)" in output
+
+    def test_historical_model_table_present(self) -> None:
+        """Historical section must contain per-model breakdown table."""
+        session = SessionSummary(
+            session_id="hist-8888-abcdef",
+            name="ModelTbl",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=5,
+            user_messages=2,
+            model_calls=3,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(
+                        inputTokens=300, outputTokens=600, cacheReadTokens=50
+                    ),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Per-Model Breakdown" in output
+        assert "claude-sonnet-4" in output
