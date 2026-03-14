@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from click.testing import CliRunner
+from rich.console import Console
 
 from copilot_usage.cli import (
+    _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
     main,
@@ -19,8 +20,6 @@ from copilot_usage.cli import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_NOW = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 def _write_session(
@@ -484,6 +483,25 @@ def test_interactive_no_sessions(tmp_path: Path) -> None:
     result = runner.invoke(main, ["--path", str(tmp_path)], input="q\n")
     assert result.exit_code == 0
     assert "No sessions" in result.output
+
+
+# ---------------------------------------------------------------------------
+# FileNotFoundError handling in _show_session_by_index (issue #38)
+# ---------------------------------------------------------------------------
+
+
+def test_show_session_by_index_missing_file(tmp_path: Path) -> None:
+    """_show_session_by_index prints error instead of crashing when events file is gone."""
+    from copilot_usage.models import SessionSummary
+
+    s = SessionSummary(
+        session_id="dead0000-0000-0000-0000-000000000000",
+        events_path=tmp_path / "nonexistent" / "events.jsonl",
+    )
+    console = Console(file=None, force_terminal=True)
+    with console.capture() as capture:
+        _show_session_by_index(console, [s], 1)
+    assert "no longer available" in capture.get().lower()
 
 
 # ---------------------------------------------------------------------------

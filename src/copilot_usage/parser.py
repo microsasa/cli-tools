@@ -188,7 +188,6 @@ def build_session_summary(
     all_shutdowns: list[tuple[int, SessionShutdownData, str | None]] = []
     user_message_count = 0
     total_output_tokens = 0
-    model_token_map: dict[str, int] = {}
     total_turn_starts = 0
 
     for idx, ev in enumerate(events):
@@ -335,13 +334,10 @@ def build_session_summary(
     if model is None:
         model = _read_config_model(config_path)
 
-    if model and total_output_tokens:
-        model_token_map[model] = total_output_tokens
-
     active_metrics: dict[str, ModelMetrics] = {}
-    for m, tokens in model_token_map.items():
-        active_metrics[m] = ModelMetrics(
-            usage=TokenUsage(outputTokens=tokens),
+    if model and total_output_tokens:
+        active_metrics[model] = ModelMetrics(
+            usage=TokenUsage(outputTokens=total_output_tokens),
         )
 
     return SessionSummary(
