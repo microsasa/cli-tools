@@ -70,6 +70,59 @@ class ModelMetrics(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+def merge_model_metrics(
+    base: dict[str, ModelMetrics],
+    additional: dict[str, ModelMetrics],
+) -> dict[str, ModelMetrics]:
+    """Return a new dict merging *additional* into *base* without mutation."""
+    result = {
+        name: ModelMetrics(
+            requests=RequestMetrics(
+                count=mm.requests.count,
+                cost=mm.requests.cost,
+            ),
+            usage=TokenUsage(
+                inputTokens=mm.usage.inputTokens,
+                outputTokens=mm.usage.outputTokens,
+                cacheReadTokens=mm.usage.cacheReadTokens,
+                cacheWriteTokens=mm.usage.cacheWriteTokens,
+            ),
+        )
+        for name, mm in base.items()
+    }
+    for name, mm in additional.items():
+        if name in result:
+            existing = result[name]
+            result[name] = ModelMetrics(
+                requests=RequestMetrics(
+                    count=existing.requests.count + mm.requests.count,
+                    cost=existing.requests.cost + mm.requests.cost,
+                ),
+                usage=TokenUsage(
+                    inputTokens=existing.usage.inputTokens + mm.usage.inputTokens,
+                    outputTokens=existing.usage.outputTokens + mm.usage.outputTokens,
+                    cacheReadTokens=existing.usage.cacheReadTokens
+                    + mm.usage.cacheReadTokens,
+                    cacheWriteTokens=existing.usage.cacheWriteTokens
+                    + mm.usage.cacheWriteTokens,
+                ),
+            )
+        else:
+            result[name] = ModelMetrics(
+                requests=RequestMetrics(
+                    count=mm.requests.count,
+                    cost=mm.requests.cost,
+                ),
+                usage=TokenUsage(
+                    inputTokens=mm.usage.inputTokens,
+                    outputTokens=mm.usage.outputTokens,
+                    cacheReadTokens=mm.usage.cacheReadTokens,
+                    cacheWriteTokens=mm.usage.cacheWriteTokens,
+                ),
+            )
+    return result
+
+
 class CodeChanges(BaseModel):
     """Code‐change stats from a session.shutdown event."""
 

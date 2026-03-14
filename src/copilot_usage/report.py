@@ -23,6 +23,7 @@ from copilot_usage.models import (
     SessionSummary,
     ToolExecutionData,
     UserMessageData,
+    merge_model_metrics,
 )
 
 __all__ = [
@@ -547,20 +548,7 @@ def _aggregate_model_metrics(
     """Merge model metrics across all sessions into a single dict."""
     merged: dict[str, ModelMetrics] = {}
     for s in sessions:
-        for model_name, mm in s.model_metrics.items():
-            if model_name not in merged:
-                merged[model_name] = ModelMetrics(
-                    requests=mm.requests.model_copy(),
-                    usage=mm.usage.model_copy(),
-                )
-            else:
-                existing = merged[model_name]
-                existing.requests.count += mm.requests.count
-                existing.requests.cost += mm.requests.cost
-                existing.usage.inputTokens += mm.usage.inputTokens
-                existing.usage.outputTokens += mm.usage.outputTokens
-                existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
-                existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
+        merged = merge_model_metrics(merged, s.model_metrics)
     return merged
 
 

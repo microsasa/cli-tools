@@ -17,13 +17,13 @@ from copilot_usage.models import (
     CodeChanges,
     EventType,
     ModelMetrics,
-    RequestMetrics,
     SessionEvent,
     SessionShutdownData,
     SessionStartData,
     SessionSummary,
     TokenUsage,
     ToolExecutionData,
+    merge_model_metrics,
 )
 
 _DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
@@ -276,27 +276,7 @@ def build_session_summary(
             total_api_duration += sd.totalApiDurationMs
             if sd.codeChanges is not None:
                 last_code_changes = sd.codeChanges
-            for model_name, metrics in sd.modelMetrics.items():
-                if model_name in merged_metrics:
-                    existing = merged_metrics[model_name]
-                    merged_metrics[model_name] = ModelMetrics(
-                        requests=RequestMetrics(
-                            count=existing.requests.count + metrics.requests.count,
-                            cost=existing.requests.cost + metrics.requests.cost,
-                        ),
-                        usage=TokenUsage(
-                            inputTokens=existing.usage.inputTokens
-                            + metrics.usage.inputTokens,
-                            outputTokens=existing.usage.outputTokens
-                            + metrics.usage.outputTokens,
-                            cacheReadTokens=existing.usage.cacheReadTokens
-                            + metrics.usage.cacheReadTokens,
-                            cacheWriteTokens=existing.usage.cacheWriteTokens
-                            + metrics.usage.cacheWriteTokens,
-                        ),
-                    )
-                else:
-                    merged_metrics[model_name] = metrics
+            merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
 
         return SessionSummary(
             session_id=session_id,
