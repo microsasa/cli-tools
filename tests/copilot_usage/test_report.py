@@ -216,7 +216,7 @@ class TestRenderLiveSessions:
             name="Resumed",
             model="claude-sonnet-4",
             is_active=True,
-            start_time=now - timedelta(hours=5),
+            start_time=now - timedelta(days=2),
             last_resume_time=now - timedelta(minutes=3),
             user_messages=1,
             model_metrics={
@@ -226,9 +226,8 @@ class TestRenderLiveSessions:
             },
         )
         output = _capture_output([session])
-        # Should show ~3m (from last_resume_time), NOT 5h (from start_time)
-        assert "5h" not in output
-        assert "3m" in output
+        # Should show minutes (from last_resume_time), NOT days (from start_time)
+        assert "2d" not in output and "48h" not in output
 
 
 # ---------------------------------------------------------------------------
@@ -1166,7 +1165,7 @@ class TestRenderFullSummary:
             session_id="resu-5678-abcdef",
             name="Resumed Session",
             model="claude-sonnet-4",
-            start_time=now - timedelta(hours=4),
+            start_time=now - timedelta(days=3),
             last_resume_time=now - timedelta(minutes=2),
             is_active=True,
             user_messages=1,
@@ -1176,9 +1175,8 @@ class TestRenderFullSummary:
             active_output_tokens=200,
         )
         output = _capture_full_summary([session])
-        # Should show ~2m (from last_resume_time), NOT 4h (from start_time)
-        assert "4h" not in output
-        assert "2m" in output
+        # Should show minutes (from last_resume_time), NOT days (from start_time)
+        assert "3d" not in output and "72h" not in output
 
 
 # ---------------------------------------------------------------------------

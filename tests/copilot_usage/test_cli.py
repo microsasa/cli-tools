@@ -551,6 +551,8 @@ class TestFileChangeHandler:
 
     def test_dispatch_suppresses_within_debounce_window(self) -> None:
         """Second dispatch call within 2 s is suppressed (debounce)."""
+        import time as _time
+
         from copilot_usage.cli import (
             _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
         )
@@ -560,8 +562,9 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
-        # Clear and dispatch again immediately — should be suppressed
+        # Clear and force _last_trigger to now so second call is within debounce
         event.clear()
+        handler._last_trigger = _time.monotonic()  # pyright: ignore[reportPrivateUsage]
         handler.dispatch(object())
         assert not event.is_set()
 
