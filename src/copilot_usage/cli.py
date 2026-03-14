@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from copilot_usage.models import SessionSummary
 from copilot_usage.parser import (
@@ -122,30 +123,21 @@ class _FileChangeHandler:
             self._change_event.set()
 
 
-def _start_observer(session_path: Path, change_event: threading.Event) -> object | None:
-    """Start a watchdog observer if available. Returns the observer or None."""
-    try:
-        from watchdog.observers import Observer  # type: ignore[import-untyped]
-
-        handler = _FileChangeHandler(change_event)
-        observer = Observer()
-        observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
-        observer.daemon = True
-        observer.start()
-        return observer
-    except ImportError:
-        return None
+def _start_observer(session_path: Path, change_event: threading.Event) -> object:
+    """Start a watchdog observer monitoring *session_path* for changes."""
+    handler = _FileChangeHandler(change_event)
+    observer = Observer()
+    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
+    observer.daemon = True
+    observer.start()
+    return observer
 
 
 def _stop_observer(observer: object | None) -> None:
     """Stop a watchdog observer if running."""
     if observer is not None:
-        stop = getattr(observer, "stop", None)
-        if callable(stop):
-            stop()
-        join = getattr(observer, "join", None)
-        if callable(join):
-            join(timeout=2)
+        observer.stop()  # type: ignore[union-attr]
+        observer.join(timeout=2)  # type: ignore[union-attr]
 
 
 def _interactive_loop(path: Path | None) -> None:

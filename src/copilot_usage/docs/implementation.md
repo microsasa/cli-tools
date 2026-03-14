@@ -262,7 +262,7 @@ observer.daemon = True
 observer.start()
 ```
 
-The observer is optional — if `watchdog` is not installed, the import fails silently and `observer` stays `None` (`cli.py:131`).
+The observer watches the session-state directory; if the directory doesn't exist at startup, no observer is created and auto-refresh is simply skipped.
 
 ### `_FileChangeHandler` with 2-second debounce
 

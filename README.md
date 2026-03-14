@@ -38,7 +38,7 @@ This shows the full summary dashboard with a numbered session list. From there:
 
 Each sub-view has a "Press Enter to go back" prompt to return home.
 
-If `watchdog` is installed, the display auto-refreshes when session files change (2-second debounce). Install it with `uv add watchdog` for live-updating views.
+The display auto-refreshes when session files change (2-second debounce).
 
 #### Commands
 
