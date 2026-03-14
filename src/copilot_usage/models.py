@@ -103,9 +103,7 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[dict[str, object]] = Field(
-        default_factory=lambda: list[dict[str, object]]()
-    )
+    toolRequests: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SessionShutdownData(BaseModel):
@@ -205,20 +203,6 @@ class SessionEvent(BaseModel):
                 return UserMessageData.model_validate(self.data)
             case _:
                 return GenericEventData.model_validate(self.data)
-
-
-# ---------------------------------------------------------------------------
-# EventBase — common fields only (useful for filtering / indexing)
-# ---------------------------------------------------------------------------
-
-
-class EventBase(BaseModel):
-    """Common envelope fields shared by every event."""
-
-    type: str
-    id: str | None = None
-    timestamp: datetime | None = None
-    parentId: str | None = None
 
 
 # ---------------------------------------------------------------------------

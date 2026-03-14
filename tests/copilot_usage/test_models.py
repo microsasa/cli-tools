@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from copilot_usage.models import (
     AssistantMessageData,
     CodeChanges,
-    EventBase,
     EventType,
     ModelMetrics,
     RequestMetrics,
@@ -148,19 +147,6 @@ def test_user_message_data() -> None:
     d = UserMessageData.model_validate(RAW_USER_MESSAGE["data"])
     assert d.content == "hey there"
     assert d.interactionId == "c0c803cf"
-
-
-# ---------------------------------------------------------------------------
-# EventBase
-# ---------------------------------------------------------------------------
-
-
-def test_event_base() -> None:
-    e = EventBase.model_validate(RAW_SESSION_START)
-    assert e.type == "session.start"
-    assert e.id == "7283e3ac-5608-4a28-a37b-32b744733314"
-    assert e.parentId is None
-    assert e.timestamp is not None
 
 
 # ---------------------------------------------------------------------------
