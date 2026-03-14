@@ -204,20 +204,22 @@ Add `V=1` for verbose output: `make check V=1`
 cli-tools/
 ├── src/
 │   └── copilot_usage/
-│       ├── cli.py          # Click commands + interactive loop + watchdog auto-refresh
-│       ├── models.py       # Pydantic data models
-│       ├── parser.py       # events.jsonl parsing
-│       ├── pricing.py      # Model cost multipliers
-│       ├── logging_config.py # Loguru configuration
-│       └── report.py       # Rich terminal output
+│       ├── cli.py              # Click commands + interactive loop + watchdog auto-refresh
+│       ├── models.py           # Pydantic data models
+│       ├── parser.py           # events.jsonl parsing
+│       ├── pricing.py          # Model cost multipliers
+│       ├── logging_config.py   # Loguru configuration
+│       ├── report.py           # Rich terminal output
+│       └── docs/               # Developer docs
+│           ├── architecture.md
+│           ├── changelog.md
+│           ├── implementation.md
+│           └── plan.md
 ├── tests/
-│   ├── copilot_usage/      # Unit tests
-│   └── e2e/                # End-to-end tests with fixtures
+│   ├── copilot_usage/          # Unit tests
+│   └── e2e/                    # End-to-end tests with fixtures
 ├── docs/
-│   ├── plan.md
-│   ├── architecture.md
-│   ├── changelog.md
-│   └── implementation.md
+│   └── changelog.md            # Top-level changelog
 ├── Makefile
 └── pyproject.toml
 ```

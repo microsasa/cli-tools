@@ -388,20 +388,11 @@ def cost(
     try:
         sessions = get_all_sessions(path)
 
-        # Filter by date range
-        since_aware = _ensure_aware(since)
-        until_aware = _ensure_aware(until)
-        filtered = sessions
-        if since_aware is not None or until_aware is not None:
-            filtered = [
-                s
-                for s in sessions
-                if s.start_time is not None
-                and (since_aware is None or s.start_time >= since_aware)
-                and (until_aware is None or s.start_time <= until_aware)
-            ]
-
-        render_cost_view(filtered)
+        render_cost_view(
+            sessions,
+            since=_ensure_aware(since),
+            until=_ensure_aware(until),
+        )
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
