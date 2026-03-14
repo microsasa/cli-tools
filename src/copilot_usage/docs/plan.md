@@ -27,7 +27,7 @@ Standards: follows `microsasa/project-standards`
 - **`~/.copilot/logs/process-*.log`** — CompactionProcessor lines show real-time token utilization
 
 **Commands**:
-- `copilot-usage` — launches Rich interactive mode with numbered session list, cost view, and watchdog-based auto-refresh (2-second debounce when `watchdog` is installed)
+- `copilot-usage` — launches Rich interactive mode with numbered session list, cost view, and watchdog-based auto-refresh (2-second debounce)
 - `copilot-usage session <id>` — per-turn token breakdown, tools used, API call timeline, code changes (static CLI output)
 
 **Interactive mode**:
@@ -36,7 +36,7 @@ The main interface. Launches a Rich-based interactive loop in the terminal:
 - **Session detail**: enter a session number to drill into per-turn breakdown
 - **Cost view**: press `c` to see premium request breakdown per session, per model
 - **Manual refresh**: press `r` to reload session data
-- **Auto-refresh**: if `watchdog` is installed, monitors `events.jsonl` files for changes and auto-refreshes the current view (2-second debounce). This provides the live-updating dashboard experience.
+- **Auto-refresh**: monitors `events.jsonl` files for changes and auto-refreshes the current view (2-second debounce). This provides the live-updating dashboard experience.
 - **Quit**: press `q` to exit
 
 **Data philosophy**:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from click.testing import CliRunner
 
-from copilot_usage.cli import main
+from copilot_usage.cli import _start_observer, _stop_observer, main
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -479,3 +480,19 @@ def test_interactive_no_sessions(tmp_path: Path) -> None:
     result = runner.invoke(main, ["--path", str(tmp_path)], input="q\n")
     assert result.exit_code == 0
     assert "No sessions" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Watchdog observer tests
+# ---------------------------------------------------------------------------
+
+
+def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
+    """_start_observer returns a non-None, alive observer for an existing dir."""
+    change_event = threading.Event()
+    observer = _start_observer(tmp_path, change_event)
+    try:
+        assert observer is not None
+        assert observer.is_alive()
+    finally:
+        _stop_observer(observer)
