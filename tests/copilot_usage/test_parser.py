@@ -1,5 +1,7 @@
 """Tests for copilot_usage.parser — session discovery, parsing, and summary."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import json
@@ -28,6 +30,7 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _extract_session_name,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -1922,3 +1925,80 @@ class TestBuildSessionSummaryEmptySession:
         events = parse_events(p)
         summary = build_session_summary(events, config_path=Path("/dev/null"))
         assert summary.code_changes is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — _extract_session_name edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSessionName:
+    """Tests for _extract_session_name covering untested branches."""
+
+    def test_plain_text_line_returns_none(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("Just plain text\n", encoding="utf-8")
+        assert _extract_session_name(tmp_path) is None
+
+    def test_empty_file_returns_none(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("", encoding="utf-8")
+        assert _extract_session_name(tmp_path) is None
+
+    def test_oserror_returns_none(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Title\n", encoding="utf-8")
+
+        original_read_text = Path.read_text
+
+        def _raise_os_error(self: Path, *args: object, **kwargs: object) -> str:
+            if self == plan:
+                raise OSError("denied")
+            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "read_text", _raise_os_error):
+            assert _extract_session_name(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — get_all_sessions OSError recovery
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessionsOsError:
+    """Tests that get_all_sessions gracefully skips sessions with OSError."""
+
+    def test_oserror_session_is_skipped(self, tmp_path: Path) -> None:
+        """A session that raises OSError on parse is silently skipped."""
+        for sid in ["sess-a", "sess-b"]:
+            d = tmp_path / sid
+            d.mkdir()
+            (d / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "session.start",
+                        "data": {
+                            "sessionId": sid,
+                            "startTime": "2025-01-15T10:00:00Z",
+                            "context": {"cwd": "/"},
+                        },
+                        "timestamp": "2025-01-15T10:00:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+        target = tmp_path / "sess-a" / "events.jsonl"
+        original_open = Path.open
+
+        def _flaky_open(self: Path, *args: object, **kwargs: object) -> object:  # type: ignore[override]
+            if self == target:
+                raise OSError("permission denied")
+            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "open", _flaky_open):
+            results = get_all_sessions(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].session_id == "sess-b"
