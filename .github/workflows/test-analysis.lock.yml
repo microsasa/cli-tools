@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"1fa429585fa84edf9e392b4433947f538df94a3fdd35667eaf2d54d507b5ecda","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"e7ec86fbdfb1d2ac495df4936de975b08c0c8f40b2c0a0deef4bf50b20d34e83","compiler_version":"v0.58.1","strict":true}
 
 name: "Test Suite Analysis"
 "on":
@@ -125,7 +125,7 @@ jobs:
           cat "/opt/gh-aw/prompts/safe_outputs_prompt.md"
           cat << 'GH_AW_PROMPT_EOF'
           <safe-output-tools>
-          Tools: create_issue, create_agent_session, missing_tool, missing_data, noop
+          Tools: create_issue, dispatch_workflow, missing_tool, missing_data, noop
           </safe-output-tools>
           <github-context>
           The following GitHub context information is available for this workflow:
@@ -311,7 +311,7 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
           cat > /opt/gh-aw/safeoutputs/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-          {"create_agent_session":{"max":2},"create_issue":{"max":2},"missing_data":{},"missing_tool":{},"noop":{"max":1}}
+          {"create_issue":{"max":2},"dispatch_workflow":{"max":2,"workflow_files":{"issue-implementer":".lock.yml"},"workflows":["issue-implementer"]},"missing_data":{},"missing_tool":{},"noop":{"max":1}}
           GH_AW_SAFE_OUTPUTS_CONFIG_EOF
       - name: Write Safe Outputs Tools
         run: |
@@ -365,31 +365,6 @@ jobs:
                 "type": "object"
               },
               "name": "create_issue"
-            },
-            {
-              "description": "Create a GitHub Copilot coding agent session to delegate coding work. Use this when you need another Copilot coding agent to implement code changes, fix bugs, or complete development tasks. The task becomes a new issue that triggers the Copilot coding agent. For non-coding tasks or manual work items, use create_issue instead. CONSTRAINTS: Maximum 2 agent task(s) can be created.",
-              "inputSchema": {
-                "additionalProperties": false,
-                "properties": {
-                  "body": {
-                    "description": "Clear, detailed task description for the Copilot coding agent. Include specific files to modify, expected behavior, acceptance criteria, and any constraints. The description should be actionable and self-contained.",
-                    "type": "string"
-                  },
-                  "integrity": {
-                    "description": "Trustworthiness level of the message source (e.g., \"low\", \"medium\", \"high\").",
-                    "type": "string"
-                  },
-                  "secrecy": {
-                    "description": "Confidentiality level of the message content (e.g., \"public\", \"internal\", \"private\").",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "body"
-                ],
-                "type": "object"
-              },
-              "name": "create_agent_session"
             },
             {
               "description": "Report that a tool or capability needed to complete the task is not available, or share any information you deem important about missing functionality or limitations. Use this when you cannot accomplish what was requested because the required functionality is missing or access is restricted.",
@@ -483,26 +458,29 @@ jobs:
                 "type": "object"
               },
               "name": "missing_data"
+            },
+            {
+              "_workflow_name": "issue-implementer",
+              "description": "Dispatch the 'issue-implementer' workflow with workflow_dispatch trigger. This workflow must support workflow_dispatch and be in .github/workflows/ directory in the same repository.",
+              "inputSchema": {
+                "additionalProperties": false,
+                "properties": {
+                  "issue_number": {
+                    "description": "Issue number to fix",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issue_number"
+                ],
+                "type": "object"
+              },
+              "name": "issue_implementer"
             }
           ]
           GH_AW_SAFE_OUTPUTS_TOOLS_EOF
           cat > /opt/gh-aw/safeoutputs/validation.json << 'GH_AW_SAFE_OUTPUTS_VALIDATION_EOF'
           {
-            "create_agent_session": {
-              "defaultMax": 1,
-              "fields": {
-                "body": {
-                  "required": true,
-                  "type": "string",
-                  "sanitize": true,
-                  "maxLength": 65000
-                },
-                "repo": {
-                  "type": "string",
-                  "maxLength": 256
-                }
-              }
-            },
             "create_issue": {
               "defaultMax": 1,
               "fields": {
@@ -994,6 +972,7 @@ jobs:
     if: (always()) && (needs.agent.result != 'skipped')
     runs-on: ubuntu-slim
     permissions:
+      actions: write
       contents: read
       issues: write
     concurrency:
@@ -1093,6 +1072,7 @@ jobs:
     if: ((!cancelled()) && (needs.agent.result != 'skipped')) && (needs.agent.outputs.detection_success == 'true')
     runs-on: ubuntu-slim
     permissions:
+      actions: write
       contents: read
       issues: write
     timeout-minutes: 15
@@ -1104,8 +1084,6 @@ jobs:
     outputs:
       code_push_failure_count: ${{ steps.process_safe_outputs.outputs.code_push_failure_count }}
       code_push_failure_errors: ${{ steps.process_safe_outputs.outputs.code_push_failure_errors }}
-      create_agent_session_session_number: ${{ steps.create_agent_session.outputs.session_number }}
-      create_agent_session_session_url: ${{ steps.create_agent_session.outputs.session_url }}
       create_discussion_error_count: ${{ steps.process_safe_outputs.outputs.create_discussion_error_count }}
       create_discussion_errors: ${{ steps.process_safe_outputs.outputs.create_discussion_errors }}
       created_issue_number: ${{ steps.process_safe_outputs.outputs.created_issue_number }}
@@ -1117,6 +1095,7 @@ jobs:
         uses: github/gh-aw/actions/setup@fa061e89469ef007881d22d3af5a8c9e62363a0d # v0.58.1
         with:
           destination: /opt/gh-aw/actions
+          safe-output-custom-tokens: 'true'
       - name: Download agent output artifact
         id: download-agent-output
         continue-on-error: true
@@ -1138,7 +1117,7 @@ jobs:
           GH_AW_ALLOWED_DOMAINS: "api.business.githubcopilot.com,api.enterprise.githubcopilot.com,api.github.com,api.githubcopilot.com,api.individual.githubcopilot.com,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,ppa.launchpad.net,raw.githubusercontent.com,registry.npmjs.org,s.symcb.com,s.symcd.com,security.ubuntu.com,telemetry.enterprise.githubcopilot.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"create_agent_session\":{\"max\":2},\"create_issue\":{\"max\":2},\"missing_data\":{},\"missing_tool\":{}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"create_issue\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":2},\"dispatch_workflow\":{\"max\":2,\"workflow_files\":{\"issue-implementer\":\".lock.yml\"},\"workflows\":[\"issue-implementer\"]},\"missing_data\":{},\"missing_tool\":{}}"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1146,18 +1125,6 @@ jobs:
             setupGlobals(core, github, context, exec, io);
             const { main } = require('/opt/gh-aw/actions/safe_output_handler_manager.cjs');
             await main();
-      - name: Create Agent Session
-        id: create_agent_session
-        if: ((!cancelled()) && (needs.agent.result != 'skipped')) && (contains(needs.agent.outputs.output_types, 'create_agent_session'))
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          GH_AW_AGENT_OUTPUT: ${{ env.GH_AW_AGENT_OUTPUT }}
-        with:
-          github-token: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          script: |
-            const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
-            setupGlobals(core, github, context, exec, io);
-            const { main } = require('/opt/gh-aw/actions/create_agent_session.cjs'); await main();
       - name: Upload Safe Output Items Manifest
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
