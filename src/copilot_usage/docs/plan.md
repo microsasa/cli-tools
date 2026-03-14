@@ -44,8 +44,8 @@ The main interface. Launches a Rich-based interactive loop in the terminal:
 - **Active session data** (since last shutdown or session start): event counts from events.jsonl — model calls, user messages, output tokens. Premium requests are NOT available in events.jsonl between shutdowns; estimation approaches TBD.
 - Reports clearly separate historical and active data — never mix exact and estimated numbers.
 
-**Planned features**:
-- Active session premium request estimation — iterate on approaches and validate against `/usage` command output
+**Decided against**:
+- Active session premium request estimation — multipliers don't map 1:1 to API calls, producing unreliable numbers. Show "N/A" instead.
 
 ### Future tool ideas
 - **repo-health** — audit any repo against project-standards (missing Makefile targets, wrong ruff rules, missing py.typed, etc.)
@@ -63,15 +63,14 @@ cli-tools/
 ├── .github/
 │   ├── dependabot.yml
 │   └── workflows/
-│       └── ci.yml
+│       ├── ci.yml
+│       ├── codeql.yml
+│       └── dependency-review.yml
 ├── Makefile
 ├── pyproject.toml
 ├── README.md
 ├── docs/
-│   ├── plan.md                     # This file
-│   ├── architecture.md             # System design and data flow
-│   ├── changelog.md                # Append-only PR history
-│   └── implementation.md           # Deep-dive into internals
+│   └── changelog.md                # Repo-level (CI, infra)
 ├── src/
 │   └── copilot_usage/
 │       ├── __init__.py
@@ -80,7 +79,13 @@ cli-tools/
 │       ├── parser.py
 │       ├── models.py
 │       ├── report.py
-│       └── pricing.py
+│       ├── pricing.py
+│       ├── logging_config.py
+│       └── docs/                   # Tool-specific docs
+│           ├── plan.md             # This file
+│           ├── architecture.md
+│           ├── changelog.md
+│           └── implementation.md
 └── tests/
     ├── copilot_usage/              # Unit tests
     │   ├── test_cli.py
