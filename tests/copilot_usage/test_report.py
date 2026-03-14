@@ -1263,12 +1263,13 @@ class TestRenderCostView:
         )
         output = _capture_cost_view([session])
         # Grand Total Model Calls should be 10, not 13
-        clean = re.sub(r"\[[0-9;]*m", "", output)
-        lines = clean.splitlines()
-        grand_line = next(line for line in lines if "Grand Total" in line)
-        cols = [c.strip() for c in grand_line.split("│")]
-        model_calls_col = cols[5]  # 0=empty, 1=Session, 2=Model, 3=Req, 4=Prem, 5=MC
-        assert model_calls_col == "10"
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # Match: Grand Total │ │ Req │ Prem │ ModelCalls │
+        grand_match = re.search(
+            r"Grand Total\s*│[^│]*│\s*\d+\s*│\s*\d+\s*│\s*(\d+)\s*│", clean
+        )
+        assert grand_match is not None, "Grand Total row not found"
+        assert grand_match.group(1) == "10"
 
 
 class TestRenderFullSummaryHelperReuse:
