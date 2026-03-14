@@ -123,7 +123,7 @@ class _FileChangeHandler:
             self._change_event.set()
 
 
-def _start_observer(session_path: Path, change_event: threading.Event) -> Observer:
+def _start_observer(session_path: Path, change_event: threading.Event) -> object:
     """Start a watchdog observer monitoring *session_path* for changes."""
     handler = _FileChangeHandler(change_event)
     observer = Observer()
@@ -133,11 +133,11 @@ def _start_observer(session_path: Path, change_event: threading.Event) -> Observ
     return observer
 
 
-def _stop_observer(observer: Observer | None) -> None:
+def _stop_observer(observer: object | None) -> None:
     """Stop a watchdog observer if running."""
     if observer is not None:
-        observer.stop()
-        observer.join(timeout=2)
+        observer.stop()  # type: ignore[union-attr]
+        observer.join(timeout=2)  # type: ignore[union-attr]
 
 
 def _interactive_loop(path: Path | None) -> None:
