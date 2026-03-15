@@ -33,8 +33,10 @@ Audit/Health Agent → creates issue (max 2) → dispatches Implementer
       → CI fails? → CI Fixer agent (1 retry, label guard)
       → Copilot has comments? → Review Responder addresses them (pushes fixes)
       → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
-        → LOW/MEDIUM impact → approves → auto-merge fires
+        → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
         → HIGH impact → flags for human review (auto-merge stays blocked)
+    → PR behind main after another PR merges?
+      → PR Rescue workflow (push to main trigger) → rebases → CI reruns → re-approves → auto-merge fires
 ```
 
 </details>
@@ -335,9 +337,10 @@ Settings required for the autonomous pipeline:
 |---|---|---|
 | Auto-merge | `gh api repos/OWNER/REPO -X PATCH -f allow_auto_merge=true` | `true` |
 | Branch protection: required reviews | API (see below) | 1 approving review |
-| Branch protection: dismiss stale | API | `true` |
-| Branch protection: required status | API | `check` |
+| Branch protection: dismiss stale | API | `false` (disabled for PR rescue rebase flow) |
+| Branch protection: required status | API | `check` (strict: must be up to date) |
 | Branch protection: enforce admins | API | `true` |
+| Branch protection: conversation resolution | API | `true` (all review threads must be resolved) |
 | Copilot auto-review | Ruleset API (see above) | Active, review on push |
 | Actions: first-time contributor approval | GitHub UI (Settings → Actions → General) | TBD |
 
@@ -362,17 +365,42 @@ EOF
 With `enforce_admins: true` and 1 required approval, you can't merge your own PRs without an external approver. Workaround:
 
 ```bash
-# Temporarily disable enforce_admins
+# 1. FIRST: Disable auto-merge on all other open PRs (CRITICAL — race condition, see #83)
+for pr in $(gh pr list --state open --json number,autoMergeRequest --jq '.[] | select(.autoMergeRequest != null) | .number'); do
+  gh pr merge --disable-auto "$pr"
+done
+
+# 2. Temporarily disable enforce_admins
 gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X DELETE
 
-# Admin merge
+# 3. Admin merge
 gh pr merge <PR> --merge --admin --delete-branch
 
-# Re-enable
+# 4. Re-enable enforce_admins
 gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X POST
+
+# 5. Re-enable auto-merge on those PRs
+for pr in <saved list>; do
+  gh pr merge --enable-auto --merge "$pr"
+done
 ```
 
+> **Warning**: Skipping steps 1 and 5 allows any PR with auto-merge + green CI to merge without required approvals during the enforce_admins disable window. PR #69 merged with zero approvals due to this race condition (issue #83).
+
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
+
+### PR Rescue Workflow
+
+When a PR merges to main, other open agent PRs fall behind. With `strict: true` (require branch to be up to date), auto-merge blocks until the branch is rebased.
+
+The **PR Rescue workflow** (`.github/workflows/pr-rescue.yml`) fires on every push to main:
+1. Finds open `aw`-labeled PRs with auto-merge enabled that are behind main and already approved
+2. Rebases them onto latest main
+3. CI reruns on the rebased commit
+4. Since `dismiss_stale_reviews` is disabled, the existing approval survives
+5. Auto-merge fires
+
+Note: `dismiss_stale_reviews` is set to `false` to support this flow. This is safe for a solo-developer repo. If collaborators are added, re-evaluate this setting.
 
 </details>
 

@@ -1,0 +1,90 @@
+name: PR Rescue
+
+# Runs when main advances (PR merged). Rebases open agent PRs that are
+# behind main so auto-merge can proceed. With dismiss_stale_reviews
+# disabled, the existing quality-gate approval survives the rebase.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: pr-rescue
+  cancel-in-progress: true
+
+jobs:
+  rescue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_AW_WRITE_TOKEN }}
+
+      - name: Find and rebase stuck agent PRs
+        env:
+          GH_TOKEN: ${{ secrets.GH_AW_WRITE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Finding open agent PRs with auto-merge enabled"
+          prs=$(gh pr list --state open --label aw --json number,headRefName,autoMergeRequest \
+            --jq '.[] | select(.autoMergeRequest != null) | "\(.number) \(.headRefName)"')
+
+          if [ -z "$prs" ]; then
+            echo "No agent PRs with auto-merge enabled. Nothing to rescue."
+            exit 0
+          fi
+          echo "Found PRs to check:"
+          echo "$prs"
+          echo "::endgroup::"
+
+          rescued=0
+          while IFS=' ' read -r pr_number branch; do
+            echo "::group::Processing PR #${pr_number} (branch: ${branch})"
+
+            # Check if PR is behind main
+            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus')
+            echo "Merge state: ${merge_state}"
+
+            if [ "$merge_state" != "BEHIND" ] && [ "$merge_state" != "BLOCKED" ]; then
+              echo "PR #${pr_number} is not behind main (state: ${merge_state}). Skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Check if PR has an approving review (no point rebasing if not approved yet)
+            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision')
+            if [ "$review_decision" != "APPROVED" ]; then
+              echo "PR #${pr_number} has no approval yet (decision: ${review_decision}). Skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            echo "PR #${pr_number} is approved but behind main. Rebasing..."
+
+            git fetch origin "$branch"
+            git checkout "$branch"
+
+            if git rebase origin/main; then
+              echo "Rebase successful. Pushing..."
+              git push --force-with-lease origin "$branch"
+              echo "✅ PR #${pr_number} rebased. CI will rerun, approval survives, auto-merge will fire."
+              rescued=$((rescued + 1))
+            else
+              echo "::warning::Rebase failed for PR #${pr_number} — likely has conflicts. Skipping."
+              git rebase --abort
+            fi
+
+            git checkout main
+            echo "::endgroup::"
+          done <<< "$prs"
+
+          echo "Rescued ${rescued} PR(s)."
