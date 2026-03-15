@@ -6,11 +6,13 @@ import json
 import threading
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _interactive_loop,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
@@ -483,6 +485,118 @@ def test_interactive_no_sessions(tmp_path: Path) -> None:
     result = runner.invoke(main, ["--path", str(tmp_path)], input="q\n")
     assert result.exit_code == 0
     assert "No sessions" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Auto-refresh tests (issue #54)
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_auto_refresh_cost_view(tmp_path: Path) -> None:
+    """change_event fires while in cost view → re-renders cost table."""
+    _write_session(tmp_path, "ar_cost0-0000-0000-0000-000000000000", name="CostAR")
+
+    change_event = threading.Event()
+    call_count = 0
+
+    def controlled_input() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # After returning "c", the loop navigates to cost view.
+            # Set change_event so next iteration auto-refreshes in cost view.
+            change_event.set()
+            return "c"
+        if call_count == 2:
+            return ""  # go back to home
+        return "q"
+
+    with (
+        patch("builtins.input", controlled_input),
+        patch("copilot_usage.cli.threading.Event", return_value=change_event),
+        patch("copilot_usage.cli._start_observer", return_value=None),
+        patch("copilot_usage.cli._read_line_nonblocking", side_effect=ValueError),
+        patch("copilot_usage.cli.render_cost_view") as mock_cost,
+    ):
+        _interactive_loop(tmp_path)
+
+    # render_cost_view called twice: initial "c" navigation + auto-refresh
+    assert mock_cost.call_count == 2
+
+
+def test_interactive_auto_refresh_detail_view(tmp_path: Path) -> None:
+    """change_event fires while in detail view → re-renders session detail."""
+    _write_session(tmp_path, "ar_det00-0000-0000-0000-000000000000", name="DetailAR")
+
+    change_event = threading.Event()
+    call_count = 0
+
+    def controlled_input() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Navigate to detail view for session #1.
+            # Set change_event for auto-refresh on next iteration.
+            change_event.set()
+            return "1"
+        if call_count == 2:
+            return ""  # go back to home
+        return "q"
+
+    with (
+        patch("builtins.input", controlled_input),
+        patch("copilot_usage.cli.threading.Event", return_value=change_event),
+        patch("copilot_usage.cli._start_observer", return_value=None),
+        patch("copilot_usage.cli._read_line_nonblocking", side_effect=ValueError),
+        patch("copilot_usage.cli._show_session_by_index") as mock_show,
+    ):
+        _interactive_loop(tmp_path)
+
+    # _show_session_by_index called twice: initial "1" navigation + auto-refresh
+    assert mock_show.call_count == 2
+    # Auto-refresh used the saved detail_idx (1)
+    assert mock_show.call_args_list[1][0][2] == 1
+
+
+def test_interactive_auto_refresh_detail_idx_none_guard(tmp_path: Path) -> None:
+    """After leaving detail view, auto-refresh does not re-render detail.
+
+    When the user returns from detail view to home, detail_idx becomes None.
+    If change_event fires at that point, the detail auto-refresh guard
+    (``detail_idx is not None``) prevents a spurious re-render.
+    """
+    _write_session(tmp_path, "ar_none0-0000-0000-0000-000000000000", name="NoneGuard")
+
+    change_event = threading.Event()
+    call_count = 0
+
+    def controlled_input() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "1"  # enter detail view
+        if call_count == 2:
+            # Returning "" goes back to home (view="home", detail_idx=None).
+            # Set change_event so next iteration triggers auto-refresh.
+            change_event.set()
+            return ""
+        if call_count == 3:
+            return ""  # stay in home after auto-refresh
+        return "q"
+
+    with (
+        patch("builtins.input", controlled_input),
+        patch("copilot_usage.cli.threading.Event", return_value=change_event),
+        patch("copilot_usage.cli._start_observer", return_value=None),
+        patch("copilot_usage.cli._read_line_nonblocking", side_effect=ValueError),
+        patch("copilot_usage.cli._show_session_by_index") as mock_show,
+    ):
+        _interactive_loop(tmp_path)
+
+    # _show_session_by_index called once (initial "1" navigation only).
+    # Auto-refresh did NOT call it because detail_idx was None after
+    # returning to the home view.
+    assert mock_show.call_count == 1
 
 
 # ---------------------------------------------------------------------------
