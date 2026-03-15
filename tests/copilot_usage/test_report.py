@@ -27,6 +27,7 @@ from copilot_usage.report import (
     _filter_sessions,
     _format_detail_duration,
     _format_relative_time,
+    _format_session_running_time,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -1699,3 +1700,32 @@ class TestRenderTotalsSingularLabels:
         # "session" appears without trailing 's'
         stripped = output.replace("sessions", "")
         assert "session" in stripped
+
+
+# ---------------------------------------------------------------------------
+# Issue #66 — _format_session_running_time helper
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSessionRunningTime:
+    """Tests for the extracted _format_session_running_time helper."""
+
+    def test_returns_dash_when_no_start_time(self) -> None:
+        session = SessionSummary(session_id="no-start")
+        assert _format_session_running_time(session) == "—"
+
+    def test_uses_start_time_when_no_resume(self) -> None:
+        start = datetime.now(tz=UTC) - timedelta(minutes=5, seconds=30)
+        session = SessionSummary(session_id="s1", start_time=start)
+        result = _format_session_running_time(session)
+        assert "5m" in result
+
+    def test_uses_last_resume_time_over_start_time(self) -> None:
+        start = datetime.now(tz=UTC) - timedelta(hours=2)
+        resume = datetime.now(tz=UTC) - timedelta(minutes=3)
+        session = SessionSummary(
+            session_id="s2", start_time=start, last_resume_time=resume
+        )
+        result = _format_session_running_time(session)
+        assert "3m" in result
+        assert "2h" not in result
