@@ -88,8 +88,8 @@ def format_duration(ms: int) -> str:
     return " ".join(parts)
 
 
-def _format_duration(start: datetime) -> str:
-    """Return a human-readable duration from *start* to now.
+def _format_elapsed_since(start: datetime) -> str:
+    """Return a human-readable elapsed time from *start* to now.
 
     Formats as ``Xh Ym`` when >= 1 hour, otherwise ``Ym Zs``.
     """
@@ -144,7 +144,7 @@ def render_live_sessions(sessions: list[SessionSummary]) -> None:
         name = s.name or "—"
         model = s.model or "—"
         running = (
-            _format_duration(s.last_resume_time or s.start_time)
+            _format_elapsed_since(s.last_resume_time or s.start_time)
             if s.start_time
             else "—"
         )
@@ -801,7 +801,7 @@ def _render_active_section(
         name = s.name or s.session_id[:12]
         model = s.model or "—"
         running = (
-            _format_duration(s.last_resume_time or s.start_time)
+            _format_elapsed_since(s.last_resume_time or s.start_time)
             if s.start_time
             else "—"
         )

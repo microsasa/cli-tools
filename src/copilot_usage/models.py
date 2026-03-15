@@ -208,20 +208,6 @@ class SessionEvent(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# EventBase — common fields only (useful for filtering / indexing)
-# ---------------------------------------------------------------------------
-
-
-class EventBase(BaseModel):
-    """Common envelope fields shared by every event."""
-
-    type: str
-    id: str | None = None
-    timestamp: datetime | None = None
-    parentId: str | None = None
-
-
-# ---------------------------------------------------------------------------
 # Session summary (aggregated from all events in one session)
 # ---------------------------------------------------------------------------
 
