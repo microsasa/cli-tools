@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"9caa2f1aad768faa9d9a4ea6399a4c318cd0930174038c8e166debeb9d0ccd2a","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"e1defa99f6997703c92f43de1a3dcd3fcc7661ead5eb63b2ac8f1023f3db57be","compiler_version":"v0.58.1","strict":true}
 
 name: "Review Responder"
 "on":
@@ -32,6 +32,7 @@ name: "Review Responder"
   pull_request_review:
     types:
     - submitted
+  # roles: all # Roles processed as role check in pre-activation job
 
 permissions: {}
 
@@ -43,8 +44,6 @@ run-name: "Review Responder"
 
 jobs:
   activation:
-    needs: pre_activation
-    if: needs.pre_activation.outputs.activated == 'true'
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -213,7 +212,6 @@ jobs:
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
           GH_AW_IS_PR_COMMENT: ${{ github.event.issue.pull_request && 'true' || '' }}
-          GH_AW_NEEDS_PRE_ACTIVATION_OUTPUTS_ACTIVATED: ${{ needs.pre_activation.outputs.activated }}
         with:
           script: |
             const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
@@ -233,8 +231,7 @@ jobs:
                 GH_AW_GITHUB_REPOSITORY: process.env.GH_AW_GITHUB_REPOSITORY,
                 GH_AW_GITHUB_RUN_ID: process.env.GH_AW_GITHUB_RUN_ID,
                 GH_AW_GITHUB_WORKSPACE: process.env.GH_AW_GITHUB_WORKSPACE,
-                GH_AW_IS_PR_COMMENT: process.env.GH_AW_IS_PR_COMMENT,
-                GH_AW_NEEDS_PRE_ACTIVATION_OUTPUTS_ACTIVATED: process.env.GH_AW_NEEDS_PRE_ACTIVATION_OUTPUTS_ACTIVATED
+                GH_AW_IS_PR_COMMENT: process.env.GH_AW_IS_PR_COMMENT
               }
             });
       - name: Validate prompt placeholders
@@ -1197,30 +1194,6 @@ jobs:
             const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
             setupGlobals(core, github, context, exec, io);
             const { main } = require('/opt/gh-aw/actions/handle_noop_message.cjs');
-            await main();
-
-  pre_activation:
-    runs-on: ubuntu-slim
-    outputs:
-      activated: ${{ steps.check_membership.outputs.is_team_member == 'true' }}
-      matched_command: ''
-    steps:
-      - name: Setup Scripts
-        uses: github/gh-aw/actions/setup@fa061e89469ef007881d22d3af5a8c9e62363a0d # v0.58.1
-        with:
-          destination: /opt/gh-aw/actions
-      - name: Check team membership for workflow
-        id: check_membership
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          GH_AW_REQUIRED_ROLES: admin,maintainer,write
-          GH_AW_ALLOWED_BOTS: Copilot,copilot-pull-request-reviewer
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
-            setupGlobals(core, github, context, exec, io);
-            const { main } = require('/opt/gh-aw/actions/check_membership.cjs');
             await main();
 
   safe_outputs:

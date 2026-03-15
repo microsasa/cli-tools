@@ -10,6 +10,16 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 **Fix**: Added both `Copilot` and `copilot-pull-request-reviewer` to `bots:` in review-responder and quality-gate workflows. (PR #72, closes #73)
 
+**Note**: This fix alone was insufficient — see the `roles: all` workaround entry below. The bot check is never reached due to upstream bug [github/gh-aw#21098](https://github.com/github/gh-aw/issues/21098).
+
+---
+
+## workaround: roles: all for bot activation — 2026-03-15
+
+**Problem**: Agent workflows (review-responder, quality-gate) never activate when triggered by Copilot reviews. Root cause is an upstream bug in gh-aw's `check_membership.cjs` ([github/gh-aw#21098](https://github.com/github/gh-aw/issues/21098)) — the `error` branch exits before the bot allowlist fallback is evaluated. Three previous PRs (#64, #65, #72) failed to fix this.
+
+**Workaround**: Added `roles: all` to skip the permission check entirely. Overly permissive but the only option until the upstream bug is fixed. (PR #76, closes #75, tracked for removal in #74)
+
 ---
 
 ## ci: enable free GitHub security features — 2026-03-13
