@@ -712,6 +712,7 @@ def test_cost_group_path_propagation(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "cost"])
     assert result.exit_code == 0
+    assert "CostGroup" in result.output
 
 
 def test_live_group_path_propagation(tmp_path: Path) -> None:
@@ -721,6 +722,7 @@ def test_live_group_path_propagation(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "live"])
     assert result.exit_code == 0
+    assert "LiveGroup" in result.output
 
 
 def test_session_group_path_propagation(tmp_path: Path) -> None:
@@ -730,6 +732,7 @@ def test_session_group_path_propagation(tmp_path: Path) -> None:
     # session needs the session_id positional argument
     result = runner.invoke(main, ["--path", str(tmp_path), "session", sid[:8]])
     assert result.exit_code == 0
+    assert "SessGroup" in result.output
 
 
 # 5. Auto-refresh branches in _interactive_loop -------------------------------
