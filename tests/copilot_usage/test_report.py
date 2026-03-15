@@ -26,7 +26,9 @@ from copilot_usage.report import (
     _event_type_label,
     _filter_sessions,
     _format_detail_duration,
+    _format_elapsed_since,
     _format_relative_time,
+    _format_session_running_time,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -1699,3 +1701,35 @@ class TestRenderTotalsSingularLabels:
         # "session" appears without trailing 's'
         stripped = output.replace("sessions", "")
         assert "session" in stripped
+
+
+# ---------------------------------------------------------------------------
+# Issue #66 — _format_session_running_time
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSessionRunningTime:
+    """Tests for _format_session_running_time helper."""
+
+    def test_returns_dash_when_start_time_is_none(self) -> None:
+        session = SessionSummary(session_id="no-start")
+        assert _format_session_running_time(session) == "—"
+
+    def test_uses_start_time_when_no_last_resume(self) -> None:
+        start = datetime.now(tz=UTC) - timedelta(minutes=5, seconds=30)
+        session = SessionSummary(session_id="has-start", start_time=start)
+        result = _format_session_running_time(session)
+        assert result == _format_elapsed_since(start)
+        assert "5m" in result
+
+    def test_uses_last_resume_time_when_present(self) -> None:
+        start = datetime.now(tz=UTC) - timedelta(hours=2)
+        resume = datetime.now(tz=UTC) - timedelta(minutes=10)
+        session = SessionSummary(
+            session_id="resumed",
+            start_time=start,
+            last_resume_time=resume,
+        )
+        result = _format_session_running_time(session)
+        assert result == _format_elapsed_since(resume)
+        assert "10m" in result
