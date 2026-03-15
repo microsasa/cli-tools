@@ -586,3 +586,19 @@ class TestFileChangeHandler:
         handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
         handler.dispatch(object())
         assert event.is_set()
+
+    def test_inherits_from_filesystemeventhandler(self) -> None:
+        """_FileChangeHandler inherits from watchdog FileSystemEventHandler."""
+        from watchdog.events import (
+            FileSystemEventHandler,  # type: ignore[import-untyped]
+        )
+
+        from copilot_usage.cli import (
+            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+        assert isinstance(handler, FileSystemEventHandler)
+        handler.dispatch(object())
+        assert event.is_set()

@@ -31,10 +31,10 @@ Audit/Health Agent → creates issue (max 2) → dispatches Implementer
   → Implementer creates PR (lint-clean, non-draft, auto-merge, aw label)
     → CI runs + Copilot auto-reviews (parallel, via ruleset)
       → CI fails? → CI Fixer agent (1 retry, label guard)
-      → Copilot has comments? → Review Responder addresses them (1 attempt, label guard)
-      → Copilot approves → Quality Gate evaluates quality + blast radius
+      → Copilot has comments? → Review Responder addresses them (pushes fixes)
+      → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
         → LOW/MEDIUM impact → approves → auto-merge fires
-        → HIGH impact → flags for human review
+        → HIGH impact → flags for human review (auto-merge stays blocked)
 ```
 
 </details>
@@ -290,6 +290,8 @@ EOF
 - **Draft PRs**: Copilot does NOT review draft PRs (even if manually requested)
 - **Reviewer identity**: `copilot-pull-request-reviewer[bot]` (login: `copilot-pull-request-reviewer`)
 - **Event actor**: `Copilot` (the GitHub App identity — this is what `context.actor` returns and what `check_membership.cjs` matches against)
+
+> **Pitfall**: Copilot auto-reviews almost always submit as `COMMENTED`, not `APPROVED`. Any downstream workflow that triggers on `pull_request_review` and checks the review state must accept `COMMENTED` reviews from Copilot — not just `APPROVED`. The Quality Gate handles this correctly.
 
 ### Addressing Copilot review comments (GraphQL)
 
