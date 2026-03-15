@@ -66,6 +66,8 @@ This workflow runs when a review is submitted on a pull request.
 
 7. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
 
-8. Push all changes in a single commit with message "fix: address review comments".
+8. **IMPORTANT**: You MUST reply to threads and resolve them BEFORE pushing code. Pushing code invalidates thread IDs and makes them unresolvable. The correct order is: reply → resolve → push.
+
+9. Push all changes in a single commit with message "fix: address review comments".
 
 If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly.
