@@ -4,6 +4,18 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## feat: PR Rescue workflow + quality-gate label marker — 2026-03-15
+
+**Problem**: When multiple agent PRs are open and one merges, the others fall behind main. With `strict: true` + `dismiss_stale_reviews: true`, rebasing dismisses the approval and no mechanism re-approves — PRs get stuck forever.
+
+**Fix**:
+- New `pr-rescue.yml` workflow: triggers on push to main, finds stuck agent PRs (behind main, `aw` + `quality-gate-approved` labels), rebases them, waits for CI, re-approves. (Issue #86)
+- Quality Gate now adds `quality-gate-approved` label on approval (marker for rescue workflow). Added `add-labels` safe-output.
+- Documented safe admin merge procedure (disable auto-merge on other PRs first). (Issue #83)
+- Documented PR Rescue workflow in agentic-workflows.md.
+
+---
+
 ## fix: Quality Gate trigger condition — accept COMMENTED reviews from Copilot — 2026-03-15
 
 **Problem**: Quality Gate instructions required the triggering review to be an APPROVAL from Copilot. But Copilot auto-reviews almost always submit as `COMMENTED` (not `APPROVED`), so the Quality Gate would see the COMMENTED state and stop immediately (noop). This meant the Quality Gate never actually evaluated or approved agent PRs, and auto-merge stayed blocked.
