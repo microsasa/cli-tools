@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"73fd3124dd5f5623cfc4b6273a3cdc0f1cd113a836c9543b0fa8bf1f9d92067d","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"f329f5594237e4fd0f76a7084061068ff2df6b6b4f8923e1c36854073ae4af63","compiler_version":"v0.58.1","strict":true}
 
 name: "Review Responder"
 "on":
