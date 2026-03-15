@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"e7ec86fbdfb1d2ac495df4936de975b08c0c8f40b2c0a0deef4bf50b20d34e83","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"f33ce13a0707fb37b0f206d4b1726f3f1f96840d928e4ffbff3edbda68040c8b","compiler_version":"v0.58.1","strict":true}
 
 name: "Test Suite Analysis"
 "on":
@@ -1058,7 +1058,7 @@ jobs:
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
           GH_AW_NOOP_MESSAGE: ${{ steps.noop.outputs.noop_message }}
-          GH_AW_NOOP_REPORT_AS_ISSUE: "true"
+          GH_AW_NOOP_REPORT_AS_ISSUE: "false"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |

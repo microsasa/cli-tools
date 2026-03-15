@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"686902c99edec4863960a1d0f1542381c19547e5e372e06a97a8a4739d7bddc5","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"dc166a6992cc5ffedd8f50bf687351344ccea3cb0cafe99f3b86ccd6534a2264","compiler_version":"v0.58.1","strict":true}
 
 name: "Quality Gate"
 "on":
@@ -1085,7 +1085,7 @@ jobs:
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
           GH_AW_NOOP_MESSAGE: ${{ steps.noop.outputs.noop_message }}
-          GH_AW_NOOP_REPORT_AS_ISSUE: "true"
+          GH_AW_NOOP_REPORT_AS_ISSUE: "false"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |

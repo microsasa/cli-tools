@@ -26,6 +26,8 @@ network:
     - python
 
 safe-outputs:
+  noop:
+    report-as-issue: false
   create-pull-request:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
     protected-files: fallback-to-issue

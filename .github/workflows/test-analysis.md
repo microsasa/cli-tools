@@ -18,6 +18,8 @@ tools:
 network: defaults
 
 safe-outputs:
+  noop:
+    report-as-issue: false
   create-issue:
     max: 2
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}

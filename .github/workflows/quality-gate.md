@@ -20,6 +20,8 @@ tools:
 network: defaults
 
 safe-outputs:
+  noop:
+    report-as-issue: false
   submit-pull-request-review:
     max: 1
     footer: "always"

@@ -27,6 +27,8 @@ network:
     - python
 
 safe-outputs:
+  noop:
+    report-as-issue: false
   push-to-pull-request-branch:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
