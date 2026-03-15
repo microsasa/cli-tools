@@ -4,6 +4,18 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: revert labels config + strengthen responder resolve-before-push — 2026-03-15
+
+**Problem 1**: PR #97 added `labels: ["aw"]` to `create-pull-request` config. This broke label application — the gh-aw handler's post-creation label API call fails non-deterministically with a node ID resolution error, and the tool description tells the agent "labels will be automatically added" so the agent stops including them. PR #104 was created without the `aw` label. (Issue #107)
+
+**Fix 1**: Removed `labels: ["aw"]` from config. Reverted to instruction-based labeling which worked for PRs #61-91. Upstream bug tracked in #108.
+
+**Problem 2**: Review Responder pushed code before resolving threads, invalidating thread IDs. With `required_conversation_resolution: true`, unresolved threads block merge. PRs #91 and #106 were stuck. (Issue #95)
+
+**Fix 2**: Rewrote responder instructions with explicit ordering enforcement: `***PUSH AS LAST STEP***` at step 1, `***MUST***` resolve before push, `***DOUBLE CHECK***` verify ordering, final `***MUST***` all threads resolved. (PR #109, closes #95, #107)
+
+---
+
 ## feat: PR Rescue workflow + quality-gate label marker — 2026-03-15
 
 **Problem**: When multiple agent PRs are open and one merges, the others fall behind main. With `strict: true` + `dismiss_stale_reviews: true`, rebasing dismisses the approval and no mechanism re-approves — PRs get stuck forever.

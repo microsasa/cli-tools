@@ -437,8 +437,14 @@ The `bots:` field compiles correctly into `GH_AW_ALLOWED_BOTS` in the lock file,
 ### 9. Always use merge commits
 Never squash merge — it loses commit history and the user gets angry. Set merge method preference explicitly.
 
-### 9. Issues are specs
+### 10. Issues are specs
 Issues describe WHAT to do, not HOW. The implementer agent reads the issue and decides the implementation.
+
+### 11. `labels:` on `create-pull-request` config is broken (gh-aw runtime bug)
+The `labels` field compiles into the lock file and the handler reads it, but the post-creation label API call fails non-deterministically with a node ID resolution error. Worse, the tool description tells the agent "Labels will be automatically added" — so the agent stops including labels in its own call. Do NOT use `labels:` config. Instead, instruct the agent to include labels in the `create_pull_request` call. Tracked in #108.
+
+### 12. Review thread IDs are invalidated by pushes
+Pushing code to a PR branch can invalidate GraphQL thread IDs. If the responder pushes before resolving threads, the resolve calls fail with stale node IDs. Always resolve threads BEFORE pushing.
 
 </details>
 
@@ -557,5 +563,22 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 - Filed upstream bug: [github/gh-aw#21098](https://github.com/github/gh-aw/issues/21098)
 - Workaround: `roles: all` skips `check_membership.cjs` entirely — tracked for removal in issue #74
 - Issue #75 documents the full root cause and links all previous failed attempts
+
+### 2026-03-15 — Pipeline working end-to-end + hardening
+
+- PR #80: Quality Gate fix — accept COMMENTED reviews from Copilot (not just APPROVED). Quality gate was noop'ing on every Copilot review.
+- PR #85: First fully autonomous merge! Issue #78 → implementer → PR → CI → Copilot review → quality gate approval → auto-merge. Zero human intervention.
+- PR #87: Pipeline hardening — PR rescue workflow (rebase behind-main PRs), quality-gate `quality-gate-approved` label, safe admin merge procedure, `dismiss_stale_reviews: false`, `required_conversation_resolution: true`
+- PR #69: Accidentally auto-merged with zero approvals during admin merge window (issue #83). Led to safe admin merge procedure.
+- Filed upstream: [github/gh-aw#21103](https://github.com/github/gh-aw/issues/21103) — feature request for `merge-pull-request` safe-output
+
+### 2026-03-15 — More churn from Copilot not thinking
+
+- PR #97: "Fixing many bugs caused by Copilot CLI not thinking" — 6 bugs in pr-rescue.yml (missing git config, BLOCKED check too broad, single failure aborts loop, cancel-in-progress corruption, unguarded checkout, unguarded abort). Also added `labels: ["aw"]` to implementer config — which broke label application.
+- PR #93: Created without `aw` label (agent non-determinism). Quality gate noop'd. Manually added label, but 2 unresolved threads from responder pushing before resolving. Closed.
+- PR #104: Created without `aw` label — caused by PR #97's `labels: ["aw"]` config change. The gh-aw handler's post-creation label API call failed with node ID resolution error. The tool description told the agent "labels will be automatically added" so the agent stopped including them. Worse than before.
+- PR #106: Got `aw` label (non-deterministic — same config as #104), approved by quality gate, but 3 unresolved threads blocked merge. Same responder ordering bug.
+- PR #109: Reverts labels config, rewrites responder instructions with `***MUST***`/`***DOUBLE CHECK***` ordering enforcement.
+- **Lesson reinforced**: NEVER add config without verifying the runtime behavior. Read the source code. The compiler accepting a field does not mean the handler implements it.
 
 </details>
