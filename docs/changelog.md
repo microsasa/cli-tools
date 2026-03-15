@@ -4,6 +4,14 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: Quality Gate trigger condition — accept COMMENTED reviews from Copilot — 2026-03-15
+
+**Problem**: Quality Gate instructions required the triggering review to be an APPROVAL from Copilot. But Copilot auto-reviews almost always submit as `COMMENTED` (not `APPROVED`), so the Quality Gate would see the COMMENTED state and stop immediately (noop). This meant the Quality Gate never actually evaluated or approved agent PRs, and auto-merge stayed blocked.
+
+**Fix**: Updated Quality Gate instructions to accept both COMMENTED and APPROVED reviews from Copilot. Added documentation about the auto-merge flow: Quality Gate approval is what triggers GitHub auto-merge on agent PRs. (PR #80, closes #81)
+
+---
+
 ## fix: Copilot actor name mismatch in bots list — 2026-03-15
 
 **Problem**: `check_membership.cjs` matches `context.actor` (`Copilot`) against `GH_AW_ALLOWED_BOTS`, but bots list only had `copilot-pull-request-reviewer` (the reviewer login). Actor name mismatch → `activated = false` → agent jobs skipped.
