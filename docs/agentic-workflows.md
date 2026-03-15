@@ -352,10 +352,11 @@ gh api repos/OWNER/REPO/branches/main/protection -X PUT --input - <<'EOF'
   "required_status_checks": { "strict": true, "contexts": ["check"] },
   "enforce_admins": true,
   "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
+    "dismiss_stale_reviews": false,
     "required_approving_review_count": 1
   },
-  "restrictions": null
+  "restrictions": null,
+  "required_conversation_resolution": true
 }
 EOF
 ```
@@ -381,7 +382,7 @@ gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X POST
 
 # 5. Re-enable auto-merge on those PRs
 for pr in <saved list>; do
-  gh pr merge --enable-auto --merge "$pr"
+  gh pr merge --auto --merge "$pr"
 done
 ```
 

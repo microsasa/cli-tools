@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: pr-rescue
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   rescue:
@@ -27,6 +27,11 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_AW_WRITE_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Find and rebase stuck agent PRs
         env:
@@ -50,11 +55,11 @@ jobs:
           while IFS=' ' read -r pr_number branch; do
             echo "::group::Processing PR #${pr_number} (branch: ${branch})"
 
-            # Check if PR is behind main
+            # Check if PR is specifically behind main (not blocked for other reasons)
             merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus')
             echo "Merge state: ${merge_state}"
 
-            if [ "$merge_state" != "BEHIND" ] && [ "$merge_state" != "BLOCKED" ]; then
+            if [ "$merge_state" != "BEHIND" ]; then
               echo "PR #${pr_number} is not behind main (state: ${merge_state}). Skipping."
               echo "::endgroup::"
               continue
@@ -70,17 +75,28 @@ jobs:
 
             echo "PR #${pr_number} is approved but behind main. Rebasing..."
 
-            git fetch origin "$branch"
-            git checkout "$branch"
+            if ! git fetch origin "$branch" 2>&1; then
+              echo "::warning::Failed to fetch branch for PR #${pr_number}. Branch may have been deleted. Skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            if ! git checkout "$branch" 2>&1; then
+              echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
+              echo "::endgroup::"
+              continue
+            fi
 
             if git rebase origin/main; then
-              echo "Rebase successful. Pushing..."
-              git push --force-with-lease origin "$branch"
-              echo "✅ PR #${pr_number} rebased. CI will rerun, approval survives, auto-merge will fire."
-              rescued=$((rescued + 1))
+              if git push --force-with-lease origin "$branch" 2>&1; then
+                echo "✅ PR #${pr_number} rebased. CI will rerun, approval survives, auto-merge will fire."
+                rescued=$((rescued + 1))
+              else
+                echo "::warning::Push failed for PR #${pr_number}. Branch may have been updated. Skipping."
+              fi
             else
               echo "::warning::Rebase failed for PR #${pr_number} — likely has conflicts. Skipping."
-              git rebase --abort
+              git rebase --abort 2>/dev/null || true
             fi
 
             git checkout main
