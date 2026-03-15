@@ -362,15 +362,27 @@ EOF
 With `enforce_admins: true` and 1 required approval, you can't merge your own PRs without an external approver. Workaround:
 
 ```bash
-# Temporarily disable enforce_admins
+# 1. FIRST: Disable auto-merge on all other open PRs (CRITICAL — race condition, see #83)
+for pr in $(gh pr list --state open --json number,autoMergeRequest --jq '.[] | select(.autoMergeRequest != null) | .number'); do
+  gh pr merge --disable-auto "$pr"
+done
+
+# 2. Temporarily disable enforce_admins
 gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X DELETE
 
-# Admin merge
+# 3. Admin merge
 gh pr merge <PR> --merge --admin --delete-branch
 
-# Re-enable
+# 4. Re-enable enforce_admins
 gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X POST
+
+# 5. Re-enable auto-merge on those PRs
+for pr in <saved list>; do
+  gh pr merge --enable-auto --merge "$pr"
+done
 ```
+
+> **Warning**: Skipping steps 1 and 5 allows any PR with auto-merge + green CI to merge without required approvals during the enforce_admins disable window. PR #69 merged with zero approvals due to this race condition (issue #83).
 
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
 
