@@ -26,7 +26,9 @@ from copilot_usage.report import (
     _event_type_label,
     _filter_sessions,
     _format_detail_duration,
+    _format_elapsed_since,
     _format_relative_time,
+    _format_session_running_time,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -94,6 +96,38 @@ def _capture_output(sessions: list[SessionSummary]) -> str:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class TestFormatSessionRunningTime:
+    """Tests for _format_session_running_time helper."""
+
+    def test_returns_dash_when_start_time_is_none(self) -> None:
+        session = _make_session(start_time=None)
+        assert _format_session_running_time(session) == "—"
+
+    def test_uses_start_time_when_no_last_resume_time(self) -> None:
+        now = datetime.now(tz=UTC)
+        session = _make_session(start_time=now - timedelta(minutes=5))
+        session.last_resume_time = None
+        result = _format_session_running_time(session)
+        assert "5m" in result
+
+    def test_uses_last_resume_time_when_present(self) -> None:
+        now = datetime.now(tz=UTC)
+        session = _make_session(start_time=now - timedelta(hours=2))
+        session.last_resume_time = now - timedelta(minutes=3)
+        result = _format_session_running_time(session)
+        assert "3m" in result
+        assert "h" not in result
+
+    def test_delegates_to_format_elapsed_since(self) -> None:
+        now = datetime.now(tz=UTC)
+        start = now - timedelta(minutes=7)
+        session = _make_session(start_time=start)
+        session.last_resume_time = None
+        result = _format_session_running_time(session)
+        expected = _format_elapsed_since(start)
+        assert result == expected
 
 
 class TestRenderLiveSessions:

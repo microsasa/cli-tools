@@ -124,7 +124,7 @@ class AssistantMessageData(BaseModel):
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
     toolRequests: list[dict[str, object]] = Field(
-        default_factory=lambda: list[dict[str, object]]()
+        default_factory=list[dict[str, object]]
     )
 
 
