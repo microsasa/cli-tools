@@ -1325,6 +1325,44 @@ class TestRenderCostView:
         assert grand_match is not None, "Grand Total row not found"
         assert grand_match.group(1) == "10"
 
+    def test_pure_active_session_no_metrics_shows_both_rows(self) -> None:
+        """Active session with no model_metrics shows placeholder row AND Since-last-shutdown row."""
+        session = SessionSummary(
+            session_id="pure-active-1234",
+            name="Just Started",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=2,
+            user_messages=1,
+            active_model_calls=2,
+            active_output_tokens=300,
+            # model_metrics intentionally empty
+        )
+        output = _capture_cost_view([session])
+        assert "Just Started" in output
+        assert "—" in output  # placeholder row (no metrics)
+        assert "Since last shutdown" in output  # active row
+        assert "N/A" in output
+
+    def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
+        """Grand total output tokens includes active_output_tokens for no-metrics active session."""
+        session = SessionSummary(
+            session_id="pure-active-5678",
+            name="Token Check",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=1,
+            user_messages=1,
+            active_model_calls=1,
+            active_output_tokens=1500,
+        )
+        output = _capture_cost_view([session])
+        assert "Grand Total" in output
+        # 1500 output tokens → formatted as "1.5K"
+        assert "1.5K" in output
+
 
 class TestRenderFullSummaryHelperReuse:
     """Verify _render_historical_section delegates to shared table helpers."""
