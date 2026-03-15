@@ -208,22 +208,23 @@ The `check_membership.cjs` script (in `github/gh-aw`) works as follows:
 2. Check actor's repo permission against `GH_AW_REQUIRED_ROLES` → approve if match
 3. **Fallback**: Check if actor is in `GH_AW_ALLOWED_BOTS` AND bot is active/installed on repo → approve as `authorized_bot`
 
-### Allowing bot triggers
+> **⚠️ KNOWN BUG ([github/gh-aw#21098](https://github.com/github/gh-aw/issues/21098))**: Step 3 is unreachable for GitHub App actors. When a bot like `Copilot` triggers a workflow, step 2 calls `getCollaboratorPermissionLevel("Copilot")` which returns a 404 ("not a user"). This error causes `check_membership.cjs` to exit immediately via the `if (result.error)` branch — **before ever reaching the bot fallback in step 3**. The `bots:` field compiles correctly but the runtime never evaluates it.
 
-For workflows triggered by bot events (e.g., Copilot reviewer submitting a review):
+### Allowing bot triggers (WORKAROUND)
+
+Due to the upstream bug above, the `bots:` field alone is insufficient. The current workaround is `roles: all`, which tells the compiler to skip the permission check entirely (`check_membership.cjs` is not included in the `pre_activation` job):
 
 ```yaml
 on:
   pull_request_review:
     types: [submitted]
-  bots: [Copilot, copilot-pull-request-reviewer]   # MUST be under on:
+  roles: all
+  bots: [Copilot, copilot-pull-request-reviewer]   # keep for when upstream is fixed
 ```
 
-This compiles to `GH_AW_ALLOWED_BOTS: Copilot,copilot-pull-request-reviewer` in the lock file, which `check_membership.cjs` checks as a fallback.
+This is overly permissive — any actor can trigger the workflow. Track removal via issue #74.
 
-> **IMPORTANT**: The event **actor** for Copilot reviews is `Copilot` (the GitHub App), NOT `copilot-pull-request-reviewer` (the review author login). `check_membership.cjs` matches `context.actor` against the bots list, so `Copilot` is the identity that matters. Include both for safety.
-
-**DO NOT use `roles: all` just to allow bots.** It opens the workflow to any actor. Use `bots:` instead.
+> **Actor identity note**: The event **actor** for Copilot reviews is `Copilot` (the GitHub App), NOT `copilot-pull-request-reviewer` (the review author login). `context.actor` returns `Copilot`. Keep both in the bots list for when the upstream bug is fixed.
 
 ### GitHub's `action_required` gate
 
@@ -399,8 +400,8 @@ The workflow definition always comes from the default branch, not the PR branch.
 ### 7. GitHub's `action_required` is separate from gh-aw's `pre_activation`
 `action_required` means GitHub itself blocked the run (first-time contributor approval). No jobs run at all. `pre_activation` is gh-aw's role/bot check within the workflow.
 
-### 8. Copilot has TWO identities — actor vs reviewer
-The `pull_request_review` event actor (`context.actor`) is `Copilot`, but the review author login is `copilot-pull-request-reviewer`. `check_membership.cjs` matches against `context.actor`, so the `bots:` list MUST include `Copilot`. If you only list `copilot-pull-request-reviewer`, `pre_activation` will pass (job succeeds) but `activated` output will be `false` and the agent job gets skipped.
+### 8. `bots:` field is broken due to upstream bug (gh-aw#21098)
+The `bots:` field compiles correctly into `GH_AW_ALLOWED_BOTS` in the lock file, but `check_membership.cjs` never evaluates it for GitHub App actors. The role check fails with a 404 error and the `error` branch exits before the bot fallback. Use `roles: all` as a workaround (see #74 to track removal).
 
 ### 9. Always use merge commits
 Never squash merge — it loses commit history and the user gets angry. Set merge method preference explicitly.
@@ -427,8 +428,7 @@ No jobs ran → GitHub's first-time contributor approval gate. Check repo Action
 The `pre_activation` job ran but the actor failed the role/bot check. Check:
 - Is `bots:` under `on:` in the `.md` file?
 - Does the lock file contain `GH_AW_ALLOWED_BOTS`?
-- Does `GH_AW_ALLOWED_BOTS` contain the correct **actor** name? (For Copilot, the actor is `Copilot`, not `copilot-pull-request-reviewer`)
-- Is the bot installed/active on the repo?
+- **Known bug**: Even if the above are correct, `check_membership.cjs` never reaches the bot check for GitHub App actors (see [gh-aw#21098](https://github.com/github/gh-aw/issues/21098)). Use `roles: all` as a workaround.
 
 ### Check if Copilot reviewed
 ```bash
@@ -520,7 +520,11 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 - Two blockers remain: (1) GitHub Actions approval setting for bot actors, (2) PR #65 for correct `bots:` placement
 - Lesson: stop guessing, read the source code before making changes
 - After PR #65 merge: `pre_activation` passes (job succeeds) but `activated` output still `false` — agent jobs skipped
-- Root cause: `context.actor` is `Copilot` (GitHub App identity) but bots list had `copilot-pull-request-reviewer` (reviewer login) — name mismatch
-- Fix: PR #72 adds both `Copilot` and `copilot-pull-request-reviewer` to bots list
+- PR #72: Added `Copilot` to bots list (correct actor name) — still didn't fix it
+- Read actual `check_membership.cjs` source: the `error` branch from 404 exits BEFORE the bot fallback is ever reached
+- **Three PRs merged to main (#64, #65, #72) based on guessing from logs. None fixed the problem.**
+- Filed upstream bug: [github/gh-aw#21098](https://github.com/github/gh-aw/issues/21098)
+- Workaround: `roles: all` skips `check_membership.cjs` entirely — tracked for removal in issue #74
+- Issue #75 documents the full root cause and links all previous failed attempts
 
 </details>

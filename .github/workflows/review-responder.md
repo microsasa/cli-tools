@@ -2,6 +2,7 @@
 on:
   pull_request_review:
     types: [submitted]
+  roles: all
   bots: [Copilot, copilot-pull-request-reviewer]
 
 permissions:
