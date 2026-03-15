@@ -111,6 +111,17 @@ def _estimated_output_tokens(session: SessionSummary) -> int:
     return sum(m.usage.outputTokens for m in session.model_metrics.values())
 
 
+def _format_session_running_time(session: SessionSummary) -> str:
+    """Return a human-readable running time for *session*.
+
+    Uses ``last_resume_time`` if available, otherwise ``start_time``.
+    Returns ``"—"`` when the session has no start time.
+    """
+    if session.start_time:
+        return _format_elapsed_since(session.last_resume_time or session.start_time)
+    return "—"
+
+
 def render_live_sessions(sessions: list[SessionSummary]) -> None:
     """Render overview of active sessions only.
 
@@ -144,11 +155,7 @@ def render_live_sessions(sessions: list[SessionSummary]) -> None:
         short_id = s.session_id[:8] if s.session_id else "—"
         name = s.name or "—"
         model = s.model or "—"
-        running = (
-            _format_elapsed_since(s.last_resume_time or s.start_time)
-            if s.start_time
-            else "—"
-        )
+        running = _format_session_running_time(s)
         messages = str(s.user_messages)
         tokens = f"{_estimated_output_tokens(s):,}"
         cwd = s.cwd or "—"
@@ -580,10 +587,9 @@ def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     total_duration = sum(s.total_api_duration_ms for s in sessions)
     total_sessions = len(sessions)
 
-    total_output = 0
-    for s in sessions:
-        for mm in s.model_metrics.values():
-            total_output += mm.usage.outputTokens
+    total_output = sum(
+        mm.usage.outputTokens for s in sessions for mm in s.model_metrics.values()
+    )
 
     pr_label = "premium request" if total_premium == 1 else "premium requests"
     session_label = "session" if total_sessions == 1 else "sessions"
@@ -788,11 +794,7 @@ def _render_active_section(
     for s in active:
         name = s.name or s.session_id[:12]
         model = s.model or "—"
-        running = (
-            _format_elapsed_since(s.last_resume_time or s.start_time)
-            if s.start_time
-            else "—"
-        )
+        running = _format_session_running_time(s)
 
         table.add_row(
             name,
@@ -847,9 +849,9 @@ def render_cost_view(
     for premium and the active model calls / output tokens.
     """
     console = target_console or Console()
-    sessions = _filter_sessions(sessions, since, until)
+    filtered = _filter_sessions(sessions, since, until)
 
-    if not sessions:
+    if not filtered:
         console.print("[yellow]No sessions found.[/yellow]")
         return
 
@@ -866,7 +868,7 @@ def render_cost_view(
     grand_model_calls = 0
     grand_output = 0
 
-    for s in sessions:
+    for s in filtered:
         name = s.name or s.session_id[:12]
         model_calls_display = str(s.model_calls)
 
