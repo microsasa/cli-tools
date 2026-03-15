@@ -75,51 +75,18 @@ def merge_model_metrics(
     additional: dict[str, ModelMetrics],
 ) -> dict[str, ModelMetrics]:
     """Return a new dict merging *additional* into *base* without mutation."""
-    result = {
-        name: ModelMetrics(
-            requests=RequestMetrics(
-                count=mm.requests.count,
-                cost=mm.requests.cost,
-            ),
-            usage=TokenUsage(
-                inputTokens=mm.usage.inputTokens,
-                outputTokens=mm.usage.outputTokens,
-                cacheReadTokens=mm.usage.cacheReadTokens,
-                cacheWriteTokens=mm.usage.cacheWriteTokens,
-            ),
-        )
-        for name, mm in base.items()
-    }
+    result = {name: mm.model_copy(deep=True) for name, mm in base.items()}
     for name, mm in additional.items():
         if name in result:
             existing = result[name]
-            result[name] = ModelMetrics(
-                requests=RequestMetrics(
-                    count=existing.requests.count + mm.requests.count,
-                    cost=existing.requests.cost + mm.requests.cost,
-                ),
-                usage=TokenUsage(
-                    inputTokens=existing.usage.inputTokens + mm.usage.inputTokens,
-                    outputTokens=existing.usage.outputTokens + mm.usage.outputTokens,
-                    cacheReadTokens=existing.usage.cacheReadTokens
-                    + mm.usage.cacheReadTokens,
-                    cacheWriteTokens=existing.usage.cacheWriteTokens
-                    + mm.usage.cacheWriteTokens,
-                ),
-            )
+            existing.requests.count += mm.requests.count
+            existing.requests.cost += mm.requests.cost
+            existing.usage.inputTokens += mm.usage.inputTokens
+            existing.usage.outputTokens += mm.usage.outputTokens
+            existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
+            existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
         else:
-            result[name] = ModelMetrics(
-                requests=RequestMetrics(
-                    count=mm.requests.count,
-                    cost=mm.requests.cost,
-                ),
-                usage=TokenUsage(
-                    inputTokens=mm.usage.inputTokens,
-                    outputTokens=mm.usage.outputTokens,
-                    cacheReadTokens=mm.usage.cacheReadTokens,
-                    cacheWriteTokens=mm.usage.cacheWriteTokens,
-                ),
-            )
+            result[name] = mm.model_copy(deep=True)
     return result
 
 
