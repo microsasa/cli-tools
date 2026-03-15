@@ -4,6 +4,18 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## feat: Enhanced PR Rescue — resolve threads, request reviews, handle conflicts — 2026-03-15
+
+**Problem**: Agent PRs could get stuck at multiple stages: no Copilot review, unresolved threads (responder hallucinates thread IDs, #114), behind main. Old rescue only handled behind-main.
+
+**Fix**: Enhanced rescue workflow with three checks per PR (sorted by progress, approved first):
+1. No Copilot review → rebase if behind main, then request review
+2. Unresolved threads → resolve if bot reply is last comment (uses real GraphQL thread IDs)
+3. Behind main → rebase, remove review-response-attempted label before push
+Plus: 15-min cron schedule, `aw-conflict` label on merge conflicts, skip conflicted PRs. (PR #118, closes #116)
+
+---
+
 ## fix: revert labels config + strengthen responder resolve-before-push — 2026-03-15
 
 **Problem 1**: PR #97 added `labels: ["aw"]` to `create-pull-request` config. This broke label application — the gh-aw handler's post-creation label API call fails non-deterministically with a node ID resolution error, and the tool description tells the agent "labels will be automatically added" so the agent stops including them. PR #104 was created without the `aw` label. (Issue #107)

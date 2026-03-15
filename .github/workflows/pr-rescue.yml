@@ -1,12 +1,16 @@
 name: PR Rescue
 
-# Runs when main advances (PR merged). Rebases open agent PRs that are
-# behind main so auto-merge can proceed. With dismiss_stale_reviews
-# disabled, the existing quality-gate approval survives the rebase.
+# Unsticks agent PRs at any pipeline stage:
+# - No Copilot review → requests one (rebases first if behind main)
+# - Unresolved threads → resolves if addressed (bot reply is last comment)
+# - Behind main → rebases (removes review-response-attempted label for fresh responder run)
+# - Merge conflicts → labels aw-conflict, skips in future runs
 
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -33,74 +37,170 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Find and rebase stuck agent PRs
+      - name: Rescue stuck agent PRs
         env:
           GH_TOKEN: ${{ secrets.GH_AW_WRITE_TOKEN }}
         run: |
           set -euo pipefail
 
-          echo "::group::Finding open agent PRs with auto-merge enabled"
-          prs=$(gh pr list --state open --label aw --json number,headRefName,autoMergeRequest \
-            --jq '.[] | select(.autoMergeRequest != null) | "\(.number) \(.headRefName)"')
+          # ── Discover agent PRs ──────────────────────────────────────
+          # Ensure aw-conflict label exists
+          gh label create aw-conflict --color D93F0B --description "PR has merge conflicts — rescue skips" 2>/dev/null || true
 
-          if [ -z "$prs" ]; then
-            echo "No agent PRs with auto-merge enabled. Nothing to rescue."
+          echo "::group::Finding open agent PRs with auto-merge enabled"
+          prs=$(gh pr list --state open --label aw --json number,headRefName,autoMergeRequest,reviewDecision,labels \
+            --jq '[.[] | select(.autoMergeRequest != null) | select([.labels[].name] | index("aw-conflict") | not)]')
+
+          count=$(echo "$prs" | jq 'length')
+          if [ "$count" = "0" ] || [ -z "$prs" ]; then
+            echo "No rescuable agent PRs found. Exiting."
             exit 0
           fi
-          echo "Found PRs to check:"
-          echo "$prs"
+
+          # Sort: approved PRs first (closest to merging)
+          sorted=$(echo "$prs" | jq -r 'sort_by(if .reviewDecision == "APPROVED" then 0 else 1 end) | .[] | "\(.number) \(.headRefName)"')
+          echo "Found $count PR(s) to check (sorted by progress):"
+          echo "$sorted"
           echo "::endgroup::"
 
           rescued=0
           while IFS=' ' read -r pr_number branch; do
             echo "::group::Processing PR #${pr_number} (branch: ${branch})"
 
-            # Check if PR is specifically behind main (not blocked for other reasons)
-            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus')
-            echo "Merge state: ${merge_state}"
+            # ── Gather PR state ─────────────────────────────────────
+            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null) || { echo "::warning::Failed to query PR #${pr_number}. Skipping."; echo "::endgroup::"; continue; }
+            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision' 2>/dev/null) || { echo "::warning::Failed to query PR #${pr_number}. Skipping."; echo "::endgroup::"; continue; }
+            has_copilot_review=$(gh pr view "$pr_number" --json reviews \
+              --jq '[.reviews[] | select(.author.login == "copilot-pull-request-reviewer")] | length' 2>/dev/null) || has_copilot_review=0
 
-            if [ "$merge_state" != "BEHIND" ]; then
-              echo "PR #${pr_number} is not behind main (state: ${merge_state}). Skipping."
-              echo "::endgroup::"
-              continue
-            fi
+            echo "State: merge=${merge_state} review=${review_decision} copilot_reviews=${has_copilot_review}"
 
-            # Check if PR has an approving review (no point rebasing if not approved yet)
-            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision')
-            if [ "$review_decision" != "APPROVED" ]; then
-              echo "PR #${pr_number} has no approval yet (decision: ${review_decision}). Skipping."
-              echo "::endgroup::"
-              continue
-            fi
-
-            echo "PR #${pr_number} is approved but behind main. Rebasing..."
-
-            if ! git fetch origin "$branch" 2>&1; then
-              echo "::warning::Failed to fetch branch for PR #${pr_number}. Branch may have been deleted. Skipping."
-              echo "::endgroup::"
-              continue
-            fi
-
-            if ! git checkout "$branch" 2>&1; then
-              echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
-              echo "::endgroup::"
-              continue
-            fi
-
-            if git rebase origin/main; then
-              if git push --force-with-lease origin "$branch" 2>&1; then
-                echo "✅ PR #${pr_number} rebased. CI will rerun, approval survives, auto-merge will fire."
-                rescued=$((rescued + 1))
-              else
-                echo "::warning::Push failed for PR #${pr_number}. Branch may have been updated. Skipping."
+            # ── Helper: rebase onto main ────────────────────────────
+            do_rebase() {
+              if ! git fetch origin "$branch" 2>&1; then
+                echo "::warning::Failed to fetch branch for PR #${pr_number}. Skipping."
+                return 1
               fi
-            else
-              echo "::warning::Rebase failed for PR #${pr_number} — likely has conflicts. Skipping."
-              git rebase --abort 2>/dev/null || true
+              if ! git checkout "$branch" 2>&1; then
+                echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
+                return 1
+              fi
+              if git rebase origin/main; then
+                # Remove label BEFORE push so responder can run on new comments
+                gh pr edit "$pr_number" --remove-label review-response-attempted 2>/dev/null || true
+                if git push --force-with-lease origin "$branch" 2>&1; then
+                  echo "✅ PR #${pr_number} rebased successfully."
+                  git checkout main
+                  return 0
+                else
+                  echo "::warning::Push failed for PR #${pr_number}. Skipping."
+                  git checkout main
+                  return 1
+                fi
+              else
+                echo "::warning::Rebase failed for PR #${pr_number} — merge conflict."
+                git rebase --abort 2>/dev/null || true
+                git checkout main
+                gh pr edit "$pr_number" --add-label aw-conflict 2>/dev/null || true
+                gh pr comment "$pr_number" --body "PR Rescue: rebase onto main failed due to merge conflicts. Labeled \`aw-conflict\` — will not retry until conflict is resolved manually." 2>/dev/null || true
+                return 1
+              fi
+            }
+
+            # ── Check 1: No Copilot review ──────────────────────────
+            if [ "$has_copilot_review" = "0" ]; then
+              # If also behind main, rebase first so Copilot reviews fresh code
+              if [ "$merge_state" = "BEHIND" ]; then
+                echo "PR #${pr_number} has no review and is behind main. Rebasing first..."
+                if ! do_rebase; then
+                  echo "::endgroup::"
+                  continue
+                fi
+              fi
+              echo "PR #${pr_number} has no Copilot review. Requesting..."
+              gh pr edit "$pr_number" --add-reviewer @copilot 2>/dev/null || true
+              echo "✅ Copilot review requested for PR #${pr_number}. Will check again next cycle."
+              rescued=$((rescued + 1))
+              echo "::endgroup::"
+              continue
             fi
 
-            git checkout main
+            # ── Check 2: Unresolved threads ─────────────────────────
+            unresolved_threads=$(gh api graphql -f query='query($pr: Int!) {
+              repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 50) {
+                    nodes {
+                      id
+                      isResolved
+                      comments(last: 1) {
+                        nodes {
+                          author { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -F pr="$pr_number" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)')
+
+            if [ -n "$unresolved_threads" ]; then
+              echo "PR #${pr_number} has unresolved threads. Checking if safe to resolve..."
+
+              # Write thread data to temp file to avoid subshell variable scoping
+              echo "$unresolved_threads" | jq -c '.' > /tmp/rescue_threads.jsonl
+              while read -r thread; do
+                thread_id=$(echo "$thread" | jq -r '.id')
+                last_author=$(echo "$thread" | jq -r '.comments.nodes[0].author.login // "unknown"')
+
+                if [ "$last_author" = "github-actions[bot]" ] || [ "$last_author" = "github-actions" ]; then
+                  echo "  Thread ${thread_id}: last comment by bot — resolving..."
+                  if gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' -f id="$thread_id" >/dev/null 2>&1; then
+                    echo "  ✅ Resolved ${thread_id}"
+                  else
+                    echo "  ::warning::Failed to resolve ${thread_id}"
+                  fi
+                else
+                  echo "  Thread ${thread_id}: last comment by ${last_author} — not safe to resolve. Skipping."
+                fi
+              done < /tmp/rescue_threads.jsonl
+
+              # Re-check if any unresolved threads remain
+              remaining=$(gh api graphql -f query='query($pr: Int!) {
+                repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 50) {
+                      nodes { isResolved }
+                    }
+                  }
+                }
+              }' -F pr="$pr_number" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')
+
+              if [ "$remaining" != "0" ]; then
+                echo "PR #${pr_number} still has ${remaining} unresolved thread(s). Cannot proceed."
+                echo "::endgroup::"
+                continue
+              fi
+              echo "All threads resolved for PR #${pr_number}."
+              rescued=$((rescued + 1))
+            fi
+
+            # ── Check 3: Behind main (approved + threads clear) ─────
+            # Re-query merge state — may have changed after thread resolution
+            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus')
+            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision')
+            if [ "$merge_state" = "BEHIND" ] && [ "$review_decision" = "APPROVED" ]; then
+              echo "PR #${pr_number} is approved, threads clear, but behind main. Rebasing..."
+              if do_rebase; then
+                rescued=$((rescued + 1))
+              fi
+            elif [ "$merge_state" != "BEHIND" ] && [ "$review_decision" = "APPROVED" ]; then
+              echo "PR #${pr_number} is approved, up to date, threads clear. Auto-merge should handle it."
+            else
+              echo "PR #${pr_number}: merge=${merge_state} review=${review_decision}. Nothing to do."
+            fi
+
             echo "::endgroup::"
-          done <<< "$prs"
+          done <<< "$sorted"
 
           echo "Rescued ${rescued} PR(s)."
