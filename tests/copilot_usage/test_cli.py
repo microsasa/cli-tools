@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -641,8 +641,8 @@ def test_ensure_aware(dt_in: datetime | None, expected: datetime | None) -> None
 
 def test_ensure_aware_preserves_non_utc_timezone() -> None:
     """An already-aware dt with a non-UTC tz is returned unchanged."""
-    est = timezone(offset=datetime.min.replace(hour=5) - datetime.min)  # noqa: DTZ001
-    dt_in = datetime(2025, 1, 1, 12, 0, 0, tzinfo=est)
+    non_utc = timezone(offset=timedelta(hours=5))
+    dt_in = datetime(2025, 1, 1, 12, 0, 0, tzinfo=non_utc)
     result = _ensure_aware(dt_in)
     assert result is dt_in  # exact same object
 
