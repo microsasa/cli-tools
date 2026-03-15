@@ -48,9 +48,9 @@ This workflow runs when a review is submitted on a pull request.
 
 4. Add the label `review-response-attempted` to the PR.
 
-5. Read ALL review comment threads on the PR (not just the latest review — get all unresolved threads).
+5. Read the unresolved review comment threads on the PR (not just the latest review — get all unresolved threads). If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
 
-6. For each unresolved review comment thread:
+6. For each unresolved review comment thread (up to 10):
    a. Read the comment and understand what change is being requested
    b. Read the relevant file and surrounding code context
    c. Make the requested fix in the code

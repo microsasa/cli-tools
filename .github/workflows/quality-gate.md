@@ -22,7 +22,7 @@ network: defaults
 safe-outputs:
   submit-pull-request-review:
     max: 1
-    footer: "if-body"
+    footer: "always"
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-comment:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
@@ -59,7 +59,7 @@ This workflow runs when a review is submitted on a pull request.
    - HIGH: Changes to core business logic, API contracts, data models, dependency updates, security-sensitive code
 
 5. Make your decision:
-   - If code quality is good AND impact is LOW or MEDIUM: Submit an APPROVE review. Keep the review body empty (the footer setting will handle the rest).
+   - If code quality is good AND impact is LOW or MEDIUM: Submit an APPROVE review with a brief summary of what was evaluated (e.g., "Low-impact refactoring with good test coverage. Auto-approving.").
    - If code quality is good but impact is HIGH: Add a comment to the PR explaining: what the high-impact areas are, why manual review is recommended, and what specifically a human reviewer should look at. Do NOT approve.
    - If code quality is poor: Add a comment explaining the quality concerns. Do NOT approve.
 
