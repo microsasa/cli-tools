@@ -123,7 +123,9 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[dict[str, object]] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    toolRequests: list[dict[str, object]] = Field(
+        default_factory=list[dict[str, object]]
+    )
 
 
 class SessionShutdownData(BaseModel):
