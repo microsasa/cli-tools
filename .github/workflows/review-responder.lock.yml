@@ -22,11 +22,12 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"2e65899aae74e70bf5713c338461409a657ef2cb0e8a398496baa554fa51d636","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"9caa2f1aad768faa9d9a4ea6399a4c318cd0930174038c8e166debeb9d0ccd2a","compiler_version":"v0.58.1","strict":true}
 
 name: "Review Responder"
 "on":
   # bots: # Bots processed as bot check in pre-activation job
+  # - Copilot # Bots processed as bot check in pre-activation job
   # - copilot-pull-request-reviewer # Bots processed as bot check in pre-activation job
   pull_request_review:
     types:
@@ -112,7 +113,7 @@ jobs:
         id: sanitized
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
-          GH_AW_ALLOWED_BOTS: copilot-pull-request-reviewer
+          GH_AW_ALLOWED_BOTS: Copilot,copilot-pull-request-reviewer
         with:
           script: |
             const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
@@ -1213,7 +1214,7 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           GH_AW_REQUIRED_ROLES: admin,maintainer,write
-          GH_AW_ALLOWED_BOTS: copilot-pull-request-reviewer
+          GH_AW_ALLOWED_BOTS: Copilot,copilot-pull-request-reviewer
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
