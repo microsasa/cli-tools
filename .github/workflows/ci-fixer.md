@@ -21,7 +21,10 @@ tools:
   github:
     toolsets: [default]
 
-network: defaults
+network:
+  allowed:
+    - defaults
+    - python
 
 safe-outputs:
   push-to-pull-request-branch:

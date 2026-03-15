@@ -20,7 +20,10 @@ tools:
   github:
     toolsets: [default]
 
-network: defaults
+network:
+  allowed:
+    - defaults
+    - python
 
 safe-outputs:
   create-pull-request:
