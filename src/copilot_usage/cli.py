@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from watchdog.events import FileSystemEventHandler  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from copilot_usage.models import SessionSummary
@@ -114,14 +115,15 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     return None
 
 
-class _FileChangeHandler:
+class _FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
     """Watchdog handler that triggers refresh on any session-state change."""
 
     def __init__(self, change_event: threading.Event) -> None:
+        super().__init__()
         self._change_event = change_event
         self._last_trigger = 0.0
 
-    def dispatch(self, event: object) -> None:  # noqa: ANN001
+    def dispatch(self, event: object) -> None:
         now = time.monotonic()
         if now - self._last_trigger > 2.0:  # debounce 2s
             self._last_trigger = now
@@ -132,7 +134,7 @@ def _start_observer(session_path: Path, change_event: threading.Event) -> object
     """Start a watchdog observer monitoring *session_path* for changes."""
     handler = _FileChangeHandler(change_event)
     observer = Observer()
-    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
+    observer.schedule(handler, str(session_path), recursive=True)
     observer.daemon = True
     observer.start()
     return observer
