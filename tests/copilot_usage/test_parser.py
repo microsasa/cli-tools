@@ -31,6 +31,8 @@ from copilot_usage.models import (
 )
 from copilot_usage.parser import (
     _extract_session_name,
+    _infer_model_from_metrics,
+    _read_config_model,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -2035,3 +2037,81 @@ class TestGetAllSessionsOsError:
 
         assert len(results) == 1
         assert results[0].session_id == "sess-b"
+
+
+# ---------------------------------------------------------------------------
+# Issue #55 — _read_config_model OSError branch
+# ---------------------------------------------------------------------------
+
+
+class TestReadConfigModelOsError:
+    """Test that _read_config_model returns None when read_text raises OSError."""
+
+    def test_oserror_returns_none(self, tmp_path: Path) -> None:
+        """Existing file that raises OSError on read → returns None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
+        original_read_text = Path.read_text
+
+        def _raise_os_error(self: Path, *args: object, **kwargs: object) -> str:
+            if self == config:
+                raise OSError("permission denied")
+            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "read_text", _raise_os_error):
+            result = _read_config_model(config)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #55 — _infer_model_from_metrics tie behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestInferModelFromMetricsTie:
+    """Tests for _infer_model_from_metrics when models have equal request counts."""
+
+    def test_equal_counts_returns_a_candidate(self) -> None:
+        """Two models with equal counts → returns one of them (no crash)."""
+        metrics = {
+            "model-a": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=5),
+                usage=TokenUsage(outputTokens=100),
+            ),
+            "model-b": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=5),
+                usage=TokenUsage(outputTokens=200),
+            ),
+        }
+        result = _infer_model_from_metrics(metrics)
+        assert result in ("model-a", "model-b")
+
+    def test_equal_counts_deterministic(self) -> None:
+        """Tied counts → result is deterministic (first in insertion order)."""
+        metrics = {
+            "model-a": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=5),
+                usage=TokenUsage(outputTokens=100),
+            ),
+            "model-b": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=5),
+                usage=TokenUsage(outputTokens=200),
+            ),
+        }
+        # Python dict insertion order is stable; max() returns first max key
+        assert _infer_model_from_metrics(metrics) == "model-a"
+
+    def test_strictly_higher_count_wins(self) -> None:
+        """One model with strictly higher count → always returned."""
+        metrics = {
+            "model-a": ModelMetrics(
+                requests=RequestMetrics(count=3, cost=3),
+                usage=TokenUsage(outputTokens=100),
+            ),
+            "model-b": ModelMetrics(
+                requests=RequestMetrics(count=10, cost=10),
+                usage=TokenUsage(outputTokens=200),
+            ),
+        }
+        assert _infer_model_from_metrics(metrics) == "model-b"

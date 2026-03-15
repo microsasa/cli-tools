@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _ensure_aware,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
@@ -586,3 +588,59 @@ class TestFileChangeHandler:
         handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
         handler.dispatch(object())
         assert event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Issue #55 — _ensure_aware unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureAware:
+    """Direct tests for _ensure_aware helper."""
+
+    def test_none_passes_through(self) -> None:
+        """None input returns None."""
+        assert _ensure_aware(None) is None
+
+    def test_aware_datetime_unchanged(self) -> None:
+        """Already-aware datetime is returned as-is (identity check)."""
+        dt_aware = datetime(2026, 1, 1, tzinfo=UTC)
+        assert _ensure_aware(dt_aware) is dt_aware
+
+    def test_naive_datetime_gets_utc(self) -> None:
+        """Naïve datetime gets UTC tzinfo attached."""
+        dt_naive = datetime(2026, 1, 1)
+        result = _ensure_aware(dt_naive)
+        assert result is not None
+        assert result.tzinfo == UTC
+        assert result.replace(tzinfo=None) == dt_naive
+
+
+# ---------------------------------------------------------------------------
+# Issue #55 — uppercase interactive commands (Q, C, R)
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_quit_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'Q' quits the interactive loop."""
+    _write_session(tmp_path, "up-q0000-0000-0000-0000-000000000000", name="UpQ")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="Q\n")
+    assert result.exit_code == 0
+
+
+def test_interactive_cost_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'C' opens cost view, then 'Q' exits."""
+    _write_session(tmp_path, "up-c0000-0000-0000-0000-000000000000", name="UpC")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="C\nQ\n")
+    assert result.exit_code == 0
+    assert "Cost" in result.output
+
+
+def test_interactive_refresh_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'R' refreshes and loop continues without error."""
+    _write_session(tmp_path, "up-r0000-0000-0000-0000-000000000000", name="UpR")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="R\nQ\n")
+    assert result.exit_code == 0
