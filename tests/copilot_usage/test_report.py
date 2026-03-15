@@ -1347,6 +1347,8 @@ class TestRenderCostView:
 
     def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
         """Grand total output tokens includes active_output_tokens for no-metrics active session."""
+        import re
+
         session = SessionSummary(
             session_id="pure-active-5678",
             name="Token Check",
@@ -1359,9 +1361,13 @@ class TestRenderCostView:
             active_output_tokens=1500,
         )
         output = _capture_cost_view([session])
-        assert "Grand Total" in output
-        # 1500 output tokens → formatted as "1.5K"
-        assert "1.5K" in output
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # Extract Grand Total row's last column (output tokens)
+        grand_match = re.search(
+            r"Grand Total\s*│[^│]*│\s*\d+\s*│\s*\d+\s*│\s*\d+\s*│\s*(\S+)\s*│", clean
+        )
+        assert grand_match is not None, "Grand Total row not found"
+        assert grand_match.group(1) == "1.5K"
 
 
 class TestRenderFullSummaryHelperReuse:
