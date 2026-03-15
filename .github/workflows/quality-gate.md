@@ -2,7 +2,7 @@
 on:
   pull_request_review:
     types: [submitted]
-  bots: [copilot-pull-request-reviewer]
+  bots: [Copilot, copilot-pull-request-reviewer]
 
 permissions:
   contents: read
