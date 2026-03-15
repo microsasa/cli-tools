@@ -36,7 +36,7 @@ Audit/Health Agent → creates issue (max 2) → dispatches Implementer
         → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
         → HIGH impact → flags for human review (auto-merge stays blocked)
     → PR behind main after another PR merges?
-      → PR Rescue workflow (push to main trigger) → rebases → CI reruns → re-approves → auto-merge fires
+      → PR Rescue workflow (push to main + cron 15min) → requests review / resolves threads / rebases → auto-merge fires
 ```
 
 </details>
@@ -392,16 +392,19 @@ This is a known limitation for solo repos. Agent PRs don't need this — the qua
 
 ### PR Rescue Workflow
 
-When a PR merges to main, other open agent PRs fall behind. With `strict: true` (require branch to be up to date), auto-merge blocks until the branch is rebased.
+The **PR Rescue workflow** (`.github/workflows/pr-rescue.yml`) unsticks agent PRs at any pipeline stage. Runs on push to main, every 15 minutes on cron, and manual dispatch.
 
-The **PR Rescue workflow** (`.github/workflows/pr-rescue.yml`) fires on every push to main:
-1. Finds open `aw`-labeled PRs with auto-merge enabled that are behind main and already approved
-2. Rebases them onto latest main
-3. CI reruns on the rebased commit
-4. Since `dismiss_stale_reviews` is disabled, the existing approval survives
-5. Auto-merge fires
+PRs are sorted by progress (approved first). For each `aw`-labeled PR with auto-merge enabled (excluding `aw-conflict` labeled):
 
-Note: `dismiss_stale_reviews` is set to `false` to support this flow. This is safe for a solo-developer repo. If collaborators are added, re-evaluate this setting.
+**Check 1 — No Copilot review**: If the PR has no review from `copilot-pull-request-reviewer`, rebase first if behind main (so Copilot reviews fresh code), then request a review. Stops processing — next cycle picks up.
+
+**Check 2 — Unresolved threads**: Queries real thread IDs via GraphQL. For each unresolved thread, checks if the last comment is from `github-actions[bot]` (responder addressed it). If so, resolves it. If not, leaves it (human needs to look). If any remain unresolved, stops processing.
+
+**Check 3 — Behind main**: If approved + all threads resolved + BEHIND, rebases onto main. Removes `review-response-attempted` label BEFORE pushing so the responder can run again on any new Copilot comments.
+
+**Conflict handling**: If rebase fails (merge conflict), adds `aw-conflict` label and posts a comment. Future rescue runs skip `aw-conflict` PRs.
+
+Note: `dismiss_stale_reviews` is set to `false` so approvals survive rebases. Safe for a solo-developer repo. If collaborators are added, re-evaluate this setting.
 
 </details>
 
@@ -580,5 +583,13 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 - PR #106: Got `aw` label (non-deterministic — same config as #104), approved by quality gate, but 3 unresolved threads blocked merge. Same responder ordering bug.
 - PR #109: Reverts labels config, rewrites responder instructions with `***MUST***`/`***DOUBLE CHECK***` ordering enforcement.
 - **Lesson reinforced**: NEVER add config without verifying the runtime behavior. Read the source code. The compiler accepting a field does not mean the handler implements it.
+
+### 2026-03-15 — Thread ID hallucination discovery + enhanced rescue
+
+- Discovered Review Responder hallucinates `PRRT_` thread IDs. The GitHub MCP server v0.32.0 doesn't expose thread node IDs to agents. Agent fabricates plausible-looking IDs that fail at GraphQL API.
+- gh-aw's own smoke tests confirm this — "Resolve Review Thread" consistently skipped with "could not obtain PRRT node ID via available tools" (smoke tests #20998, #17210, #19689).
+- Root cause: github/github-mcp-server#1919 (resolve thread support) merged 2026-03-13, one week after v0.32.0 released. Fix ships in next MCP server release.
+- Filed upstream: github/gh-aw#21130 — requesting MCP server upgrade.
+- Enhanced PR Rescue workflow: now handles three stuck states (no review, unresolved threads, behind main), runs on 15-min cron, sorts PRs by progress, labels conflicts.
 
 </details>
