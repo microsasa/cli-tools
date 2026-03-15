@@ -16,6 +16,7 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     UserMessageData,
+    merge_model_metrics,
 )
 
 # ---------------------------------------------------------------------------
@@ -227,3 +228,102 @@ def test_session_summary_full() -> None:
     )
     assert s.total_premium_requests == 24
     assert s.model_metrics["claude-opus-4.6-1m"].usage.inputTokens == 1627935
+
+
+# ---------------------------------------------------------------------------
+# merge_model_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMergeModelMetrics:
+    """Unit tests for the merge_model_metrics helper."""
+
+    def test_both_empty(self) -> None:
+        assert merge_model_metrics({}, {}) == {}
+
+    def test_empty_base(self) -> None:
+        additional = {
+            "model-a": ModelMetrics(
+                requests=RequestMetrics(count=3, cost=2),
+                usage=TokenUsage(inputTokens=100, outputTokens=50),
+            )
+        }
+        result = merge_model_metrics({}, additional)
+        assert "model-a" in result
+        assert result["model-a"].requests.count == 3
+        assert result["model-a"].usage.inputTokens == 100
+
+    def test_empty_additional(self) -> None:
+        base = {
+            "model-a": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=3),
+                usage=TokenUsage(outputTokens=200),
+            )
+        }
+        result = merge_model_metrics(base, {})
+        assert result["model-a"].requests.count == 5
+        assert result["model-a"].usage.outputTokens == 200
+
+    def test_overlapping_keys_accumulate(self) -> None:
+        base = {
+            "claude-sonnet-4": ModelMetrics(
+                requests=RequestMetrics(count=3, cost=2),
+                usage=TokenUsage(
+                    inputTokens=100,
+                    outputTokens=50,
+                    cacheReadTokens=10,
+                    cacheWriteTokens=5,
+                ),
+            )
+        }
+        additional = {
+            "claude-sonnet-4": ModelMetrics(
+                requests=RequestMetrics(count=7, cost=4),
+                usage=TokenUsage(
+                    inputTokens=200,
+                    outputTokens=80,
+                    cacheReadTokens=20,
+                    cacheWriteTokens=15,
+                ),
+            )
+        }
+        result = merge_model_metrics(base, additional)
+        m = result["claude-sonnet-4"]
+        assert m.requests.count == 10
+        assert m.requests.cost == 6
+        assert m.usage.inputTokens == 300
+        assert m.usage.outputTokens == 130
+        assert m.usage.cacheReadTokens == 30
+        assert m.usage.cacheWriteTokens == 20
+
+    def test_disjoint_keys_kept_separate(self) -> None:
+        base = {"model-a": ModelMetrics(usage=TokenUsage(outputTokens=100))}
+        additional = {"model-b": ModelMetrics(usage=TokenUsage(outputTokens=200))}
+        result = merge_model_metrics(base, additional)
+        assert "model-a" in result and "model-b" in result
+        assert result["model-a"].usage.outputTokens == 100
+        assert result["model-b"].usage.outputTokens == 200
+
+    def test_does_not_mutate_base(self) -> None:
+        base = {
+            "m1": ModelMetrics(
+                requests=RequestMetrics(count=1, cost=1),
+                usage=TokenUsage(inputTokens=10),
+            )
+        }
+        additional = {
+            "m1": ModelMetrics(
+                requests=RequestMetrics(count=2, cost=2),
+                usage=TokenUsage(inputTokens=20),
+            )
+        }
+        merge_model_metrics(base, additional)
+        # base must be unchanged
+        assert base["m1"].requests.count == 1
+        assert base["m1"].usage.inputTokens == 10
+
+    def test_does_not_mutate_additional(self) -> None:
+        base = {"m1": ModelMetrics(requests=RequestMetrics(count=1))}
+        additional = {"m1": ModelMetrics(requests=RequestMetrics(count=5))}
+        merge_model_metrics(base, additional)
+        assert additional["m1"].requests.count == 5

@@ -70,6 +70,26 @@ class ModelMetrics(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+def merge_model_metrics(
+    base: dict[str, ModelMetrics],
+    additional: dict[str, ModelMetrics],
+) -> dict[str, ModelMetrics]:
+    """Return a new dict merging *additional* into *base* without mutation."""
+    result = {name: mm.model_copy(deep=True) for name, mm in base.items()}
+    for name, mm in additional.items():
+        if name in result:
+            existing = result[name]
+            existing.requests.count += mm.requests.count
+            existing.requests.cost += mm.requests.cost
+            existing.usage.inputTokens += mm.usage.inputTokens
+            existing.usage.outputTokens += mm.usage.outputTokens
+            existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
+            existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
+        else:
+            result[name] = mm.model_copy(deep=True)
+    return result
+
+
 class CodeChanges(BaseModel):
     """Code‐change stats from a session.shutdown event."""
 
