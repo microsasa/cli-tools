@@ -47,27 +47,33 @@ Address review comments on pull request #${{ github.event.pull_request.number }}
 
 This workflow runs when a review is submitted on a pull request.
 
-1. First, check if the PR has the `aw` label. If it does NOT have the `aw` label, stop immediately — this workflow only handles agent-created PRs.
+1. ***PUSH AS LAST STEP***: Do NOT push any code until all other steps are complete. All replies, thread resolutions, and CI checks must happen before any push.
 
-2. Check the review that triggered this workflow. If the review has no comments (e.g., a plain approval with no inline comments), stop — there is nothing to address.
+2. First, check if the PR has the `aw` label. If it does NOT have the `aw` label, stop immediately — this workflow only handles agent-created PRs.
 
-3. Check if the PR already has the label `review-response-attempted`. If it does, add a comment to the PR saying "Review response already attempted — stopping to prevent loops. Manual intervention needed." and stop.
+3. Check the review that triggered this workflow. If the review has no comments (e.g., a plain approval with no inline comments), stop — there is nothing to address.
 
-4. Add the label `review-response-attempted` to the PR.
+4. Check if the PR already has the label `review-response-attempted`. If it does, add a comment to the PR saying "Review response already attempted — stopping to prevent loops. Manual intervention needed." and stop.
 
-5. Read the unresolved review comment threads on the PR (not just the latest review — get all unresolved threads). If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
+5. Add the label `review-response-attempted` to the PR.
 
-6. For each unresolved review comment thread (up to 10):
+6. Read the unresolved review comment threads on the PR (not just the latest review — get all unresolved threads). If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
+
+7. For each unresolved review comment thread (up to 10):
    a. Read the comment and understand what change is being requested
    b. Read the relevant file and surrounding code context
-   c. Make the requested fix in the code
+   c. Make the requested fix in the code (edit the file locally — do NOT push yet)
    d. Reply to the comment thread explaining what you changed
    e. Resolve the thread
 
-7. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
+8. ***MUST***: Reply to and resolve ALL threads BEFORE pushing any code. Pushing code invalidates thread IDs and makes them unresolvable. Do NOT emit a push_to_pull_request_branch safe-output until all reply and resolve safe-outputs have been emitted.
 
-8. **IMPORTANT**: You MUST reply to threads and resolve them BEFORE pushing code. Pushing code invalidates thread IDs and makes them unresolvable. The correct order is: reply → resolve → push.
+9. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
 
-9. Push all changes in a single commit with message "fix: address review comments".
+10. ***DOUBLE CHECK***: Before you finish, verify that your safe-output calls are in the correct order: all reply_to_pull_request_review_comment and resolve_pull_request_review_thread calls MUST come BEFORE any push_to_pull_request_branch call. If you emitted them in the wrong order, you cannot fix it — the threads will fail to resolve and the PR will be stuck.
 
-If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly.
+If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly. You MUST still resolve the thread after replying — an unresolved thread blocks the PR from merging regardless of whether you made the change.
+
+***MUST***: Every thread you addressed or decided not to address MUST be replied to and resolved. No unresolved threads should remain after your run — unresolved threads block the PR from merging.
+
+***MUST***: Push all changes in a single commit with message "fix: address review comments". This is the ONLY push in this workflow — it comes after all replies, resolutions, and CI checks.

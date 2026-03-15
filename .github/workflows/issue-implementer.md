@@ -33,7 +33,6 @@ safe-outputs:
     protected-files: fallback-to-issue
     auto-merge: true
     draft: false
-    labels: ["aw"]
   push-to-pull-request-branch:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
