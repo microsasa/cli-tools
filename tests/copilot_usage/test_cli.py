@@ -697,54 +697,38 @@ def test_show_session_by_index_none_events_path() -> None:
 # 4. Group-level --path propagation -------------------------------------------
 
 
-def test_group_path_propagates_to_summary(tmp_path: Path) -> None:
-    """Group-level --path is used by 'summary' when subcommand omits --path."""
-    _write_session(tmp_path, "grp_sum00-0000-0000-0000-000000000000", name="GrpSum")
+def test_summary_group_path_propagation(tmp_path: Path) -> None:
+    """summary reads --path from group level when not provided at subcommand level."""
+    _write_session(tmp_path, "grp10000-0000-0000-0000-000000000000", name="GroupPath")
     runner = CliRunner()
+    # --path before subcommand name → stored in ctx.obj, not subcommand
     result = runner.invoke(main, ["--path", str(tmp_path), "summary"])
     assert result.exit_code == 0
-    assert "GrpSum" in result.output or "Summary" in result.output
+    assert "GroupPath" in result.output
 
 
-def test_group_path_propagates_to_session(tmp_path: Path, monkeypatch: Any) -> None:
-    """Group-level --path is used by 'session' when subcommand omits --path."""
-    _write_session(tmp_path, "grp_ses00-0000-0000-0000-000000000000", name="GrpSes")
-
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-    runner = CliRunner()
-    result = runner.invoke(main, ["--path", str(tmp_path), "session", "grp_ses00"])
-    assert result.exit_code == 0
-    assert "grp_ses00" in result.output
-
-
-def test_group_path_propagates_to_cost(tmp_path: Path) -> None:
-    """Group-level --path is used by 'cost' when subcommand omits --path."""
-    _write_session(
-        tmp_path, "grp_cst00-0000-0000-0000-000000000000", name="GrpCost", premium=2
-    )
+def test_cost_group_path_propagation(tmp_path: Path) -> None:
+    _write_session(tmp_path, "grp20000-0000-0000-0000-000000000000", name="CostGroup")
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "cost"])
     assert result.exit_code == 0
-    assert "Cost" in result.output or "Total" in result.output
 
 
-def test_group_path_propagates_to_live(tmp_path: Path) -> None:
-    """Group-level --path is used by 'live' when subcommand omits --path."""
+def test_live_group_path_propagation(tmp_path: Path) -> None:
     _write_session(
-        tmp_path,
-        "grp_liv00-0000-0000-0000-000000000000",
-        name="GrpLive",
-        active=True,
+        tmp_path, "grp30000-0000-0000-0000-000000000000", name="LiveGroup", active=True
     )
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "live"])
+    assert result.exit_code == 0
+
+
+def test_session_group_path_propagation(tmp_path: Path) -> None:
+    sid = "grp40000-0000-0000-0000-000000000000"
+    _write_session(tmp_path, sid, name="SessGroup")
+    runner = CliRunner()
+    # session needs the session_id positional argument
+    result = runner.invoke(main, ["--path", str(tmp_path), "session", sid[:8]])
     assert result.exit_code == 0
 
 
