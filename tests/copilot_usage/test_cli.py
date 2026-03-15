@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _ensure_aware,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
@@ -586,3 +587,287 @@ class TestFileChangeHandler:
         handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
         handler.dispatch(object())
         assert event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# _ensure_aware unit tests (issue #59 §5)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureAware:
+    """Direct unit tests for the _ensure_aware helper."""
+
+    def test_none_returns_none(self) -> None:
+        assert _ensure_aware(None) is None
+
+    def test_aware_datetime_unchanged(self) -> None:
+        from datetime import UTC, datetime
+
+        aware = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
+        result = _ensure_aware(aware)
+        assert result is aware
+
+    def test_naive_datetime_gets_utc(self) -> None:
+        from datetime import UTC, datetime
+
+        naive = datetime(2025, 6, 1, 12, 0, 0)
+        assert naive.tzinfo is None
+        result = _ensure_aware(naive)
+        assert result is not None
+        assert result.tzinfo is UTC
+        assert result.year == 2025
+        assert result.month == 6
+
+
+# ---------------------------------------------------------------------------
+# _show_session_by_index with events_path=None (issue #59 §3)
+# ---------------------------------------------------------------------------
+
+
+def test_show_session_by_index_events_path_none() -> None:
+    """events_path=None triggers the 'No events path' error message."""
+    from copilot_usage.models import SessionSummary
+
+    s = SessionSummary(
+        session_id="null0000-0000-0000-0000-000000000000",
+        events_path=None,
+    )
+    console = Console(file=None, force_terminal=True)
+    with console.capture() as capture:
+        _show_session_by_index(console, [s], 1)
+    assert "no events path" in capture.get().lower()
+
+
+# ---------------------------------------------------------------------------
+# Uppercase interactive commands (issue #59 §2)
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_quit_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'Q' also exits the interactive loop cleanly."""
+    _write_session(tmp_path, "upq00000-0000-0000-0000-000000000000", name="QuitUpper")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="Q\n")
+    assert result.exit_code == 0
+
+
+def test_interactive_cost_view_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'C' shows the cost view."""
+    _write_session(tmp_path, "upc00000-0000-0000-0000-000000000000", name="CostUpper")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="C\nq\n")
+    assert result.exit_code == 0
+    assert "Cost" in result.output
+
+
+def test_interactive_refresh_uppercase(tmp_path: Path) -> None:
+    """Uppercase 'R' refreshes data, then 'q' exits."""
+    _write_session(
+        tmp_path, "upr00000-0000-0000-0000-000000000000", name="RefreshUpper"
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="R\nq\n")
+    assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Group-level --path propagation (issue #59 §4)
+# ---------------------------------------------------------------------------
+
+
+def test_group_path_propagates_to_summary(tmp_path: Path) -> None:
+    """--path at group level propagates to summary subcommand."""
+    _write_session(tmp_path, "grps0000-0000-0000-0000-000000000000", name="GroupSum")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path), "summary"])
+    assert result.exit_code == 0
+    assert "GroupSum" in result.output or "Summary" in result.output
+
+
+def test_group_path_propagates_to_session(tmp_path: Path, monkeypatch: Any) -> None:
+    """--path at group level propagates to session subcommand."""
+    _write_session(tmp_path, "grpd0000-0000-0000-0000-000000000000", name="GroupSess")
+
+    def _fake_discover(_base_path: Path | None = None) -> list[Path]:
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path), "session", "grpd0000"])
+    assert result.exit_code == 0
+    assert "grpd0000" in result.output
+
+
+def test_group_path_propagates_to_cost(tmp_path: Path) -> None:
+    """--path at group level propagates to cost subcommand."""
+    _write_session(
+        tmp_path,
+        "grpc0000-0000-0000-0000-000000000000",
+        name="GroupCost",
+        premium=5,
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path), "cost"])
+    assert result.exit_code == 0
+    assert "Cost" in result.output or "Total" in result.output
+
+
+def test_group_path_propagates_to_live(tmp_path: Path) -> None:
+    """--path at group level propagates to live subcommand."""
+    _write_session(
+        tmp_path,
+        "grpl0000-0000-0000-0000-000000000000",
+        name="GroupLive",
+        active=True,
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path), "live"])
+    assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Auto-refresh branches in _interactive_loop (issue #59 §1)
+# ---------------------------------------------------------------------------
+
+
+def test_auto_refresh_home_view(tmp_path: Path, monkeypatch: Any) -> None:
+    """change_event fires while in home view → _draw_home is re-called."""
+    _write_session(tmp_path, "arh00000-0000-0000-0000-000000000000", name="AutoHome")
+
+    call_count = {"draw_home": 0}
+
+    import copilot_usage.cli as cli_mod
+
+    original_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _patched_draw_home(console: Any, sessions: Any) -> None:
+        call_count["draw_home"] += 1
+        original_draw_home(console, sessions)
+
+    monkeypatch.setattr("copilot_usage.cli._draw_home", _patched_draw_home)
+
+    event_ref: threading.Event | None = None
+    original_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+
+    def _capture_event_and_start(
+        session_path: Path, change_event: threading.Event
+    ) -> object:
+        nonlocal event_ref
+        event_ref = change_event
+        change_event.set()  # pre-set event so the first loop iteration sees it
+        return original_start_observer(session_path, change_event)
+
+    monkeypatch.setattr("copilot_usage.cli._start_observer", _capture_event_and_start)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="q\n")
+    assert result.exit_code == 0
+    # _draw_home should be called at least twice: initial + auto-refresh
+    assert call_count["draw_home"] >= 2
+
+
+def test_auto_refresh_cost_view(tmp_path: Path, monkeypatch: Any) -> None:
+    """change_event fires while in cost view → render_cost_view is re-called."""
+    _write_session(tmp_path, "arc00000-0000-0000-0000-000000000000", name="AutoCost")
+
+    cost_render_count = {"count": 0}
+    import copilot_usage.cli as cli_mod
+
+    original_render_cost = cli_mod.render_cost_view
+
+    def _patched_render_cost(*args: Any, **kwargs: Any) -> None:
+        cost_render_count["count"] += 1
+        original_render_cost(*args, **kwargs)
+
+    monkeypatch.setattr("copilot_usage.cli.render_cost_view", _patched_render_cost)
+
+    original_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+    event_ref: threading.Event | None = None
+
+    def _capture_event_start(
+        session_path: Path, change_event: threading.Event
+    ) -> object:
+        nonlocal event_ref
+        event_ref = change_event
+        return original_start_observer(session_path, change_event)
+
+    monkeypatch.setattr("copilot_usage.cli._start_observer", _capture_event_start)
+
+    # Patch _read_line_nonblocking to control input and timing
+    call_count = {"n": 0}
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return "c"  # Navigate to cost view
+        if call_count["n"] == 2:
+            # Now in cost view, set the change_event
+            if event_ref is not None:
+                event_ref.set()
+            return None  # return None so the loop sees the event
+        if call_count["n"] == 3:
+            return ""  # go back to home
+        return "q"
+
+    monkeypatch.setattr("copilot_usage.cli._read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # render_cost_view called at least twice: once for 'c', once for auto-refresh
+    assert cost_render_count["count"] >= 2
+
+
+def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
+    """change_event fires while in detail view → _show_session_by_index re-called."""
+    _write_session(tmp_path, "ard00000-0000-0000-0000-000000000000", name="AutoDetail")
+
+    detail_render_count = {"count": 0}
+    import copilot_usage.cli as cli_mod
+
+    original_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _patched_show(*args: Any, **kwargs: Any) -> None:
+        detail_render_count["count"] += 1
+        original_show(*args, **kwargs)
+
+    monkeypatch.setattr("copilot_usage.cli._show_session_by_index", _patched_show)
+
+    original_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+    event_ref: threading.Event | None = None
+
+    def _capture_event_start(
+        session_path: Path, change_event: threading.Event
+    ) -> object:
+        nonlocal event_ref
+        event_ref = change_event
+        return original_start_observer(session_path, change_event)
+
+    monkeypatch.setattr("copilot_usage.cli._start_observer", _capture_event_start)
+
+    call_count = {"n": 0}
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return "1"  # Navigate to detail view
+        if call_count["n"] == 2:
+            # In detail view, set the change_event
+            if event_ref is not None:
+                event_ref.set()
+            return None  # return None to trigger auto-refresh
+        if call_count["n"] == 3:
+            return ""  # go back to home
+        return "q"
+
+    monkeypatch.setattr("copilot_usage.cli._read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # _show_session_by_index called at least twice: once for '1', once for auto-refresh
+    assert detail_render_count["count"] >= 2
