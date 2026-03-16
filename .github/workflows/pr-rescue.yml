@@ -77,18 +77,18 @@ jobs:
 
             # ── Helper: rebase onto main ────────────────────────────
             do_rebase() {
-              if ! git fetch origin "$branch" 2>&1; then
+              if ! git fetch origin -- "$branch" 2>&1; then
                 echo "::warning::Failed to fetch branch for PR #${pr_number}. Skipping."
                 return 1
               fi
-              if ! git checkout -B "$branch" "origin/$branch" 2>&1; then
+              if ! git checkout -B "$branch" "origin/$branch" -- 2>&1; then
                 echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
                 return 1
               fi
               if git rebase origin/main; then
                 # Remove label BEFORE push so responder can run on new comments
                 gh pr edit "$pr_number" --remove-label review-response-attempted 2>/dev/null || true
-                if git push --force-with-lease origin "$branch" 2>&1; then
+                if git push --force-with-lease origin -- "$branch" 2>&1; then
                   echo "✅ PR #${pr_number} rebased successfully."
                   git checkout main
                   return 0
@@ -148,6 +148,16 @@ jobs:
               echo "::endgroup::"
               continue
             }
+
+            # Warn if thread count exceeds pagination cap
+            thread_total=$(gh api graphql -f query='query($pr: Int!) {
+              repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
+                pullRequest(number: $pr) { reviewThreads(first: 0) { totalCount } }
+              }
+            }' -F pr="$pr_number" --jq '.data.repository.pullRequest.reviewThreads.totalCount' 2>/dev/null) || thread_total=0
+            if [ "$thread_total" -gt 100 ] 2>/dev/null; then
+              echo "::warning::PR #${pr_number} has ${thread_total} threads (cap: 100). Some may be missed."
+            fi
 
             if [ -n "$unresolved_threads" ]; then
               echo "PR #${pr_number} has unresolved threads. Checking if safe to resolve..."
