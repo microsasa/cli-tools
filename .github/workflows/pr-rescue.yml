@@ -81,7 +81,7 @@ jobs:
                 echo "::warning::Failed to fetch branch for PR #${pr_number}. Skipping."
                 return 1
               fi
-              if ! git checkout -B "$branch" "origin/$branch" -- 2>&1; then
+              if ! git checkout -B "$branch" "origin/$branch" 2>&1; then
                 echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
                 return 1
               fi
@@ -152,7 +152,7 @@ jobs:
             # Warn if thread count exceeds pagination cap
             thread_total=$(gh api graphql -f query='query($pr: Int!) {
               repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
-                pullRequest(number: $pr) { reviewThreads(first: 0) { totalCount } }
+                pullRequest(number: $pr) { reviewThreads(first: 1) { totalCount } }
               }
             }' -F pr="$pr_number" --jq '.data.repository.pullRequest.reviewThreads.totalCount' 2>/dev/null) || thread_total=0
             if [ "$thread_total" -gt 100 ] 2>/dev/null; then
