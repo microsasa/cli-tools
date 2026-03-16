@@ -27,16 +27,20 @@ gh aw fix --write             # Auto-fix deprecated fields
 Our autonomous pipeline:
 
 ```
-Audit/Health Agent → creates issue (max 2) → dispatches Implementer
+Audit/Health Agent → creates issue (labeled code-health or test-audit)
+  → Pipeline Orchestrator (15-min cron) picks up the issue:
+    → No aw-labeled PR in flight? → dispatches Implementer (one at a time)
   → Implementer creates PR (lint-clean, non-draft, auto-merge, aw label)
     → CI runs + Copilot auto-reviews (parallel, via ruleset)
-      → CI fails? → CI Fixer agent (1 retry, label guard)
-      → Copilot has comments? → Review Responder addresses them (pushes fixes)
+      → Copilot has comments? → Review Responder addresses them (pushes fixes, resolves threads via GraphQL)
       → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
         → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
         → HIGH impact → flags for human review (auto-merge stays blocked)
-    → PR behind main after another PR merges?
-      → PR Rescue workflow (push to main trigger) → rebases → CI reruns → re-approves → auto-merge fires
+    → PR stalled? → Pipeline Orchestrator detects and fixes:
+      → No Copilot review → requests one
+      → Unresolved threads with responder replies → resolves them
+      → CI failed → dispatches CI Fixer (1 retry, label guard)
+      → Behind main → logs, skips (requires manual rebase)
 ```
 
 </details>
@@ -390,18 +394,35 @@ done
 
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
 
-### PR Rescue Workflow
+### Pipeline Orchestrator
 
-When a PR merges to main, other open agent PRs fall behind. With `strict: true` (require branch to be up to date), auto-merge blocks until the branch is rebased.
+The **Pipeline Orchestrator** (`.github/workflows/pipeline-orchestrator.md`) owns the full lifecycle of agent work — from issue to merged PR. It runs every 15 minutes and on every push to main.
 
-The **PR Rescue workflow** (`.github/workflows/pr-rescue.yml`) fires on every push to main:
-1. Finds open `aw`-labeled PRs with auto-merge enabled that are behind main and already approved
-2. Rebases them onto latest main
-3. CI reruns on the rebased commit
-4. Since `dismiss_stale_reviews` is disabled, the existing approval survives
-5. Auto-merge fires
+**Issue dispatch** (one at a time):
+- If no `aw`-labeled PR is currently in flight, it finds open issues labeled `code-health` or `test-audit` that don't have a PR yet
+- Dispatches `issue-implementer` for the first eligible issue
+- Only one at a time — avoids concurrent PRs fighting over main
 
-Note: `dismiss_stale_reviews` is set to `false` to support this flow. This is safe for a solo-developer repo. If collaborators are added, re-evaluate this setting.
+**PR orchestration** (unstick what's in flight):
+For each open `aw`-labeled PR with auto-merge enabled (excluding `aw-conflict`), sorted by progress (approved first), applies the first matching action:
+
+1. **No Copilot review** → requests review from `@copilot`
+2. **Unresolved threads** → queries real thread IDs via GraphQL, resolves threads where the responder (PAT owner) posted the last comment
+3. **CI failure** → dispatches ci-fixer (if `ci-fix-attempted` label not present)
+4. **Behind main** → logs and skips (requires manual rebase)
+5. **All clear** → auto-merge should handle it
+
+The orchestrator is a pure reasoning agent — no git access, no `contents: write`. It uses safe-outputs (`dispatch-workflow`, `add-reviewer`, `resolve-pull-request-review-thread`, `add-comment`, `add-labels`) and bash for GraphQL queries.
+
+Replaces the old `pr-rescue.yml` bash script which only handled rebasing and required repeated bug-fix cycles.
+
+### Review Responder Thread ID Lookup
+
+The Review Responder queries real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
+
+No `bash:` tool config is needed — the responder already has `--allow-all-tools` from the compiler default (adding explicit `bash:` would restrict the allowlist and break CI commands like `uv`, `ruff`, `pyright`, `pytest`).
+
+This is a workaround until gh-aw upgrades their pinned MCP server (`github/gh-aw#21130`).
 
 </details>
 
@@ -425,8 +446,8 @@ All changes go in the `.md` file. Run `gh aw compile` to regenerate. Copilot may
 ### 5. `dismiss_stale_reviews` only dismisses APPROVED reviews
 `COMMENTED` reviews are NOT dismissed on new pushes. This means a Copilot `COMMENTED` review from before a rebase will persist.
 
-### 6. `pull_request_review` workflows run from default branch
-The workflow definition always comes from the default branch, not the PR branch. You cannot test workflow changes from a PR — they must be merged first.
+### 6. `pull_request_review` workflows run from the PR's head branch
+The workflow definition comes from the **PR's head branch**, not the default branch. This was verified empirically on PR #119 — the `if:` condition added on that branch was active immediately without merging to main first. This contradicts common web search results and many documentation sources. **Never trust web search over empirical evidence.**
 
 ### 7. GitHub's `action_required` is separate from gh-aw's `pre_activation`
 `action_required` means GitHub itself blocked the run (first-time contributor approval). No jobs run at all. `pre_activation` is gh-aw's role/bot check within the workflow.
@@ -445,6 +466,21 @@ The `labels` field compiles into the lock file and the handler reads it, but the
 
 ### 12. Review thread IDs are invalidated by pushes
 Pushing code to a PR branch can invalidate GraphQL thread IDs. If the responder pushes before resolving threads, the resolve calls fail with stale node IDs. Always resolve threads BEFORE pushing.
+
+### 13. MCP server doesn't expose thread IDs to agents (#114)
+The GitHub MCP server (pinned by gh-aw) does not return `PRRT_` thread node IDs in its tool responses. Agents hallucinate plausible-looking IDs that fail at the GraphQL API. The `resolve_pull_request_review_thread` safe-output works fine — the problem is the agent doesn't know which ID to pass. Workaround: instruct the agent to query real thread IDs via `gh api graphql` (the agent already has `--allow-all-tools` when no explicit `bash:` config is set). Do NOT add `bash:` to the tools config — that causes the compiler to switch from `--allow-all-tools` to a restricted allowlist, breaking CI commands. Tracked upstream in `github/gh-aw#21130`.
+
+### 14. `push-to-pull-request-branch` safe-output can't force-push
+The safe-output generates patches via `git format-patch` and applies them. It cannot do `git push --force-with-lease` after a rebase. If your workflow needs to rebase and force-push, it must either use a regular workflow (`.yml`) with `contents: write`, or use `strict: false` (not recommended). This is why the pipeline orchestrator delegates rebasing to humans instead of trying to do it.
+
+### 15. Don't write complex bash in GitHub Actions — use gh-aw agents
+Shell scripts under `set -euo pipefail` are fragile. Every API call needs `|| { warn; continue }` guards, every git command needs error handling, variable interpolation in GraphQL queries creates injection risks, and the bash gets longer with every bug fix. If the logic involves decisions and error recovery, an agent handles it better. The old `pr-rescue.yml` went through 4 rounds of Copilot review, a Gemini review, and an OpenAI Codex review — each finding new bugs. The orchestrator replacement is ~80 lines of natural language.
+
+### 16. `gh api user` resolves the PAT owner identity at runtime
+When agents post comments or replies using `GH_AW_WRITE_TOKEN` (a PAT), the comments appear as the PAT owner — not `github-actions[bot]`. Don't hardcode usernames. In a solo-developer repo, the PAT owner is the repository owner — use `$GITHUB_REPOSITORY_OWNER` to get the identity. Note: `gh api user` may not work in the agent sandbox because `GH_TOKEN` is not set for the agent's bash environment (it uses an installation token that returns 403 on `/user`).
+
+### 17. The `if:` frontmatter field gates at the infrastructure level
+Adding `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to a workflow's frontmatter compiles to a job-level `if:` on the activation job. When the condition is false, the workflow skips entirely at the GitHub Actions level — zero tokens burned, no agent activation. This is fundamentally different from checking labels in the agent prompt (which still activates the agent, burns compute, then noops).
 
 </details>
 
@@ -580,5 +616,27 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 - PR #106: Got `aw` label (non-deterministic — same config as #104), approved by quality gate, but 3 unresolved threads blocked merge. Same responder ordering bug.
 - PR #109: Reverts labels config, rewrites responder instructions with `***MUST***`/`***DOUBLE CHECK***` ordering enforcement.
 - **Lesson reinforced**: NEVER add config without verifying the runtime behavior. Read the source code. The compiler accepting a field does not mean the handler implements it.
+
+### 2026-03-16 — Label gate fix + pipeline orchestrator
+
+- PR #119: Added `if:` frontmatter condition to review-responder and quality-gate — workflows now skip entirely when `aw` label is absent. Previously burned compute + tokens on every PR. (Issue #120)
+- **Discovery**: `pull_request_review` events use workflow files from the PR's **head branch**, not the default branch. The `if:` condition was active immediately on PR #119 itself — no agent workflows fired. Contradicts common web search results — verified empirically by checking workflow runs. **Rule: never trust web search over empirical evidence.**
+- Filed issue #120 for the label gate bug. Merged PR #119 using safe admin merge procedure.
+
+#### The pr-rescue saga
+
+The enhanced PR rescue (#116) went through three complete rewrites:
+
+1. **Bash script attempt (PR #118, #121)**: 230 lines of bash under `set -euo pipefail`. Copilot review found 6 bugs (unguarded API calls, `git checkout` on fresh runner, pagination cap). Gemini review found 3 more (shell injection via branch names, `first:0` invalid in GraphQL, bot error replies). OpenAI Codex found a logic bug (thread resolution checked for `github-actions[bot]` but responder posts as PAT owner). Then I hardcoded the username instead of deriving it from the token. Then Copilot found the hardcode. Then I added a stray `--` to `git checkout -B`. Every fix introduced new bugs. PR #121 accumulated 7 fix commits across 4 rounds of review.
+
+2. **gh-aw agent attempt (pr-rescue.md)**: Rewrote as a gh-aw agent to escape bash fragility. Compiled clean. Then on self-review discovered: no `bash:` tools but instructions reference `gh api graphql` and `git rebase`. Added tools. Then discovered `push-to-pull-request-branch` safe-output can't force-push after rebase — it only applies patches. The agent literally cannot do the core operation.
+
+3. **Pipeline orchestrator (final)**: User proposed a fundamentally different approach — instead of one workflow doing everything, split into an orchestrator agent (reasoning + safe-outputs, no git) that handles everything EXCEPT rebasing. Rebasing either stays as a simple dedicated workflow or is left to humans. The orchestrator is ~80 lines of natural language, compiles clean, needs no `contents: write`.
+
+- Updated review-responder instructions to query real `PRRT_` thread IDs via `gh api graphql` before resolving (#117). No `bash:` tool config needed — `--allow-all-tools` is granted by default when no explicit `bash:` is set. Adding `bash:` would restrict the allowlist and break CI commands (uv, ruff, pyright, pytest). Instruction-only fix.
+- Moved CI fixer dispatch from `ci.yml` into the orchestrator — all dispatch decisions (implementer + ci-fixer) now centralized.
+- Closed PR #121 (bash attempt). Abandoned pr-rescue.md (gh-aw attempt). Created pipeline-orchestrator.md (final approach).
+- Closed stale/noise issues: #94, #105 (auto-generated fallback issues from implementer), #115 (duplicate of #108), #120 (fixed in PR #119).
+- **Lessons learned**: (1) Complex bash in Actions is a bug factory. (2) gh-aw safe-outputs have limitations (no force-push). (3) Split reasoning from operations — agents reason, workflows operate. (4) Never hardcode values that can be derived at runtime. (5) Every round of review found bugs the previous round missed — self-review is not enough.
 
 </details>
