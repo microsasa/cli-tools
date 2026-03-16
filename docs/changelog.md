@@ -4,6 +4,16 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: gate agent workflows on aw label — 2026-03-16
+
+**Problem**: Agent workflows (review-responder, quality-gate) fired on every `pull_request_review` event, including human-authored PRs. The `aw` label check was only in the agent prompt — a soft guard that still burned compute and inference tokens before noop'ing. Discovered on PR #118. (Issue #120)
+
+**Fix**: Added `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to both workflow frontmatters. gh-aw compiles this to a job-level `if:` on the activation job — workflow skips entirely at the GitHub Actions level when the label is absent. Zero tokens burned. (PR #119)
+
+**Finding**: `pull_request_review` events use the workflow file from the PR's **head branch**, not the default branch. The `if:` condition was active immediately on the PR itself — no need to merge first. (Contradicts common web search results.)
+
+---
+
 ## feat: Enhanced PR Rescue — resolve threads, request reviews, handle conflicts — 2026-03-15
 
 **Problem**: Agent PRs could get stuck at multiple stages: no Copilot review, unresolved threads (responder hallucinates thread IDs, #114), behind main. Old rescue only handled behind-main.

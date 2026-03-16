@@ -217,6 +217,7 @@ The `check_membership.cjs` script (in `github/gh-aw`) works as follows:
 Due to the upstream bug above, the `bots:` field alone is insufficient. The current workaround is `roles: all`, which tells the compiler to skip the permission check entirely (`check_membership.cjs` is not included in the `pre_activation` job):
 
 ```yaml
+if: "contains(github.event.pull_request.labels.*.name, 'aw')"
 on:
   pull_request_review:
     types: [submitted]
@@ -224,7 +225,9 @@ on:
   bots: [Copilot, copilot-pull-request-reviewer]   # keep for when upstream is fixed
 ```
 
-This is overly permissive — any actor can trigger the workflow. Track removal via issue #74.
+The `roles: all` makes the workflow overly permissive — any actor can trigger it. The `if:` condition compensates by gating on the `aw` label: only agent-created PRs (which carry the `aw` label) will activate the workflow. Without the `if:` gate, the agent still runs and burns tokens before noop'ing on the prompt-level label check. Track `roles: all` removal via issue #74.
+
+> **`pull_request_review` ref behavior**: GitHub Actions uses the workflow file from the PR's **head branch** for `pull_request_review` events. This means the `if:` condition is active immediately on the PR — no need to merge to main first. Verified empirically on PR #119.
 
 > **Actor identity note**: The event **actor** for Copilot reviews is `Copilot` (the GitHub App), NOT `copilot-pull-request-reviewer` (the review author login). `context.actor` returns `Copilot`. Keep both in the bots list for when the upstream bug is fixed.
 
@@ -428,8 +431,8 @@ All changes go in the `.md` file. Run `gh aw compile` to regenerate. Copilot may
 ### 5. `dismiss_stale_reviews` only dismisses APPROVED reviews
 `COMMENTED` reviews are NOT dismissed on new pushes. This means a Copilot `COMMENTED` review from before a rebase will persist.
 
-### 6. `pull_request_review` workflows run from default branch
-The workflow definition always comes from the default branch, not the PR branch. You cannot test workflow changes from a PR — they must be merged first.
+### 6. `pull_request_review` workflows run from the PR's head branch
+Despite common documentation claiming otherwise, `pull_request_review` events use the workflow file from the **PR's head branch**, not the default branch. Verified empirically on PR #119: a new `if:` condition in the PR branch's lock file was active immediately, without merging to main first. This means workflow changes CAN be tested from a PR.
 
 ### 7. GitHub's `action_required` is separate from gh-aw's `pre_activation`
 `action_required` means GitHub itself blocked the run (first-time contributor approval). No jobs run at all. `pre_activation` is gh-aw's role/bot check within the workflow.
@@ -591,5 +594,11 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 - Root cause: github/github-mcp-server#1919 (resolve thread support) merged 2026-03-13, one week after v0.32.0 released. Fix ships in next MCP server release.
 - Filed upstream: github/gh-aw#21130 — requesting MCP server upgrade.
 - Enhanced PR Rescue workflow: now handles three stuck states (no review, unresolved threads, behind main), runs on 15-min cron, sorts PRs by progress, labels conflicts.
+
+### 2026-03-16 — Agent workflow label gate
+
+- Discovered agent workflows (review-responder, quality-gate) fire on ALL PRs — including human-authored ones without the `aw` label. Both agents activated, burned tokens, then noop'd on the prompt-level label check. Discovered on PR #118. (Issue #120)
+- Fix: Added `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to both workflow frontmatters. gh-aw compiles this to a job-level `if:` on the activation job. No `aw` label → workflow skips entirely → zero tokens burned. (PR #119)
+- Key finding: `pull_request_review` events use the workflow file from the PR's **head branch**, not the default branch. The `if:` condition was active immediately on PR #119 itself — contradicts common documentation.
 
 </details>
