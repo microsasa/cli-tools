@@ -168,7 +168,7 @@ jobs:
                 thread_id=$(echo "$thread" | jq -r '.id')
                 last_author=$(echo "$thread" | jq -r '.comments.nodes[0].author.login // "unknown"')
 
-                if [ "$last_author" = "github-actions[bot]" ] || [ "$last_author" = "github-actions" ]; then
+                if [ "$last_author" = "github-actions[bot]" ] || [ "$last_author" = "github-actions" ] || [ "$last_author" = "microsasa" ]; then
                   echo "  Thread ${thread_id}: last comment by bot — resolving..."
                   if gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' -f id="$thread_id" >/dev/null 2>&1; then
                     echo "  ✅ Resolved ${thread_id}"
