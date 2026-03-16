@@ -26,7 +26,6 @@ from copilot_usage.report import (
     _event_type_label,
     _filter_sessions,
     _format_detail_duration,
-    _format_elapsed_since,
     _format_relative_time,
     _format_session_running_time,
     format_duration,
@@ -125,9 +124,14 @@ class TestFormatSessionRunningTime:
         start = now - timedelta(minutes=7)
         session = _make_session(start_time=start)
         session.last_resume_time = None
-        result = _format_session_running_time(session)
-        expected = _format_elapsed_since(start)
-        assert result == expected
+        sentinel = "7m 00s"
+        with patch(
+            "copilot_usage.report._format_elapsed_since",
+            return_value=sentinel,
+        ) as mock_fmt:
+            result = _format_session_running_time(session)
+        mock_fmt.assert_called_once_with(start)
+        assert result == sentinel
 
 
 class TestRenderLiveSessions:
