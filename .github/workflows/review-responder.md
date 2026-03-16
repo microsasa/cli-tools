@@ -1,4 +1,5 @@
 ---
+if: "contains(github.event.pull_request.labels.*.name, 'aw')"
 on:
   pull_request_review:
     types: [submitted]
