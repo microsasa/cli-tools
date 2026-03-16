@@ -35,7 +35,7 @@ safe-outputs:
     report-as-issue: false
   dispatch-workflow:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
-    workflows: [issue-implementer]
+    workflows: [issue-implementer, ci-fixer]
     max: 1
   add-reviewer:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
@@ -99,6 +99,8 @@ For each PR (in sorted order), gather its state:
 - `mergeStateStatus` (BEHIND, CLEAN, BLOCKED, etc.)
 - `reviewDecision` (APPROVED, REVIEW_REQUIRED, etc.)
 - Whether Copilot has submitted a review (look for reviews by author `copilot-pull-request-reviewer`)
+- Whether the latest CI check run (`check` job) has failed
+- Whether the PR has the `ci-fix-attempted` label
 
 Then apply the **first matching** action and move to the next PR:
 
@@ -134,14 +136,20 @@ If the last comment was posted by the responder (PAT owner) or by `github-action
 
 If any unresolved threads remain where the last commenter is someone else (human or Copilot reviewer), stop processing this PR — it needs attention.
 
-#### Action 3: Behind main
+#### Action 3: CI failure
+
+If the latest CI `check` run has failed and the PR does NOT have the `ci-fix-attempted` label, dispatch the `ci-fixer` workflow with the PR number as input. The ci-fixer will read the logs, fix the issues, and push. Stop processing this PR — next cycle will check again.
+
+If CI has failed but the PR already has `ci-fix-attempted`, skip — the fixer already tried once and manual intervention is needed.
+
+#### Action 4: Behind main
 
 If the PR is approved, all threads resolved, but `mergeStateStatus` is `BEHIND`:
 - Log that the PR is approved and ready but needs a rebase to proceed.
 - Do NOT attempt to rebase and do NOT comment on the PR — this requires manual intervention.
 - Move to the next PR.
 
-#### Action 4: All clear
+#### Action 5: All clear
 
 If the PR is approved, threads resolved, and not behind main — auto-merge should handle it. Log this and move on.
 

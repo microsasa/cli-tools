@@ -32,7 +32,6 @@ Audit/Health Agent → creates issue (labeled code-health or test-audit)
     → No aw-labeled PR in flight? → dispatches Implementer (one at a time)
   → Implementer creates PR (lint-clean, non-draft, auto-merge, aw label)
     → CI runs + Copilot auto-reviews (parallel, via ruleset)
-      → CI fails? → CI Fixer agent (1 retry, label guard)
       → Copilot has comments? → Review Responder addresses them (pushes fixes, resolves threads via GraphQL)
       → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
         → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
@@ -40,6 +39,7 @@ Audit/Health Agent → creates issue (labeled code-health or test-audit)
     → PR stalled? → Pipeline Orchestrator detects and fixes:
       → No Copilot review → requests one
       → Unresolved threads with responder replies → resolves them
+      → CI failed → dispatches CI Fixer (1 retry, label guard)
       → Behind main → logs, skips (requires manual rebase)
 ```
 
@@ -408,8 +408,9 @@ For each open `aw`-labeled PR with auto-merge enabled (excluding `aw-conflict`),
 
 1. **No Copilot review** → requests review from `@copilot`
 2. **Unresolved threads** → queries real thread IDs via GraphQL, resolves threads where the responder (PAT owner) posted the last comment
-3. **Behind main** → logs and skips (requires manual rebase)
-4. **All clear** → auto-merge should handle it
+3. **CI failure** → dispatches ci-fixer (if `ci-fix-attempted` label not present)
+4. **Behind main** → logs and skips (requires manual rebase)
+5. **All clear** → auto-merge should handle it
 
 The orchestrator is a pure reasoning agent — no git access, no `contents: write`. It uses safe-outputs (`dispatch-workflow`, `add-reviewer`, `resolve-pull-request-review-thread`, `add-comment`, `add-labels`) and bash for GraphQL queries.
 
@@ -417,7 +418,9 @@ Replaces the old `pr-rescue.yml` bash script which only handled rebasing and req
 
 ### Review Responder Thread ID Lookup
 
-The Review Responder has `bash: ["gh:api:graphql"]` access so it can query real `PRRT_` thread IDs before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
+The Review Responder queries real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
+
+No `bash:` tool config is needed — the responder already has `--allow-all-tools` from the compiler default (adding explicit `bash:` would restrict the allowlist and break CI commands like `uv`, `ruff`, `pyright`, `pytest`).
 
 This is a workaround until gh-aw upgrades their pinned MCP server (`github/gh-aw#21130`).
 
@@ -465,7 +468,7 @@ The `labels` field compiles into the lock file and the handler reads it, but the
 Pushing code to a PR branch can invalidate GraphQL thread IDs. If the responder pushes before resolving threads, the resolve calls fail with stale node IDs. Always resolve threads BEFORE pushing.
 
 ### 13. MCP server doesn't expose thread IDs to agents (#114)
-The GitHub MCP server (pinned by gh-aw) does not return `PRRT_` thread node IDs in its tool responses. Agents hallucinate plausible-looking IDs that fail at the GraphQL API. The `resolve_pull_request_review_thread` safe-output works fine — the problem is the agent doesn't know which ID to pass. Workaround: give the agent `bash: ["gh:api:graphql"]` so it can query real thread IDs directly. Tracked upstream in `github/gh-aw#21130`.
+The GitHub MCP server (pinned by gh-aw) does not return `PRRT_` thread node IDs in its tool responses. Agents hallucinate plausible-looking IDs that fail at the GraphQL API. The `resolve_pull_request_review_thread` safe-output works fine — the problem is the agent doesn't know which ID to pass. Workaround: instruct the agent to query real thread IDs via `gh api graphql` (the agent already has `--allow-all-tools` when no explicit `bash:` config is set). Do NOT add `bash:` to the tools config — that causes the compiler to switch from `--allow-all-tools` to a restricted allowlist, breaking CI commands. Tracked upstream in `github/gh-aw#21130`.
 
 ### 14. `push-to-pull-request-branch` safe-output can't force-push
 The safe-output generates patches via `git format-patch` and applies them. It cannot do `git push --force-with-lease` after a rebase. If your workflow needs to rebase and force-push, it must either use a regular workflow (`.yml`) with `contents: write`, or use `strict: false` (not recommended). This is why the pipeline orchestrator delegates rebasing to humans instead of trying to do it.
@@ -630,7 +633,8 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 
 3. **Pipeline orchestrator (final)**: User proposed a fundamentally different approach — instead of one workflow doing everything, split into an orchestrator agent (reasoning + safe-outputs, no git) that handles everything EXCEPT rebasing. Rebasing either stays as a simple dedicated workflow or is left to humans. The orchestrator is ~80 lines of natural language, compiles clean, needs no `contents: write`.
 
-- Added `bash: ["gh:api:graphql"]` to review-responder (#117) — fixes thread ID hallucination at the source. Agent now queries real `PRRT_` IDs via GraphQL before resolving.
+- Updated review-responder instructions to query real `PRRT_` thread IDs via `gh api graphql` before resolving (#117). No `bash:` tool config needed — `--allow-all-tools` is granted by default when no explicit `bash:` is set. Adding `bash:` would restrict the allowlist and break CI commands (uv, ruff, pyright, pytest). Instruction-only fix.
+- Moved CI fixer dispatch from `ci.yml` into the orchestrator — all dispatch decisions (implementer + ci-fixer) now centralized.
 - Closed PR #121 (bash attempt). Abandoned pr-rescue.md (gh-aw attempt). Created pipeline-orchestrator.md (final approach).
 - Closed stale/noise issues: #94, #105 (auto-generated fallback issues from implementer), #115 (duplicate of #108), #120 (fixed in PR #119).
 - **Lessons learned**: (1) Complex bash in Actions is a bug factory. (2) gh-aw safe-outputs have limitations (no force-push). (3) Split reasoning from operations — agents reason, workflows operate. (4) Never hardcode values that can be derived at runtime. (5) Every round of review found bugs the previous round missed — self-review is not enough.

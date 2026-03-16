@@ -12,7 +12,9 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 **Problem 2**: Review-responder hallucinates thread IDs because the MCP server doesn't expose `PRRT_` node IDs. All `resolve_pull_request_review_thread` calls fail silently. PRs stay stuck with unresolved threads. (Issues #114, #117)
 
-**Fix 2**: Added `bash: ["gh:api:graphql"]` to review-responder. Agent now queries real thread IDs via GraphQL before resolving. Workaround until gh-aw upgrades their MCP server (`github/gh-aw#21130`). (Closes #117. Refs #114)
+**Fix 2**: Updated review-responder instructions to query real thread IDs via `gh api graphql` before resolving. No `bash:` tool config added — the responder already has `--allow-all-tools` (adding `bash:` would restrict the allowlist and break CI commands). Instruction-only change. (Closes #117. Refs #114)
+
+**Also**: Moved CI fixer dispatch from `ci.yml` into the orchestrator — all dispatch decisions now centralized in one agent.
 
 ---
 
