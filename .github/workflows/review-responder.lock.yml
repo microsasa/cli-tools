@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"e1defa99f6997703c92f43de1a3dcd3fcc7661ead5eb63b2ac8f1023f3db57be","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"35ba5d1e915453dfb8bb36f204c8e88294a212d8699ccd2b25513ce1bcece680","compiler_version":"v0.58.1","strict":true}
 
 name: "Review Responder"
 "on":
@@ -44,6 +44,7 @@ run-name: "Review Responder"
 
 jobs:
   activation:
+    if: contains(github.event.pull_request.labels.*.name, 'aw')
     runs-on: ubuntu-slim
     permissions:
       contents: read

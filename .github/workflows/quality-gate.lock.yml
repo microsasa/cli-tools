@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"51b7c0f46336464fcff657fb3d3e63ff0c9f9b4a578b0d86b63f251df8bd6434","compiler_version":"v0.58.1","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"15df3ac9ea802b32be49f9486f73a665c2e27c493cb502a1c8f1e1aac1d9b8a9","compiler_version":"v0.58.1","strict":true}
 
 name: "Quality Gate"
 "on":
@@ -44,6 +44,7 @@ run-name: "Quality Gate"
 
 jobs:
   activation:
+    if: contains(github.event.pull_request.labels.*.name, 'aw')
     runs-on: ubuntu-slim
     permissions:
       contents: read
