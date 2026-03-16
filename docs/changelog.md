@@ -12,7 +12,7 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 1. No Copilot review → rebase if behind main, then request review
 2. Unresolved threads → resolve if bot reply is last comment (uses real GraphQL thread IDs)
 3. Behind main → rebase, remove review-response-attempted label before push
-Plus: 15-min cron schedule, `aw-conflict` label on merge conflicts, skip conflicted PRs. (PR #118, closes #116)
+Plus: 15-min cron schedule, `aw-conflict` label on merge conflicts, skip conflicted PRs. (PR #121, closes #116)
 
 ---
 
