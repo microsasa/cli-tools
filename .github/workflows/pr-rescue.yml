@@ -81,7 +81,7 @@ jobs:
                 echo "::warning::Failed to fetch branch for PR #${pr_number}. Skipping."
                 return 1
               fi
-              if ! git checkout "$branch" 2>&1; then
+              if ! git checkout -B "$branch" "origin/$branch" 2>&1; then
                 echo "::warning::Failed to checkout branch for PR #${pr_number}. Skipping."
                 return 1
               fi
@@ -129,7 +129,8 @@ jobs:
             unresolved_threads=$(gh api graphql -f query='query($pr: Int!) {
               repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
                 pullRequest(number: $pr) {
-                  reviewThreads(first: 50) {
+                  reviewThreads(first: 100) {
+                    totalCount
                     nodes {
                       id
                       isResolved
@@ -142,7 +143,11 @@ jobs:
                   }
                 }
               }
-            }' -F pr="$pr_number" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)')
+            }' -F pr="$pr_number" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)') || {
+              echo "::warning::Failed to query review threads for PR #${pr_number}. Skipping."
+              echo "::endgroup::"
+              continue
+            }
 
             if [ -n "$unresolved_threads" ]; then
               echo "PR #${pr_number} has unresolved threads. Checking if safe to resolve..."
@@ -169,12 +174,16 @@ jobs:
               remaining=$(gh api graphql -f query='query($pr: Int!) {
                 repository(owner: "'"${GITHUB_REPOSITORY_OWNER}"'", name: "'"${GITHUB_REPOSITORY#*/}"'") {
                   pullRequest(number: $pr) {
-                    reviewThreads(first: 50) {
+                    reviewThreads(first: 100) {
                       nodes { isResolved }
                     }
                   }
                 }
-              }' -F pr="$pr_number" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')
+              }' -F pr="$pr_number" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length') || {
+                echo "::warning::Failed to re-check threads for PR #${pr_number}. Skipping."
+                echo "::endgroup::"
+                continue
+              }
 
               if [ "$remaining" != "0" ]; then
                 echo "PR #${pr_number} still has ${remaining} unresolved thread(s). Cannot proceed."
@@ -187,8 +196,8 @@ jobs:
 
             # ── Check 3: Behind main (approved + threads clear) ─────
             # Re-query merge state — may have changed after thread resolution
-            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus')
-            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision')
+            merge_state=$(gh pr view "$pr_number" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null) || { echo "::warning::Failed to re-query PR #${pr_number}. Skipping."; echo "::endgroup::"; continue; }
+            review_decision=$(gh pr view "$pr_number" --json reviewDecision --jq '.reviewDecision' 2>/dev/null) || { echo "::warning::Failed to re-query PR #${pr_number}. Skipping."; echo "::endgroup::"; continue; }
             if [ "$merge_state" = "BEHIND" ] && [ "$review_decision" = "APPROVED" ]; then
               echo "PR #${pr_number} is approved, threads clear, but behind main. Rebasing..."
               if do_rebase; then
