@@ -953,6 +953,38 @@ class TestReportCoverageGaps:
         # Code Changes section should NOT appear
         assert "Code Changes" not in output
 
+    def test_summary_header_shows_date_range(self) -> None:
+        """_render_summary_header date range: earliest date → latest date."""
+        s1 = _make_summary_session(
+            session_id="early",
+            start_time=datetime(2025, 3, 1, tzinfo=UTC),
+        )
+        s2 = _make_summary_session(
+            session_id="late",
+            start_time=datetime(2025, 11, 30, tzinfo=UTC),
+        )
+        output = _capture_summary([s1, s2])
+        assert "2025-03-01  →  2025-11-30" in output
+
+    def test_summary_header_date_range_order_is_min_max(self) -> None:
+        """Date range shows min date first even when sessions are not in order."""
+        sessions = [
+            _make_summary_session(
+                session_id="mid",
+                start_time=datetime(2025, 6, 15, tzinfo=UTC),
+            ),
+            _make_summary_session(
+                session_id="early",
+                start_time=datetime(2025, 1, 1, tzinfo=UTC),
+            ),
+            _make_summary_session(
+                session_id="late",
+                start_time=datetime(2025, 12, 31, tzinfo=UTC),
+            ),
+        ]
+        output = _capture_summary(sessions)
+        assert "2025-01-01  →  2025-12-31" in output
+
     def test_summary_header_no_start_times(self) -> None:
         """Sessions with no start_time → 'no sessions' subtitle (line 533)."""
         session = SessionSummary(session_id="no-time", start_time=None)
@@ -1324,6 +1356,8 @@ class TestRenderCostView:
         )
         assert grand_match is not None, "Grand Total row not found"
         assert grand_match.group(1) == "10"
+        # Output Tokens must include active_output_tokens: 1000 + 200 = 1200 → "1.2K"
+        assert "1.2K" in output
 
     def test_pure_active_session_no_metrics_shows_both_rows(self) -> None:
         """Active session with no model_metrics shows placeholder row AND Since-last-shutdown row."""
