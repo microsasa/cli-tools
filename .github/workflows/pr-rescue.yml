@@ -43,6 +43,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Resolve the PAT owner login for thread-resolution matching
+          token_owner=$(gh api user --jq '.login' 2>/dev/null) || token_owner=""
+
           # ── Discover agent PRs ──────────────────────────────────────
           # Ensure aw-conflict label exists
           gh label create aw-conflict --color D93F0B --description "PR has merge conflicts — rescue skips" 2>/dev/null || true
@@ -168,8 +171,8 @@ jobs:
                 thread_id=$(echo "$thread" | jq -r '.id')
                 last_author=$(echo "$thread" | jq -r '.comments.nodes[0].author.login // "unknown"')
 
-                if [ "$last_author" = "github-actions[bot]" ] || [ "$last_author" = "github-actions" ] || [ "$last_author" = "microsasa" ]; then
-                  echo "  Thread ${thread_id}: last comment by bot — resolving..."
+                if [ "$last_author" = "github-actions[bot]" ] || [ "$last_author" = "github-actions" ] || { [ -n "$token_owner" ] && [ "$last_author" = "$token_owner" ]; }; then
+                  echo "  Thread ${thread_id}: last comment by responder (${last_author}) — resolving..."
                   if gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' -f id="$thread_id" >/dev/null 2>&1; then
                     echo "  ✅ Resolved ${thread_id}"
                   else
