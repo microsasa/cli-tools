@@ -4,6 +4,28 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## feat: pipeline orchestrator + review-responder thread ID fix — 2026-03-16
+
+**Problem 1**: Agent PRs get stuck at multiple stages (no Copilot review, unresolved threads, behind main). The old `pr-rescue.yml` bash script only handled rebasing and was brittle — 4 rounds of review across 3 AI models found a combined 13 bugs in 230 lines of bash. (Issues #116, #90)
+
+**Fix 1**: New **pipeline orchestrator** (`pipeline-orchestrator.md`) — gh-aw agent that owns the full lifecycle. Dispatches implementer for eligible issues (one at a time, only if no aw PR in flight). Unsticks stuck PRs: requests Copilot reviews, resolves addressed threads via GraphQL. Pure reasoning agent with no git access. Replaces `pr-rescue.yml`. (Closes #116, #90. Refs #129)
+
+**Problem 2**: Review-responder hallucinates thread IDs because the MCP server doesn't expose `PRRT_` node IDs. All `resolve_pull_request_review_thread` calls fail silently. PRs stay stuck with unresolved threads. (Issues #114, #117)
+
+**Fix 2**: Added `bash: ["gh:api:graphql"]` to review-responder. Agent now queries real thread IDs via GraphQL before resolving. Workaround until gh-aw upgrades their MCP server (`github/gh-aw#21130`). (Closes #117. Refs #114)
+
+---
+
+## fix: gate agent workflows on aw label — 2026-03-16
+
+**Problem**: Agent workflows (review-responder, quality-gate) fired on every `pull_request_review` event, including human-authored PRs. The `aw` label check was only in the agent prompt — a soft guard that still burned compute and inference tokens before noop'ing. Discovered on PR #118. (Issue #120)
+
+**Fix**: Added `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to both workflow frontmatters. gh-aw compiles this to a job-level `if:` on the activation job — workflow skips entirely at the GitHub Actions level when the label is absent. Zero tokens burned. (PR #119)
+
+**Finding**: `pull_request_review` events use the workflow file from the PR's **head branch**, not the default branch. The `if:` condition was active immediately on the PR itself — no need to merge first.
+
+---
+
 ## fix: revert labels config + strengthen responder resolve-before-push — 2026-03-15
 
 **Problem 1**: PR #97 added `labels: ["aw"]` to `create-pull-request` config. This broke label application — the gh-aw handler's post-creation label API call fails non-deterministically with a node ID resolution error, and the tool description tells the agent "labels will be automatically added" so the agent stops including them. PR #104 was created without the `aw` label. (Issue #107)
