@@ -23,6 +23,7 @@ engine:
 tools:
   github:
     toolsets: [default, actions]
+    github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   bash:
     - "gh:api:graphql"
 
@@ -110,9 +111,9 @@ If Copilot has not reviewed this PR yet, request a review from `@copilot` using 
 
 #### Action 2: Resolve unresolved threads
 
-Query the PR's review threads using bash:
+Query the PR's review threads using bash. Use `$GITHUB_MCP_SERVER_TOKEN` for authentication:
 ```
-gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) {
+GH_TOKEN="$GITHUB_MCP_SERVER_TOKEN" gh api graphql -f query='query($owner: String!, $name: String!, $pr: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
       reviewThreads(first: 100) {
