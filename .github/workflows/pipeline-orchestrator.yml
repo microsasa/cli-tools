@@ -3,9 +3,7 @@
 # Automates PR lifecycle management for agent-created (aw-labeled) PRs:
 #   v1: Resolves addressed review threads after responder replies
 #   v2: Auto-rebases PRs that fall behind main
-#
-# Future versions will add: issue dispatch, CI fixer dispatch, stale
-# PR cleanup, and cron-based scheduling. See issue #135.
+#   v3: Dispatches implementer for unworked issues, manages review loop
 #
 # Related issues:
 #   #135 — Pipeline orchestrator (main tracking issue)
@@ -16,6 +14,8 @@
 name: "Pipeline Orchestrator"
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_run:
     workflows: ["Review Responder"]
     types: [completed]
@@ -35,15 +35,16 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  issues: read
+  issues: write
+  actions: write
 
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
-    # Run on: manual dispatch, push to main, or successful responder run
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
       github.event.workflow_run.conclusion == 'success'
     env:
       GH_TOKEN: ${{ secrets.GH_AW_WRITE_TOKEN }}
@@ -69,29 +70,75 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$PR_NUMBER_INPUT" ]]; then
             PR_NUMBERS="$PR_NUMBER_INPUT"
           else
+            # Find open aw PRs, excluding stuck ones
             PR_NUMBERS=$(gh api graphql -f query='
               query($owner: String!, $repo: String!) {
                 repository(owner: $owner, name: $repo) {
                   pullRequests(labels: ["aw"], states: OPEN, first: 10) {
-                    nodes { number }
+                    nodes {
+                      number
+                      labels(first: 10) { nodes { name } }
+                    }
                   }
                 }
               }' -f owner="$OWNER" -f repo="$REPO" \
-              --jq '.data.repository.pullRequests.nodes[].number')
+              --jq '[.data.repository.pullRequests.nodes[] | select([.labels.nodes[].name] | index("aw-stuck") | not) | .number] | .[]')
           fi
 
           if [[ -z "$PR_NUMBERS" ]]; then
-            echo "No open aw-labeled PRs found. Nothing to do."
+            echo "No active aw-labeled PRs found."
             echo "has_prs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_prs=true" >> "$GITHUB_OUTPUT"
+            echo "pr_numbers=$(echo $PR_NUMBERS | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+            echo "Found active PRs: $PR_NUMBERS"
+          fi
+
+      - name: Dispatch implementer for unworked issues
+        if: steps.find-prs.outputs.has_prs == 'false'
+        run: |
+          set -euo pipefail
+
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          # Find oldest aw-labeled issue without aw-dispatched or aw-stuck
+          ISSUE=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                issues(labels: ["aw"], states: OPEN, first: 20, orderBy: {field: CREATED_AT, direction: ASC}) {
+                  nodes {
+                    number
+                    title
+                    labels(first: 10) { nodes { name } }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f repo="$REPO" \
+            --jq '[.data.repository.issues.nodes[] | select(
+              ([.labels.nodes[].name] | index("aw-dispatched") | not)
+              and ([.labels.nodes[].name] | index("aw-stuck") | not)
+            )] | .[0]')
+
+          if [[ "$ISSUE" == "null" || -z "$ISSUE" ]]; then
+            echo "No eligible issues to dispatch. Pipeline idle."
             exit 0
           fi
 
-          echo "has_prs=true" >> "$GITHUB_OUTPUT"
-          # Space-delimit PR numbers for safe single-line output
-          echo "pr_numbers=$(echo $PR_NUMBERS | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-          echo "Found PRs: $PR_NUMBERS"
+          ISSUE_NUM=$(echo "$ISSUE" | jq -r '.number')
+          ISSUE_TITLE=$(echo "$ISSUE" | jq -r '.title')
 
-      - name: Resolve addressed review threads
+          echo "Dispatching implementer for issue #${ISSUE_NUM}: ${ISSUE_TITLE}"
+
+          # Add aw-dispatched label to prevent re-dispatch
+          gh issue edit "$ISSUE_NUM" --add-label "aw-dispatched"
+
+          # Dispatch the implementer
+          gh workflow run issue-implementer.lock.yml -f issue_number="$ISSUE_NUM"
+
+          echo "✅ Dispatched implementer for issue #${ISSUE_NUM}"
+
+      - name: Resolve threads and manage review loop
         if: steps.find-prs.outputs.has_prs == 'true'
         env:
           PR_NUMBERS: ${{ steps.find-prs.outputs.pr_numbers }}
@@ -103,12 +150,14 @@ jobs:
           TOTAL_RESOLVED=0
 
           for PR in $PR_NUMBERS; do
-            echo "::group::Resolving threads on PR #${PR}"
+            echo "::group::Processing threads on PR #${PR}"
 
-            THREADS=$(gh api graphql -f query='
+            # Query threads and current labels
+            PR_INFO=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $pr: Int!) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $pr) {
+                    labels(first: 15) { nodes { name } }
                     reviewThreads(first: 100) {
                       nodes {
                         id
@@ -123,9 +172,16 @@ jobs:
                     }
                   }
                 }
-              }' -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" \
-              --jq '.data.repository.pullRequest.reviewThreads.nodes')
+              }' -f owner="$OWNER" -f repo="$REPO" -F pr="$PR") || {
+              echo "  ⚠️  PR #${PR}: Failed to query. Skipping."
+              echo "::endgroup::"
+              continue
+            }
 
+            LABELS=$(echo "$PR_INFO" | jq -r '[.data.repository.pullRequest.labels.nodes[].name]')
+            THREADS=$(echo "$PR_INFO" | jq -r '.data.repository.pullRequest.reviewThreads.nodes')
+
+            # Resolve addressed threads
             RESOLVABLE=$(echo "$THREADS" | jq -r '
               [.[] | select(
                 .isResolved == false
@@ -133,30 +189,73 @@ jobs:
                 and (.comments.nodes[-1].author?.login // "" | . != "copilot-pull-request-reviewer")
               )] | .[].id')
 
-            if [[ -z "$RESOLVABLE" ]]; then
-              echo "PR #${PR}: No threads to resolve."
-              echo "::endgroup::"
-              continue
+            if [[ -n "$RESOLVABLE" ]]; then
+              COUNT=0
+              for THREAD_ID in $RESOLVABLE; do
+                echo "  Resolving thread: ${THREAD_ID}"
+                gh api graphql -f query='
+                  mutation($threadId: ID!) {
+                    resolveReviewThread(input: {threadId: $threadId}) {
+                      thread { isResolved }
+                    }
+                  }' -f threadId="$THREAD_ID" \
+                  --jq '.data.resolveReviewThread.thread.isResolved' || {
+                    echo "  ⚠️  Failed to resolve thread ${THREAD_ID}"
+                    continue
+                  }
+                COUNT=$((COUNT + 1))
+              done
+              echo "  Resolved ${COUNT} thread(s)."
+              TOTAL_RESOLVED=$((TOTAL_RESOLVED + COUNT))
+            else
+              echo "  No threads to resolve."
             fi
 
-            COUNT=0
-            for THREAD_ID in $RESOLVABLE; do
-              echo "  Resolving thread: ${THREAD_ID}"
-              gh api graphql -f query='
-                mutation($threadId: ID!) {
-                  resolveReviewThread(input: {threadId: $threadId}) {
-                    thread { isResolved }
-                  }
-                }' -f threadId="$THREAD_ID" \
-                --jq '.data.resolveReviewThread.thread.isResolved' || {
-                  echo "  ⚠️  Failed to resolve thread ${THREAD_ID}"
-                  continue
-                }
-              COUNT=$((COUNT + 1))
-            done
+            # Review loop management
+            HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if index("review-response-attempted") then "yes" else "" end')
 
-            echo "PR #${PR}: Resolved ${COUNT} thread(s)."
-            TOTAL_RESOLVED=$((TOTAL_RESOLVED + COUNT))
+            # Check if there are unresolved threads that nobody has addressed yet
+            UNADDRESSED=$(echo "$THREADS" | jq -r '
+              [.[] | select(
+                .isResolved == false
+                and (.comments.nodes | length > 0)
+                and (.comments.nodes[-1].author?.login // "" | . == "copilot-pull-request-reviewer")
+              )] | length')
+
+            if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
+              if [[ "$UNADDRESSED" -gt 0 && -z "$RESOLVABLE" ]]; then
+                # Label present but threads untouched — responder noop'd (e.g. triggered
+                # by a non-comment review like quality gate approval). Remove the label
+                # so the responder can try again on the next review with actual comments.
+                echo "  🔄 PR #${PR}: response label present but $UNADDRESSED threads still unaddressed. Removing label."
+                gh pr edit "$PR" --remove-label "review-response-attempted"
+                # Request Copilot re-review to trigger the responder
+                echo "  🔄 Requesting Copilot re-review to trigger responder."
+                gh pr edit "$PR" --add-reviewer "@copilot" 2>/dev/null || true
+              else
+                # Count existing review-response-N labels
+                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("review-response-"))] | length')
+
+                if [[ "$ROUND" -ge 3 ]]; then
+                  # Max rounds reached — mark as stuck
+                  echo "  ⚠️  PR #${PR}: Review-response loop hit 3 rounds. Marking as stuck."
+                  gh pr edit "$PR" --add-label "aw-stuck"
+                  gh pr comment "$PR" --body "⚠️ Pipeline orchestrator: review-response loop reached 3 rounds without resolution. Marking as stuck for human review."
+                else
+                  # Remove review-response-attempted to re-enable responder
+                  NEXT_ROUND=$((ROUND + 1))
+                  echo "  Enabling review round ${NEXT_ROUND} for PR #${PR}"
+                  gh pr edit "$PR" --remove-label "review-response-attempted"
+                  gh pr edit "$PR" --add-label "review-response-${NEXT_ROUND}"
+                fi
+              fi
+            elif [[ "$UNADDRESSED" -gt 0 ]]; then
+              # No response label and unaddressed threads — responder hasn't run yet
+              # or was never triggered. Request Copilot re-review to kick off the chain.
+              echo "  🔄 PR #${PR}: $UNADDRESSED unaddressed threads, no response label. Requesting Copilot review."
+              gh pr edit "$PR" --add-reviewer "@copilot" 2>/dev/null || true
+            fi
+
             echo "::endgroup::"
           done
 
@@ -179,7 +278,6 @@ jobs:
           for PR in $PR_NUMBERS; do
             echo "::group::Checking rebase for PR #${PR}"
 
-            # Get PR branch and merge state
             PR_DATA=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $pr: Int!) {
                 repository(owner: $owner, name: $repo) {
@@ -202,14 +300,12 @@ jobs:
 
             echo "  Branch: $BRANCH | Merge state: $MERGE_STATE"
 
-            # Only rebase if behind main or has conflicts (DIRTY)
             if [[ "$MERGE_STATE" != "BEHIND" && "$MERGE_STATE" != "DIRTY" ]]; then
               echo "  PR #${PR}: State is $MERGE_STATE — no rebase needed."
               echo "::endgroup::"
               continue
             fi
 
-            # Skip if already flagged for human intervention
             if [[ -n "$HAS_REBASE_LABEL" ]]; then
               echo "  PR #${PR}: Already has aw-needs-rebase label. Skipping."
               echo "::endgroup::"
@@ -218,7 +314,6 @@ jobs:
 
             echo "  Attempting rebase of $BRANCH onto main..."
 
-            # Fetch latest refs for main and the PR branch
             git fetch origin main "$BRANCH":"refs/remotes/origin/$BRANCH" || {
               echo "  ⚠️  PR #${PR}: Failed to fetch branch. Skipping."
               echo "::endgroup::"
@@ -227,7 +322,6 @@ jobs:
             git checkout -B "$BRANCH" "origin/$BRANCH"
 
             if git rebase origin/main; then
-              # Rebase succeeded — force push
               if git push origin "$BRANCH" --force-with-lease; then
                 echo "  ✅ PR #${PR}: Rebased and pushed successfully."
                 TOTAL_REBASED=$((TOTAL_REBASED + 1))
@@ -237,14 +331,12 @@ jobs:
                 gh pr edit "$PR" --add-label "aw-needs-rebase"
               fi
             else
-              # Rebase failed — conflicts
               git rebase --abort 2>/dev/null || true
               echo "  ❌ PR #${PR}: Rebase conflicts detected."
               gh pr comment "$PR" --body "❌ Pipeline orchestrator: rebase onto main failed due to conflicts. Manual rebase needed."
               gh pr edit "$PR" --add-label "aw-needs-rebase"
             fi
 
-            # Return to detached HEAD so next iteration is clean
             git checkout --detach HEAD 2>/dev/null || true
 
             echo "::endgroup::"

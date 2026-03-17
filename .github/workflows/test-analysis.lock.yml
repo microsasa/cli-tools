@@ -22,13 +22,12 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"b9b1d4c9873e57676d3d4c1863c16aecf1033ce5568c4146fdf839ebc2774f19","compiler_version":"v0.60.0","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"fe7f86f8f8350e9d3c3e504af3f1dfd742745dece8a685f5e9c30d65d87840d2","compiler_version":"v0.60.0","strict":true}
 
 name: "Test Suite Analysis"
 "on":
   schedule:
-  - cron: "24 1 * * 1"
-    # Friendly format: weekly on monday (scattered)
+  - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions: {}

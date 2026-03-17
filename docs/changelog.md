@@ -4,6 +4,41 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## feat: pipeline orchestrator (bash) + quality gate close + version alignment — 2026-03-17
+
+**PR #140** — Quality gate close + gh-aw v0.60.0 alignment:
+- Added `close-pull-request` safe-output to quality-gate so it can close poor-quality PRs instead of just commenting
+- Aligned `copilot-setup-steps.yml` gh-aw version from v0.58.1 to v0.60.0 (matching local CLI compiler and lock files)
+- Closes #89
+
+**PRs #125, #124, #123** — Dependabot bumps:
+- actions/checkout v4→v6
+- astral-sh/setup-uv v4→v7
+- github/codeql-action v3→v4
+- All rebased onto main and merged sequentially
+
+**PR #141** — Pipeline orchestrator v1 (thread resolver):
+- New `pipeline-orchestrator.yml` — bash GitHub Action (no LLM)
+- Resolves addressed review threads via GraphQL `resolveReviewThread` mutation
+- Triggered by `workflow_run` when review-responder completes
+- Removed broken `resolve-pull-request-review-thread` safe-output from review-responder (never worked due to MCP thread ID limitation)
+- Closes #117
+
+**PR #142** — Pipeline orchestrator v2 (auto-rebase):
+- Added rebase capability: detects PRs behind main via `mergeStateStatus`, rebases and force-pushes
+- Added `push: branches: [main]` trigger
+- Security hardened: all step outputs via env vars, no `${{ }}` in run blocks
+
+**PR #143** — Orchestrator rebase fetch fix:
+- Fixed `git fetch` not creating remote tracking refs
+
+**PR #113** — Auto-merged after orchestrator rebase:
+- First end-to-end test: orchestrator rebased PR #113 (stuck behind main for days), CI passed, auto-merge fired. 7 seconds total.
+
+**Issues closed**: #89, #88, #117, #66 (via PR #113)
+
+---
+
 ## chore: remove pipeline orchestrator agent — 2026-03-17
 
 **Problem**: The gh-aw orchestrator agent (PR #130) took 7-10 minutes per run for deterministic if/else logic. Over 22+ overnight runs it failed to resolve a single thread — auth failures, wrong action ordering, redundant review requests. Burned significant Opus inference tokens with no results.
