@@ -1,16 +1,15 @@
-# Pipeline Orchestrator v1 — Thread Resolver
+# Pipeline Orchestrator
 #
-# Resolves review threads on aw-labeled PRs after the review-responder
-# has replied to them. The responder fixes code and replies to threads
-# but cannot resolve them (gh-aw safe-output limitation). This action
-# handles resolution via direct GraphQL API calls.
+# Automates PR lifecycle management for agent-created (aw-labeled) PRs:
+#   v1: Resolves addressed review threads after responder replies
+#   v2: Auto-rebases PRs that fall behind main
 #
 # Future versions will add: issue dispatch, CI fixer dispatch, stale
 # PR cleanup, and cron-based scheduling. See issue #135.
 #
 # Related issues:
 #   #135 — Pipeline orchestrator (main tracking issue)
-#   #117 — Thread resolution workaround
+#   #117 — Thread resolution (closed by v1)
 #   #131 — Batched GraphQL queries
 #   #114 — MCP server thread ID limitation
 
@@ -20,10 +19,12 @@ on:
   workflow_run:
     workflows: ["Review Responder"]
     types: [completed]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number to resolve threads on (optional — defaults to all aw PRs)"
+        description: "PR number to process (optional — defaults to all aw PRs)"
         required: false
         type: string
 
@@ -32,21 +33,30 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  contents: write
   pull-requests: write
   issues: read
 
 jobs:
-  resolve-threads:
+  orchestrate:
     runs-on: ubuntu-latest
-    # Only run if responder succeeded (or manual dispatch)
+    # Run on: manual dispatch, push to main, or successful responder run
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       github.event.workflow_run.conclusion == 'success'
     env:
       GH_TOKEN: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
     steps:
-      - name: Resolve addressed review threads
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_AW_WRITE_TOKEN }}
+
+      - name: Find aw-labeled PRs
+        id: find-prs
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
@@ -56,12 +66,9 @@ jobs:
           OWNER="${GITHUB_REPOSITORY_OWNER}"
           REPO="${GITHUB_REPOSITORY#*/}"
 
-          # Determine which PR to process
           if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$PR_NUMBER_INPUT" ]]; then
-            # Manual dispatch with specific PR
             PR_NUMBERS="$PR_NUMBER_INPUT"
           else
-            # Find all open PRs with aw label
             PR_NUMBERS=$(gh api graphql -f query='
               query($owner: String!, $repo: String!) {
                 repository(owner: $owner, name: $repo) {
@@ -75,15 +82,29 @@ jobs:
 
           if [[ -z "$PR_NUMBERS" ]]; then
             echo "No open aw-labeled PRs found. Nothing to do."
+            echo "has_prs=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          echo "has_prs=true" >> "$GITHUB_OUTPUT"
+          # Space-delimit PR numbers for safe single-line output
+          echo "pr_numbers=$(echo $PR_NUMBERS | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          echo "Found PRs: $PR_NUMBERS"
+
+      - name: Resolve addressed review threads
+        if: steps.find-prs.outputs.has_prs == 'true'
+        env:
+          PR_NUMBERS: ${{ steps.find-prs.outputs.pr_numbers }}
+        run: |
+          set -uo pipefail
+
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
           TOTAL_RESOLVED=0
 
           for PR in $PR_NUMBERS; do
-            echo "::group::Processing PR #${PR}"
+            echo "::group::Resolving threads on PR #${PR}"
 
-            # Query all review threads for this PR
             THREADS=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $pr: Int!) {
                 repository(owner: $owner, name: $repo) {
@@ -105,8 +126,6 @@ jobs:
               }' -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" \
               --jq '.data.repository.pullRequest.reviewThreads.nodes')
 
-            # Find unresolved threads where the last commenter is NOT the
-            # Copilot reviewer (meaning someone already addressed it)
             RESOLVABLE=$(echo "$THREADS" | jq -r '
               [.[] | select(
                 .isResolved == false
@@ -141,5 +160,94 @@ jobs:
             echo "::endgroup::"
           done
 
-          echo ""
-          echo "✅ Total threads resolved: ${TOTAL_RESOLVED}"
+          echo "✅ Threads resolved: ${TOTAL_RESOLVED}"
+
+      - name: Rebase PRs behind main
+        if: steps.find-prs.outputs.has_prs == 'true'
+        env:
+          PR_NUMBERS: ${{ steps.find-prs.outputs.pr_numbers }}
+        run: |
+          set -uo pipefail
+
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          TOTAL_REBASED=0
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for PR in $PR_NUMBERS; do
+            echo "::group::Checking rebase for PR #${PR}"
+
+            # Get PR branch and merge state
+            PR_DATA=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    headRefName
+                    mergeable
+                    mergeStateStatus
+                    labels(first: 10) { nodes { name } }
+                  }
+                }
+              }' -f owner="$OWNER" -f repo="$REPO" -F pr="$PR") || {
+              echo "  ⚠️  PR #${PR}: Failed to query PR data. Skipping."
+              echo "::endgroup::"
+              continue
+            }
+
+            MERGE_STATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.mergeStateStatus')
+            BRANCH=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefName')
+            HAS_REBASE_LABEL=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.labels.nodes[] | select(.name == "aw-needs-rebase") | .name')
+
+            echo "  Branch: $BRANCH | Merge state: $MERGE_STATE"
+
+            # Only rebase if behind main or has conflicts (DIRTY)
+            if [[ "$MERGE_STATE" != "BEHIND" && "$MERGE_STATE" != "DIRTY" ]]; then
+              echo "  PR #${PR}: State is $MERGE_STATE — no rebase needed."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Skip if already flagged for human intervention
+            if [[ -n "$HAS_REBASE_LABEL" ]]; then
+              echo "  PR #${PR}: Already has aw-needs-rebase label. Skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            echo "  Attempting rebase of $BRANCH onto main..."
+
+            # Fetch latest and attempt rebase
+            git fetch origin main "$BRANCH" || {
+              echo "  ⚠️  PR #${PR}: Failed to fetch branch. Skipping."
+              echo "::endgroup::"
+              continue
+            }
+            git checkout -B "$BRANCH" -- "origin/$BRANCH"
+
+            if git rebase origin/main; then
+              # Rebase succeeded — force push
+              if git push origin "$BRANCH" --force-with-lease; then
+                echo "  ✅ PR #${PR}: Rebased and pushed successfully."
+                TOTAL_REBASED=$((TOTAL_REBASED + 1))
+              else
+                echo "  ⚠️  PR #${PR}: Rebase succeeded but push failed."
+                gh pr comment "$PR" --body "⚠️ Pipeline orchestrator: rebase succeeded but force-push failed. Manual intervention needed."
+                gh pr edit "$PR" --add-label "aw-needs-rebase"
+              fi
+            else
+              # Rebase failed — conflicts
+              git rebase --abort 2>/dev/null || true
+              echo "  ❌ PR #${PR}: Rebase conflicts detected."
+              gh pr comment "$PR" --body "❌ Pipeline orchestrator: rebase onto main failed due to conflicts. Manual rebase needed."
+              gh pr edit "$PR" --add-label "aw-needs-rebase"
+            fi
+
+            # Return to detached HEAD so next iteration is clean
+            git checkout --detach HEAD 2>/dev/null || true
+
+            echo "::endgroup::"
+          done
+
+          echo "✅ PRs rebased: ${TOTAL_REBASED}"
