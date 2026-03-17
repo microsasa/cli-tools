@@ -47,7 +47,7 @@ This workflow runs when a review is submitted on a pull request.
 
 1. First, check if the PR has the `aw` label. If it does NOT have the `aw` label, stop immediately — this workflow only handles agent-created PRs.
 
-2. Check the review that triggered this workflow. If the review has no comments (e.g., a plain approval with no inline comments), stop — there is nothing to address. Do NOT add any labels when stopping here.
+2. Check the review that triggered this workflow. If the review has no comments (e.g., a plain approval with no inline comments), check if there are any unresolved review threads on the PR. If the review has no comments AND there are no unresolved threads, stop — there is nothing to address. Do NOT add any labels when stopping here. If the review has no comments BUT there ARE unresolved threads from a previous review, continue to step 3 to address those threads.
 
 3. Read the unresolved review comment threads on the PR (not just the latest review — get all unresolved threads). If there are no unresolved threads, stop — there is nothing to address. Do NOT add any labels when stopping here.
 

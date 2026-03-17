@@ -229,6 +229,9 @@ jobs:
                 # so the responder can try again on the next review with actual comments.
                 echo "  🔄 PR #${PR}: response label present but $UNADDRESSED threads still unaddressed. Removing label."
                 gh pr edit "$PR" --remove-label "review-response-attempted"
+                # Request Copilot re-review to trigger the responder
+                echo "  🔄 Requesting Copilot re-review to trigger responder."
+                gh pr edit "$PR" --add-reviewer "@copilot" 2>/dev/null || true
               else
                 # Count existing review-response-N labels
                 ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("review-response-"))] | length')
@@ -246,6 +249,11 @@ jobs:
                   gh pr edit "$PR" --add-label "review-response-${NEXT_ROUND}"
                 fi
               fi
+            elif [[ "$UNADDRESSED" -gt 0 ]]; then
+              # No response label and unaddressed threads — responder hasn't run yet
+              # or was never triggered. Request Copilot re-review to kick off the chain.
+              echo "  🔄 PR #${PR}: $UNADDRESSED unaddressed threads, no response label. Requesting Copilot review."
+              gh pr edit "$PR" --add-reviewer "@copilot" 2>/dev/null || true
             fi
 
             echo "::endgroup::"
