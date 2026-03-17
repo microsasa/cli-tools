@@ -28,19 +28,13 @@ Our autonomous pipeline:
 
 ```
 Audit/Health Agent → creates issue (labeled code-health or test-audit)
-  → Pipeline Orchestrator (15-min cron) picks up the issue:
-    → No aw-labeled PR in flight? → dispatches Implementer (one at a time)
+  → (pending: pipeline-orchestrator.yml #135 will dispatch Implementer)
   → Implementer creates PR (lint-clean, non-draft, auto-merge, aw label)
     → CI runs + Copilot auto-reviews (parallel, via ruleset)
       → Copilot has comments? → Review Responder addresses them (pushes fixes, resolves threads via GraphQL)
       → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
         → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
         → HIGH impact → flags for human review (auto-merge stays blocked)
-    → PR stalled? → Pipeline Orchestrator detects and fixes:
-      → No Copilot review → requests one
-      → Unresolved threads with responder replies → resolves them
-      → CI failed → dispatches CI Fixer (1 retry, label guard)
-      → Behind main → logs, skips (requires manual rebase)
 ```
 
 </details>
@@ -394,33 +388,21 @@ done
 
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
 
-### Pipeline Orchestrator
+### Pipeline Orchestrator (removed)
 
-The **Pipeline Orchestrator** (`.github/workflows/pipeline-orchestrator.md`) owns the full lifecycle of agent work — from issue to merged PR. It runs every 15 minutes and on every push to main.
+We built a gh-aw agent orchestrator (`pipeline-orchestrator.md`, PR #130) to shepherd PRs through the full lifecycle. It was removed (PR #137) after failing in production — 7-10 minute runs for deterministic logic, auth failures preventing thread resolution, wrong action ordering. See `docs/auto_pr_orchestrator_aw.md` for the full postmortem.
 
-**Issue dispatch** (one at a time):
-- If no `aw`-labeled PR is currently in flight, it finds open issues labeled `code-health` or `test-audit` that don't have a PR yet
-- Dispatches `issue-implementer` for the first eligible issue
-- Only one at a time — avoids concurrent PRs fighting over main
+**Replacement**: A regular GitHub Action (`pipeline-orchestrator.yml`) will handle the same logic in bash. See issue #135.
 
-**PR orchestration** (unstick what's in flight):
-For each open `aw`-labeled PR with auto-merge enabled (excluding `aw-conflict`), sorted by progress (approved first), applies the first matching action:
-
-1. **No Copilot review** → requests review from `@copilot`
-2. **Unresolved threads** → queries real thread IDs via GraphQL, resolves threads where the responder (PAT owner) posted the last comment
-3. **CI failure** → dispatches ci-fixer (if `ci-fix-attempted` label not present)
-4. **Behind main** → logs and skips (requires manual rebase)
-5. **All clear** → auto-merge should handle it
-
-The orchestrator is a pure reasoning agent — no git access, no `contents: write`. It uses safe-outputs (`dispatch-workflow`, `add-reviewer`, `resolve-pull-request-review-thread`, `add-comment`, `add-labels`) and bash for GraphQL queries.
-
-Replaces the old `pr-rescue.yml` bash script which only handled rebasing and required repeated bug-fix cycles.
+**Current state**: Issue dispatch (implementer) and CI fixer dispatch are inactive until #135 is implemented. Review-responder and quality-gate continue to work normally.
 
 ### Review Responder Thread ID Lookup
 
-The Review Responder queries real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
+The Review Responder instructions include a step to query real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
 
 No `bash:` tool config is needed — the responder already has `--allow-all-tools` from the compiler default (adding explicit `bash:` would restrict the allowlist and break CI commands like `uv`, `ruff`, `pyright`, `pytest`).
+
+**Limitation**: This fix only applies to PRs whose head branch has the updated `.md` (loaded via `{{#runtime-import}}`). Existing PRs need a rebase onto main to pick it up.
 
 This is a workaround until gh-aw upgrades their pinned MCP server (`github/gh-aw#21130`).
 
@@ -471,10 +453,10 @@ Pushing code to a PR branch can invalidate GraphQL thread IDs. If the responder 
 The GitHub MCP server (pinned by gh-aw) does not return `PRRT_` thread node IDs in its tool responses. Agents hallucinate plausible-looking IDs that fail at the GraphQL API. The `resolve_pull_request_review_thread` safe-output works fine — the problem is the agent doesn't know which ID to pass. Workaround: instruct the agent to query real thread IDs via `gh api graphql` (the agent already has `--allow-all-tools` when no explicit `bash:` config is set). Do NOT add `bash:` to the tools config — that causes the compiler to switch from `--allow-all-tools` to a restricted allowlist, breaking CI commands. Tracked upstream in `github/gh-aw#21130`.
 
 ### 14. `push-to-pull-request-branch` safe-output can't force-push
-The safe-output generates patches via `git format-patch` and applies them. It cannot do `git push --force-with-lease` after a rebase. If your workflow needs to rebase and force-push, it must either use a regular workflow (`.yml`) with `contents: write`, or use `strict: false` (not recommended). This is why the pipeline orchestrator delegates rebasing to humans instead of trying to do it.
+The safe-output generates patches via `git format-patch` and applies them. It cannot do `git push --force-with-lease` after a rebase. If your workflow needs to rebase and force-push, use a regular workflow (`.yml`) with `contents: write`.
 
-### 15. Don't write complex bash in GitHub Actions — use gh-aw agents
-Shell scripts under `set -euo pipefail` are fragile. Every API call needs `|| { warn; continue }` guards, every git command needs error handling, variable interpolation in GraphQL queries creates injection risks, and the bash gets longer with every bug fix. If the logic involves decisions and error recovery, an agent handles it better. The old `pr-rescue.yml` went through 4 rounds of Copilot review, a Gemini review, and an OpenAI Codex review — each finding new bugs. The orchestrator replacement is ~80 lines of natural language.
+### 15. Use gh-aw agents for judgment, regular workflows for orchestration
+The pr-rescue bash script had many bugs, which initially suggested agents would be better. But the orchestrator agent (Opus) took 7-10 minutes per run for if/else logic and made wrong decisions (re-requested existing reviews, noop'd instead of resolving threads). **Agents are great for tasks requiring judgment** (code review, implementation, quality evaluation). **Regular bash workflows are better for deterministic orchestration** (check state, dispatch, resolve threads). See `docs/auto_pr_orchestrator_aw.md` for the full postmortem.
 
 ### 16. `gh api user` resolves the PAT owner identity at runtime
 When agents post comments or replies using `GH_AW_WRITE_TOKEN` (a PAT), the comments appear as the PAT owner — not `github-actions[bot]`. Don't hardcode usernames. In a solo-developer repo, the PAT owner is the repository owner — use `$GITHUB_REPOSITORY_OWNER` to get the identity. Note: `gh api user` may not work in the agent sandbox because `GH_TOKEN` is not set for the agent's bash environment (it uses an installation token that returns 403 on `/user`).
@@ -638,5 +620,15 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 - Closed PR #121 (bash attempt). Abandoned pr-rescue.md (gh-aw attempt). Created pipeline-orchestrator.md (final approach).
 - Closed stale/noise issues: #94, #105 (auto-generated fallback issues from implementer), #115 (duplicate of #108), #120 (fixed in PR #119).
 - **Lessons learned**: (1) Complex bash in Actions is a bug factory. (2) gh-aw safe-outputs have limitations (no force-push). (3) Split reasoning from operations — agents reason, workflows operate. (4) Never hardcode values that can be derived at runtime. (5) Every round of review found bugs the previous round missed — self-review is not enough.
+
+### 2026-03-17 — Pipeline orchestrator removed
+
+- The gh-aw orchestrator agent (PR #130) ran 22+ times overnight on a 15-min cron. Every run either reported `missing_data` (auth failure on GraphQL), re-requested reviews that already existed, or noop'd. Never resolved a single thread. Each run took 7-10 minutes of Opus inference for deterministic if/else logic.
+- Root causes: `GH_AW_GITHUB_MCP_SERVER_TOKEN` secret wasn't set up (fixed but didn't help), `gh` CLI in sandbox uses `GH_TOKEN`/`GITHUB_TOKEN` not `GITHUB_MCP_SERVER_TOKEN`, agent made wrong action ordering decisions despite explicit instructions.
+- PR #137: Removed `pipeline-orchestrator.md` + `.lock.yml`. Added postmortem at `docs/auto_pr_orchestrator_aw.md`.
+- Issue #135: Rewrite orchestrator as a regular GitHub Action (bash). Same logic, runs in seconds.
+- Issue #136: Cleanup tracking issue.
+- Removed dispatch references from code-health and test-analysis prompts.
+- **Key lesson**: gh-aw agents are for judgment (code review, implementation). Deterministic orchestration (check state → dispatch → resolve) should be regular bash workflows.
 
 </details>
