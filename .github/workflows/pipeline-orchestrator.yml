@@ -218,13 +218,13 @@ jobs:
 
             echo "  Attempting rebase of $BRANCH onto main..."
 
-            # Fetch latest and attempt rebase
-            git fetch origin main "$BRANCH" || {
+            # Fetch latest refs for main and the PR branch
+            git fetch origin main "$BRANCH":"refs/remotes/origin/$BRANCH" || {
               echo "  ⚠️  PR #${PR}: Failed to fetch branch. Skipping."
               echo "::endgroup::"
               continue
             }
-            git checkout -B "$BRANCH" -- "origin/$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
 
             if git rebase origin/main; then
               # Rebase succeeded — force push
