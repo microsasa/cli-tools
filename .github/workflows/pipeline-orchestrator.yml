@@ -214,21 +214,37 @@ jobs:
             # Review loop management
             HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if index("review-response-attempted") then "yes" else "" end')
 
-            if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
-              # Count existing review-response-N labels
-              ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("review-response-"))] | length')
+            # Check if there are unresolved threads that nobody has addressed yet
+            UNADDRESSED=$(echo "$THREADS" | jq -r '
+              [.[] | select(
+                .isResolved == false
+                and (.comments.nodes | length > 0)
+                and (.comments.nodes[-1].author?.login // "" | . == "copilot-pull-request-reviewer")
+              )] | length')
 
-              if [[ "$ROUND" -ge 3 ]]; then
-                # Max rounds reached — mark as stuck
-                echo "  ⚠️  PR #${PR}: Review-response loop hit 3 rounds. Marking as stuck."
-                gh pr edit "$PR" --add-label "aw-stuck"
-                gh pr comment "$PR" --body "⚠️ Pipeline orchestrator: review-response loop reached 3 rounds without resolution. Marking as stuck for human review."
-              else
-                # Remove review-response-attempted to re-enable responder
-                NEXT_ROUND=$((ROUND + 1))
-                echo "  Enabling review round ${NEXT_ROUND} for PR #${PR}"
+            if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
+              if [[ "$UNADDRESSED" -gt 0 && -z "$RESOLVABLE" ]]; then
+                # Label present but threads untouched — responder noop'd (e.g. triggered
+                # by a non-comment review like quality gate approval). Remove the label
+                # so the responder can try again on the next review with actual comments.
+                echo "  🔄 PR #${PR}: response label present but $UNADDRESSED threads still unaddressed. Removing label."
                 gh pr edit "$PR" --remove-label "review-response-attempted"
-                gh pr edit "$PR" --add-label "review-response-${NEXT_ROUND}"
+              else
+                # Count existing review-response-N labels
+                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("review-response-"))] | length')
+
+                if [[ "$ROUND" -ge 3 ]]; then
+                  # Max rounds reached — mark as stuck
+                  echo "  ⚠️  PR #${PR}: Review-response loop hit 3 rounds. Marking as stuck."
+                  gh pr edit "$PR" --add-label "aw-stuck"
+                  gh pr comment "$PR" --body "⚠️ Pipeline orchestrator: review-response loop reached 3 rounds without resolution. Marking as stuck for human review."
+                else
+                  # Remove review-response-attempted to re-enable responder
+                  NEXT_ROUND=$((ROUND + 1))
+                  echo "  Enabling review round ${NEXT_ROUND} for PR #${PR}"
+                  gh pr edit "$PR" --remove-label "review-response-attempted"
+                  gh pr edit "$PR" --add-label "review-response-${NEXT_ROUND}"
+                fi
               fi
             fi
 
