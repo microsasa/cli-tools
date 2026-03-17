@@ -67,7 +67,7 @@ We attempted to build a gh-aw agent ("Pipeline Orchestrator") to shepherd agent 
 - Agent can't check in-progress workflow runs without `actions` toolset
 - Adding `bash:` config broke `--allow-all-tools` on review-responder
 
-### Phase 5: Orchestrator in production (22+ hours)
+### Phase 5: Orchestrator in production (22+ runs over ~22 hours)
 
 **What happened overnight**: Orchestrator ran 22 times on 15-min cron. Every run either:
 - Reported `missing_data` (couldn't authenticate `gh api graphql` to get thread IDs)

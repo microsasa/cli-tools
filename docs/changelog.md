@@ -4,6 +4,16 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## chore: remove pipeline orchestrator agent — 2026-03-17
+
+**Problem**: The gh-aw orchestrator agent (PR #130) took 7-10 minutes per run for deterministic if/else logic. Over 22+ overnight runs it failed to resolve a single thread — auth failures, wrong action ordering, redundant review requests. Burned significant Opus inference tokens with no results.
+
+**Fix**: Removed `pipeline-orchestrator.md` + `.lock.yml` (PR #137). Added full postmortem at `docs/auto_pr_orchestrator_aw.md`. Will be replaced by a regular GitHub Action (bash) in #135.
+
+**Temporary gaps**: Issue dispatch (implementer) and CI fixer dispatch are inactive until #135. Review-responder and quality-gate continue working.
+
+---
+
 ## feat: pipeline orchestrator + review-responder thread ID fix — 2026-03-16
 
 **Problem 1**: Agent PRs get stuck at multiple stages (no Copilot review, unresolved threads, behind main). The old `pr-rescue.yml` bash script only handled rebasing and was brittle — 4 rounds of review across 3 AI models found a combined 13 bugs in 230 lines of bash. (Issues #116, #90)
