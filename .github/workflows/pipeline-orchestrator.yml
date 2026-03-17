@@ -1,0 +1,145 @@
+# Pipeline Orchestrator v1 — Thread Resolver
+#
+# Resolves review threads on aw-labeled PRs after the review-responder
+# has replied to them. The responder fixes code and replies to threads
+# but cannot resolve them (gh-aw safe-output limitation). This action
+# handles resolution via direct GraphQL API calls.
+#
+# Future versions will add: issue dispatch, CI fixer dispatch, stale
+# PR cleanup, and cron-based scheduling. See issue #135.
+#
+# Related issues:
+#   #135 — Pipeline orchestrator (main tracking issue)
+#   #117 — Thread resolution workaround
+#   #131 — Batched GraphQL queries
+#   #114 — MCP server thread ID limitation
+
+name: "Pipeline Orchestrator"
+
+on:
+  workflow_run:
+    workflows: ["Review Responder"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to resolve threads on (optional — defaults to all aw PRs)"
+        required: false
+        type: string
+
+concurrency:
+  group: pipeline-orchestrator
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  issues: read
+
+jobs:
+  resolve-threads:
+    runs-on: ubuntu-latest
+    # Only run if responder succeeded (or manual dispatch)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    env:
+      GH_TOKEN: ${{ secrets.GH_AW_WRITE_TOKEN }}
+
+    steps:
+      - name: Resolve addressed review threads
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          # Determine which PR to process
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$PR_NUMBER_INPUT" ]]; then
+            # Manual dispatch with specific PR
+            PR_NUMBERS="$PR_NUMBER_INPUT"
+          else
+            # Find all open PRs with aw label
+            PR_NUMBERS=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequests(labels: ["aw"], states: OPEN, first: 10) {
+                    nodes { number }
+                  }
+                }
+              }' -f owner="$OWNER" -f repo="$REPO" \
+              --jq '.data.repository.pullRequests.nodes[].number')
+          fi
+
+          if [[ -z "$PR_NUMBERS" ]]; then
+            echo "No open aw-labeled PRs found. Nothing to do."
+            exit 0
+          fi
+
+          TOTAL_RESOLVED=0
+
+          for PR in $PR_NUMBERS; do
+            echo "::group::Processing PR #${PR}"
+
+            # Query all review threads for this PR
+            THREADS=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100) {
+                      nodes {
+                        id
+                        isResolved
+                        isOutdated
+                        comments(last: 1) {
+                          nodes {
+                            author { login }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' -f owner="$OWNER" -f repo="$REPO" -F pr="$PR" \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes')
+
+            # Find unresolved threads where the last commenter is NOT the
+            # Copilot reviewer (meaning someone already addressed it)
+            RESOLVABLE=$(echo "$THREADS" | jq -r '
+              [.[] | select(
+                .isResolved == false
+                and (.comments.nodes | length > 0)
+                and (.comments.nodes[-1].author?.login // "" | . != "copilot-pull-request-reviewer")
+              )] | .[].id')
+
+            if [[ -z "$RESOLVABLE" ]]; then
+              echo "PR #${PR}: No threads to resolve."
+              echo "::endgroup::"
+              continue
+            fi
+
+            COUNT=0
+            for THREAD_ID in $RESOLVABLE; do
+              echo "  Resolving thread: ${THREAD_ID}"
+              gh api graphql -f query='
+                mutation($threadId: ID!) {
+                  resolveReviewThread(input: {threadId: $threadId}) {
+                    thread { isResolved }
+                  }
+                }' -f threadId="$THREAD_ID" \
+                --jq '.data.resolveReviewThread.thread.isResolved' || {
+                  echo "  ⚠️  Failed to resolve thread ${THREAD_ID}"
+                  continue
+                }
+              COUNT=$((COUNT + 1))
+            done
+
+            echo "PR #${PR}: Resolved ${COUNT} thread(s)."
+            TOTAL_RESOLVED=$((TOTAL_RESOLVED + COUNT))
+            echo "::endgroup::"
+          done
+
+          echo ""
+          echo "✅ Total threads resolved: ${TOTAL_RESOLVED}"
