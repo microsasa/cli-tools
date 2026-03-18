@@ -15,13 +15,12 @@ name: "Pipeline Orchestrator"
 
 on:
   schedule:
-  # schedule:
-  #   - cron: "*/15 * * * *"
-  # workflow_run:
-  #   workflows: ["Review Responder"]
-  #   types: [completed]
-  # push:
-  #   branches: [main]
+    - cron: "*/15 * * * *"
+  workflow_run:
+    workflows: ["Review Responder"]
+    types: [completed]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       pr_number:
