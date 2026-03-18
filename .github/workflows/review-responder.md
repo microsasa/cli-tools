@@ -58,13 +58,11 @@ This workflow runs when a review is submitted on a pull request.
 6. For each unresolved review comment thread (up to 10):
    a. Read the comment and understand what change is being requested
    b. Read the relevant file and surrounding code context
-   c. Make the requested fix in the code (edit the file locally — do NOT push yet)
+   c. Make the requested fix in the code
    d. Reply to the comment thread explaining what you changed
 
 7. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
 
-8. Push all changes in a single commit with message "fix: address review comments". Reply to all threads BEFORE pushing — replies after a push will appear on outdated code.
+8. Push all changes in a single commit with message "fix: address review comments".
 
 If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly.
-
-NOTE: Thread resolution is handled separately by the pipeline orchestrator after this workflow completes. Your job is to fix the code and reply to threads — do NOT attempt to resolve threads.
