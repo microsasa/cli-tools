@@ -12,6 +12,10 @@ permissions:
   issues: read
   pull-requests: read
 
+checkout:
+  fetch: ["*"]
+  fetch-depth: 0
+
 engine:
   id: copilot
   model: claude-opus-4.6
@@ -29,8 +33,11 @@ safe-outputs:
   noop:
     report-as-issue: false
   push-to-pull-request-branch:
+    target: "*"
+    labels: [aw]
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   reply-to-pull-request-review-comment:
+    target: "*"
     max: 10
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
