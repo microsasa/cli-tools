@@ -60,6 +60,8 @@ This workflow addresses unresolved review comments on a pull request.
 
 5. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
 
-6. Push all changes in a single commit with message "fix: address review comments".
+6. If CI checks fail, fix the issues and re-run until they pass. Do not push broken code.
+
+7. Push all changes in a single commit with message "fix: address review comments".
 
 If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly.
