@@ -1,7 +1,7 @@
 ---
 # Weekly test suite analysis
 on:
-  schedule: '0 9 * * *'
+  schedule: weekly on monday
   workflow_dispatch:
 
 permissions:

@@ -388,38 +388,23 @@ done
 
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
 
-### Pipeline Orchestrator (bash-based)
+### Pipeline Orchestrator (removed)
 
-The pipeline orchestrator (`pipeline-orchestrator.yml`) is a regular GitHub Action (pure bash, no LLM) that automates PR lifecycle management for `aw`-labeled PRs. Runs in seconds, not minutes.
+We built a gh-aw agent orchestrator (`pipeline-orchestrator.md`, PR #130) to shepherd PRs through the full lifecycle. It was removed (PR #137) after failing in production — 7-10 minute runs for deterministic logic, auth failures preventing thread resolution, wrong action ordering. See `docs/auto_pr_orchestrator_aw.md` for the full postmortem.
 
-**Triggers:**
-- `workflow_run`: after Review Responder completes
-- `push: branches: [main]`: after merges (rebases stale PRs)
-- `schedule: */15 * * * *`: cron (issue dispatch, cleanup) — planned for v3
-- `workflow_dispatch`: manual with optional `pr_number` input
+**Replacement**: A regular GitHub Action (`pipeline-orchestrator.yml`) will handle the same logic in bash. See issue #135.
 
-**Capabilities (current):**
-- **v1 — Thread resolution**: Queries review threads via GraphQL, resolves unresolved threads where the last commenter is not `copilot-pull-request-reviewer` (meaning someone addressed the comment)
-- **v2 — Auto-rebase**: Detects PRs behind main via `mergeStateStatus: BEHIND`, rebases onto `origin/main`, force-pushes with lease. On conflict: adds `aw-needs-rebase` label + comment for human
+**Current state**: Issue dispatch (implementer) and CI fixer dispatch are inactive until #135 is implemented. Review-responder and quality-gate continue to work normally.
 
-**Planned:**
-- **v3** — Issue dispatch (find `aw` issues, dispatch implementer), cron trigger, review-fix loop management
-- **v4** — CI fixer dispatch
-- **v5** — Stale PR cleanup
+### Review Responder Thread ID Lookup
 
-**Auth:** Uses `GH_AW_WRITE_TOKEN` (PAT) for all operations. All user inputs passed via env vars to prevent script injection.
+The Review Responder instructions include a step to query real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
 
-**Concurrency:** `cancel-in-progress: true` prevents cron runs from stacking up.
+No `bash:` tool config is needed — the responder already has `--allow-all-tools` from the compiler default (adding explicit `bash:` would restrict the allowlist and break CI commands like `uv`, `ruff`, `pyright`, `pytest`).
 
-See issue #135 for the full roadmap. See `docs/auto_pr_orchestrator_aw.md` for the postmortem on the previous gh-aw agent approach.
+**Limitation**: This fix only applies to PRs whose head branch has the updated `.md` (loaded via `{{#runtime-import}}`). Existing PRs need a rebase onto main to pick it up.
 
-### Review Responder — Thread Resolution Delegation
-
-The review-responder no longer attempts to resolve threads. The `resolve-pull-request-review-thread` safe-output was removed (PR #141) because it never worked reliably — the MCP server doesn't expose `PRRT_` thread IDs, causing the agent to hallucinate IDs.
-
-Thread resolution is now handled by the pipeline orchestrator (`pipeline-orchestrator.yml`), which queries real thread IDs via `gh api graphql` and resolves them directly. This runs automatically after the responder completes (via `workflow_run` trigger).
-
-The responder's job is now: fix code, reply to threads, push changes. No thread resolution.
+This is a workaround until gh-aw upgrades their pinned MCP server (`github/gh-aw#21130`).
 
 </details>
 
@@ -531,9 +516,8 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 | `code-health.md` | schedule (daily) / manual | Find refactoring/cleanup opportunities | `create-issue` (max 2), `dispatch-workflow` (implementer) |
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
-| `review-responder.md` | `pull_request_review` | Address Copilot review comments | `push-to-pull-request-branch`, `reply-to-review-comment`, `add-labels` |
-| `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or block | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
-| `pipeline-orchestrator.yml` | `workflow_run` / `push` / cron / manual | Resolve threads, rebase PRs, dispatch implementer | N/A (bash, not gh-aw) |
+| `review-responder.md` | `pull_request_review` | Address Copilot review comments | `push-to-pull-request-branch`, `reply-to-review-comment`, `resolve-thread`, `add-labels` |
+| `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or block | `submit-pull-request-review`, `add-comment` |
 
 ### Loop prevention
 
@@ -646,16 +630,5 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 - Issue #136: Cleanup tracking issue.
 - Removed dispatch references from code-health and test-analysis prompts.
 - **Key lesson**: gh-aw agents are for judgment (code review, implementation). Deterministic orchestration (check state → dispatch → resolve) should be regular bash workflows.
-
-### 2026-03-17 — Pipeline orchestrator (bash) replaces gh-aw agent
-
-- PR #140: Quality gate can now close poor-quality PRs (`close-pull-request` safe-output). Aligned gh-aw version to v0.60.0.
-- PR #141: Pipeline orchestrator v1 — thread resolver. Bash GitHub Action resolves addressed review threads via GraphQL. Removed broken `resolve-pull-request-review-thread` from review-responder. Closes #117.
-- PR #142: Pipeline orchestrator v2 — auto-rebase. Detects PRs behind main, rebases and force-pushes. Security hardened (env vars, no script injection).
-- PR #143: Fixed git fetch not creating remote tracking refs for rebase.
-- PR #113: First end-to-end success — orchestrator rebased a stuck PR, CI passed, auto-merge fired. 7 seconds total.
-- Dependabot PRs #125, #124, #123 merged (checkout v6, setup-uv v7, codeql-action v4).
-- Issues closed: #89, #88, #117, #66.
-- **Key insight**: Bash orchestrator in 7 seconds vs gh-aw agent in 7-10 minutes. Same logic, 60x faster.
 
 </details>
