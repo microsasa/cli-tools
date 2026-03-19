@@ -156,7 +156,7 @@ def render_live_sessions(sessions: list[SessionSummary]) -> None:
         model = s.model or "—"
         running = _format_session_running_time(s)
         messages = str(s.user_messages)
-        tokens = f"{_estimated_output_tokens(s):,}"
+        tokens = format_tokens(_estimated_output_tokens(s))
         cwd = s.cwd or "—"
 
         table.add_row(
