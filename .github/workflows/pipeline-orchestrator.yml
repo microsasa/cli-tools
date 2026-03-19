@@ -258,7 +258,7 @@ jobs:
             if [[ "$UNADDRESSED_COUNT" -gt 0 ]]; then
               if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
                 # Count review-response-N labels for round tracking
-                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("aw-review-response-"))] | length')
+                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
 
                 if [[ "$ROUND" -ge 3 ]]; then
                   echo "  ❌ PR #${PR}: Responder hit 3 rounds. Marking stuck."
