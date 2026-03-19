@@ -388,23 +388,32 @@ done
 
 This is a known limitation for solo repos. Agent PRs don't need this — the quality gate approves them.
 
-### Pipeline Orchestrator (removed)
+### Pipeline Orchestrator (bash-based, partially implemented)
 
-We built a gh-aw agent orchestrator (`pipeline-orchestrator.md`, PR #130) to shepherd PRs through the full lifecycle. It was removed (PR #137) after failing in production — 7-10 minute runs for deterministic logic, auth failures preventing thread resolution, wrong action ordering. See `docs/auto_pr_orchestrator_aw.md` for the full postmortem.
+The gh-aw agent orchestrator was removed (PR #137, see `docs/auto_pr_orchestrator_aw.md`). Replaced by a regular GitHub Action (`pipeline-orchestrator.yml`) that runs in seconds, not minutes.
 
-**Replacement**: A regular GitHub Action (`pipeline-orchestrator.yml`) will handle the same logic in bash. See issue #135.
+**Current state on main (v1 + v2)**:
+- **v1 — Thread resolution**: Triggered by `workflow_run` after Review Responder completes. Queries review threads via GraphQL, resolves threads where the last commenter is not `copilot-pull-request-reviewer` (meaning someone addressed it). Tested on PR #113 — resolved 2 threads in 3 seconds.
+- **v2 — Auto-rebase**: Triggered by `push: branches: [main]`. Detects PRs behind main via `mergeStateStatus: BEHIND`, rebases onto `origin/main`, force-pushes with lease. On conflict: adds `aw-needs-rebase` label. Tested on PR #113 — rebased and auto-merge fired in 7 seconds.
 
-**Current state**: Issue dispatch (implementer) and CI fixer dispatch are inactive until #135 is implemented. Review-responder and quality-gate continue to work normally.
+**Reverted (was v3)**: Issue dispatch, cron trigger, and review loop management were merged (PR #144) then reverted — untested code caused loops. Being reworked on `fix/responder-v2` branch.
 
-### Review Responder Thread ID Lookup
+**Planned**:
+- v3: Issue dispatch + cron + review loop (in progress on branch)
+- v4: CI fixer dispatch
+- v5: Stale PR cleanup
 
-The Review Responder instructions include a step to query real `PRRT_` thread IDs via `gh api graphql` before resolving. Without this, the agent hallucinates thread IDs because the MCP server doesn't expose them (#114). The responder runs `gh api graphql` to fetch thread IDs upfront, then uses those real IDs in resolve calls.
+See issue #135 for the full roadmap.
 
-No `bash:` tool config is needed — the responder already has `--allow-all-tools` from the compiler default (adding explicit `bash:` would restrict the allowlist and break CI commands like `uv`, `ruff`, `pyright`, `pytest`).
+### Review Responder — Current Status
 
-**Limitation**: This fix only applies to PRs whose head branch has the updated `.md` (loaded via `{{#runtime-import}}`). Existing PRs need a rebase onto main to pick it up.
+The review-responder agent can read threads, fix code, and reply. However, the safe output handlers require proper context configuration:
 
-This is a workaround until gh-aw upgrades their pinned MCP server (`github/gh-aw#21130`).
+- `target: "triggering"` (default) only works with `pull_request_review` triggers — fails with `workflow_dispatch`
+- `target: "*"` works with `workflow_dispatch` — the agent includes the PR number in its messages
+- The `pull_request_review` trigger caused infinite loops because it fires on ANY review submission (Copilot, quality gate, humans), not just Copilot reviews
+
+**Fix in progress** (`fix/responder-v2` branch): Switch to `workflow_dispatch` trigger with `target: "*"` on safe outputs. Orchestrator dispatches the responder when needed. Successfully tested on PR #152.
 
 </details>
 
@@ -464,6 +473,15 @@ When agents post comments or replies using `GH_AW_WRITE_TOKEN` (a PAT), the comm
 ### 17. The `if:` frontmatter field gates at the infrastructure level
 Adding `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to a workflow's frontmatter compiles to a job-level `if:` on the activation job. When the condition is false, the workflow skips entirely at the GitHub Actions level — zero tokens burned, no agent activation. This is fundamentally different from checking labels in the agent prompt (which still activates the agent, burns compute, then noops).
 
+### 18. Safe output `target` config determines PR context resolution
+Safe outputs like `reply-to-pull-request-review-comment` and `push-to-pull-request-branch` default to `target: "triggering"`, which looks up the PR from `github.event.pull_request`. This only works with event-based triggers (`pull_request_review`, `pull_request`). With `workflow_dispatch`, there is no PR in the event context and safe outputs fail with "not running in a pull request context." Fix: set `target: "*"` in the safe output config — the agent includes `pull_request_number` in each message. Also requires `checkout: { fetch: ["*"], fetch-depth: 0 }` for push operations. Use `labels: [aw]` to restrict which PRs can receive pushes.
+
+### 19. `pull_request_review` trigger fires on ALL review submissions
+The `pull_request_review` trigger fires when ANY actor submits a review — not just the intended reviewer. Combined with `roles: all` (workaround for gh-aw#21098), this means Copilot reviews, quality gate approvals, and human comments ALL trigger the workflow. This caused infinite loops: responder fires → pushes → Copilot reviews → responder fires again. Fix: use `workflow_dispatch` instead and have the orchestrator decide when to run the responder.
+
+### 20. Don't over-specify agent instructions
+The responder originally worked with simple instructions: "Read the unresolved review comment threads" and "Reply to the comment thread." Adding explicit `gh api graphql` queries, ordering constraints, and MCP avoidance notes broke the agent's ability to discover threads. The agent is capable of figuring out how to read threads on its own — telling it exactly which API to use interfered with that.
+
 </details>
 
 ---
@@ -516,8 +534,9 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 | `code-health.md` | schedule (daily) / manual | Find refactoring/cleanup opportunities | `create-issue` (max 2), `dispatch-workflow` (implementer) |
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
-| `review-responder.md` | `pull_request_review` | Address Copilot review comments | `push-to-pull-request-branch`, `reply-to-review-comment`, `resolve-thread`, `add-labels` |
-| `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or block | `submit-pull-request-review`, `add-comment` |
+| `review-responder.md` | `pull_request_review` (moving to `workflow_dispatch`) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
+| `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
+| `pipeline-orchestrator.yml` | `workflow_run` / `push` / `workflow_dispatch` | Resolve threads, rebase PRs | N/A (bash, not gh-aw) |
 
 ### Loop prevention
 
@@ -630,5 +649,36 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 - Issue #136: Cleanup tracking issue.
 - Removed dispatch references from code-health and test-analysis prompts.
 - **Key lesson**: gh-aw agents are for judgment (code review, implementation). Deterministic orchestration (check state → dispatch → resolve) should be regular bash workflows.
+
+### 2026-03-17 — Bash pipeline orchestrator v1+v2 + quality gate close
+
+- PR #140: Quality gate can now close poor-quality PRs (`close-pull-request` safe-output). Aligned gh-aw version to v0.60.0 in `copilot-setup-steps.yml`.
+- PRs #125, #124, #123: Dependabot bumps (checkout v6, setup-uv v7, codeql-action v4). Rebased and merged sequentially.
+- PR #141: Pipeline orchestrator v1 — bash GitHub Action resolves addressed review threads via GraphQL `resolveReviewThread`. Triggered by `workflow_run` after responder completes. Tested on PR #113: resolved 2 threads in 3 seconds.
+- PR #142: Pipeline orchestrator v2 — auto-rebase. Detects PRs behind main via `mergeStateStatus: BEHIND`, rebases and force-pushes. Tested on PR #113: rebased and auto-merge fired in 7 seconds.
+- PR #143: Fix for git fetch not creating remote tracking refs during rebase.
+- PR #113: First end-to-end orchestrator success — rebased a stuck PR, CI passed, auto-merge fired.
+- Issues closed: #89 (quality gate close), #88 (gh-aw outdated), #117 (thread resolution), #66 (code quality cleanups via PR #113).
+- **Key insight**: Bash orchestrator in 7 seconds vs gh-aw agent in 7-10 minutes. Same logic, 60x faster.
+
+### 2026-03-17/18 — Orchestrator v3 attempt, responder investigation, revert
+
+- PR #144: Merged orchestrator v3 (issue dispatch, cron, review loop) + docs + daily test-analysis. Not adequately tested before merge.
+- PR #147: Attempted to fix responder by reverting to working version. Merged untested.
+- PR #150: Panic-disabled all orchestrator triggers to stop loops. Disabled v1/v2 triggers that were working.
+- All three reverted after discovering cascading issues.
+- **Responder investigation findings**:
+  - The responder agent CAN read review threads and fix code inside the sandbox (confirmed by examining agent job logs).
+  - The safe output handlers (`reply-to-pull-request-review-comment`, `push-to-pull-request-branch`) default to `target: "triggering"` which requires `pull_request_review` event context. With `workflow_dispatch`, no PR context exists and safe outputs fail.
+  - Setting `target: "*"` in safe output config lets the agent specify the PR number in each message, enabling `workflow_dispatch`.
+  - The `pull_request_review` trigger fires on ANY review submission (Copilot, quality gate, humans) — not just Copilot reviews. Combined with `roles: all` workaround, this caused infinite responder loops.
+  - Successfully tested fix on PR #152: responder read thread via REST API, fixed code (renamed variable), replied to comment, pushed commit, orchestrator (v1) auto-resolved the thread.
+- **Copilot CLI accountability**: Multiple failures caused by CLI agent: stating the responder had worked when it never had, pushing to implementer PR branches, merging without permission, creating branches and PRs without approval, not verifying changes before claiming they worked.
+- **Key lessons**:
+  - Never merge untested workflow changes to main — always test from branch first.
+  - Safe output `target` config is critical: `"triggering"` for event triggers, `"*"` for `workflow_dispatch`.
+  - Don't over-specify agent instructions — the simple original version worked; adding explicit API calls and ordering constraints broke it.
+  - `workflow_dispatch` is the right trigger for the responder — the orchestrator decides when to run it, eliminating trigger loops.
+  - Always verify claims by reading actual data (run logs, thread state) before proceeding.
 
 </details>

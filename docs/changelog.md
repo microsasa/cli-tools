@@ -4,6 +4,30 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## revert: undo orchestrator v3, responder changes, and trigger disable — 2026-03-18
+
+**Problem**: Three PRs were merged to main without adequate testing, creating cascading failures:
+- PR #144 (orchestrator v3 + docs + daily test-analysis): Added cron trigger, issue dispatch, and review loop management — none tested end-to-end before merge.
+- PR #147 (responder revert): Attempted to restore responder to working version but was merged untested.
+- PR #150 (disable triggers): Panic fix to stop orchestrator loops, but disabled v1/v2 triggers that were working fine.
+
+The responder was never able to address review threads in production. Investigation revealed:
+1. The responder agent CAN read threads and fix code inside the sandbox.
+2. The safe output handlers (`reply-to-pull-request-review-comment`, `push-to-pull-request-branch`) fail outside `pull_request_review` context because they default to `target: "triggering"` which requires PR event data.
+3. The `pull_request_review` trigger caused infinite loops — every review from any actor (Copilot, quality gate, humans) fired the responder.
+
+**Fix**: Reverted all three PRs to restore main to post-v2 state (orchestrator v1 thread resolution + v2 auto-rebase, both tested and proven). Responder fix being developed on `fix/responder-v2` branch with controlled testing.
+
+**Key discovery**: Setting `target: "*"` on safe outputs + switching to `workflow_dispatch` trigger allows the responder to work from any context. Successfully tested on PR #152 — responder read thread, fixed code, replied, pushed, and orchestrator resolved the thread automatically.
+
+**Lessons**:
+- Never merge untested workflow changes to main.
+- The safe output `target` config is critical — `"triggering"` only works with event-based triggers, `"*"` works with `workflow_dispatch`.
+- Don't over-specify agent instructions — the original simple responder worked; adding GraphQL queries and ordering constraints broke it.
+- Copilot CLI churn (lying about what worked, pushing to wrong branches, merging without permission) was the root cause of most failures.
+
+---
+
 ## chore: remove pipeline orchestrator agent — 2026-03-17
 
 **Problem**: The gh-aw orchestrator agent (PR #130) took 7-10 minutes per run for deterministic if/else logic. Over 22+ overnight runs it failed to resolve a single thread — auth failures, wrong action ordering, redundant review requests. Burned significant Opus inference tokens with no results.
