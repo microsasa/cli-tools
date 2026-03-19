@@ -50,9 +50,9 @@ Fix CI failures on pull request #${{ github.event.inputs.pr_number }}.
 
 ## Instructions
 
-1. First, check if PR #${{ github.event.inputs.pr_number }} has the label `ci-fix-attempted`. If it does, add a comment saying "CI fix already attempted once — stopping to prevent loops. Manual intervention needed." and stop. Do NOT attempt another fix.
+1. First, check if PR #${{ github.event.inputs.pr_number }} has the label `aw-ci-fix-attempted`. If it does, add a comment saying "CI fix already attempted once — stopping to prevent loops. Manual intervention needed." and stop. Do NOT attempt another fix.
 
-2. Add the label `ci-fix-attempted` to the PR.
+2. Add the label `aw-ci-fix-attempted` to the PR.
 
 3. Read the PR to find the head branch and understand what the PR changes.
 

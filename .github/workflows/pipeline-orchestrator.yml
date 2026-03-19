@@ -91,7 +91,7 @@ jobs:
                   }
                 }
               }' -f owner="$OWNER" -f repo="$REPO" \
-              --jq '[.data.repository.pullRequests.nodes[] | select([.labels.nodes[].name] | any(startswith("aw-stuck:")) | not) | .number] | .[]')
+              --jq '[.data.repository.pullRequests.nodes[] | select([.labels.nodes[].name] | any(startswith("aw-pr-stuck:")) | not) | .number] | .[]')
           fi
 
           if [[ -z "$PR_NUMBERS" ]]; then
@@ -111,7 +111,7 @@ jobs:
           OWNER="${GITHUB_REPOSITORY_OWNER}"
           REPO="${GITHUB_REPOSITORY#*/}"
 
-          # Find oldest aw-labeled issue without aw-dispatched or aw-stuck:*
+          # Find oldest aw-labeled issue without aw-dispatched or aw-pr-stuck:*
           ISSUE=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
@@ -126,7 +126,7 @@ jobs:
             }' -f owner="$OWNER" -f repo="$REPO" \
             --jq '[.data.repository.issues.nodes[] | select(
               ([.labels.nodes[].name] | any(. == "aw-dispatched") | not)
-              and ([.labels.nodes[].name] | any(startswith("aw-stuck:")) | not)
+              and ([.labels.nodes[].name] | any(startswith("aw-pr-stuck:")) | not)
             )] | .[0]')
 
           if [[ "$ISSUE" == "null" || -z "$ISSUE" ]]; then
@@ -188,8 +188,8 @@ jobs:
               | select(.name == "check")
               | .conclusion // .status' 2>/dev/null || echo "UNKNOWN")
 
-            HAS_CI_FIX_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "ci-fix-attempted") then "yes" else "" end')
-            HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "review-response-attempted") then "yes" else "" end')
+            HAS_CI_FIX_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-ci-fix-attempted") then "yes" else "" end')
+            HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-review-response-attempted") then "yes" else "" end')
 
             echo "  Branch: $BRANCH | CI: $CI_CONCLUSION"
 
@@ -197,7 +197,7 @@ jobs:
             if [[ "$CI_CONCLUSION" == "FAILURE" || "$CI_CONCLUSION" == "failure" ]]; then
               if [[ -n "$HAS_CI_FIX_LABEL" ]]; then
                 echo "  ❌ PR #${PR}: CI still failing after ci-fixer. Marking stuck."
-                gh pr edit "$PR" --add-label "aw-stuck:ci"
+                gh pr edit "$PR" --add-label "aw-pr-stuck:ci"
                 gh pr comment "$PR" --body "❌ Pipeline orchestrator: CI still failing after ci-fixer attempt. Marking as stuck for human review."
               else
                 echo "  🔧 PR #${PR}: CI failing. Dispatching ci-fixer."
@@ -258,17 +258,17 @@ jobs:
             if [[ "$UNADDRESSED_COUNT" -gt 0 ]]; then
               if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
                 # Count review-response-N labels for round tracking
-                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("review-response-"))] | length')
+                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(startswith("aw-review-response-"))] | length')
 
                 if [[ "$ROUND" -ge 3 ]]; then
                   echo "  ❌ PR #${PR}: Responder hit 3 rounds. Marking stuck."
-                  gh pr edit "$PR" --add-label "aw-stuck:review"
+                  gh pr edit "$PR" --add-label "aw-pr-stuck:review"
                   gh pr comment "$PR" --body "❌ Pipeline orchestrator: review-response loop reached 3 rounds. Marking as stuck for human review."
                 else
                   NEXT_ROUND=$((ROUND + 1))
                   echo "  🔄 PR #${PR}: Removing response label, enabling round ${NEXT_ROUND}."
-                  gh pr edit "$PR" --remove-label "review-response-attempted"
-                  gh pr edit "$PR" --add-label "review-response-${NEXT_ROUND}"
+                  gh pr edit "$PR" --remove-label "aw-review-response-attempted"
+                  gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"
                   echo "  📤 Dispatching responder for PR #${PR}."
                   gh workflow run review-responder.lock.yml -f pr_number="$PR"
                 fi
@@ -318,7 +318,7 @@ jobs:
 
             MERGE_STATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.mergeStateStatus')
             BRANCH=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefName')
-            HAS_STUCK_REBASE=$(echo "$PR_DATA" | jq -r '[.data.repository.pullRequest.labels.nodes[].name] | any(. == "aw-stuck:rebase") | if . then "yes" else "" end')
+            HAS_STUCK_REBASE=$(echo "$PR_DATA" | jq -r '[.data.repository.pullRequest.labels.nodes[].name] | any(. == "aw-pr-stuck:rebase") | if . then "yes" else "" end')
 
             echo "  Branch: $BRANCH | Merge state: $MERGE_STATE"
 
@@ -329,7 +329,7 @@ jobs:
             fi
 
             if [[ -n "$HAS_STUCK_REBASE" ]]; then
-              echo "  PR #${PR}: Already has aw-stuck:rebase label. Skipping."
+              echo "  PR #${PR}: Already has aw-pr-stuck:rebase label. Skipping."
               echo "::endgroup::"
               continue
             fi
@@ -350,13 +350,13 @@ jobs:
               else
                 echo "  ⚠️  PR #${PR}: Rebase succeeded but push failed."
                 gh pr comment "$PR" --body "⚠️ Pipeline orchestrator: rebase succeeded but force-push failed. Manual intervention needed."
-                gh pr edit "$PR" --add-label "aw-stuck:rebase"
+                gh pr edit "$PR" --add-label "aw-pr-stuck:rebase"
               fi
             else
               git rebase --abort 2>/dev/null || true
               echo "  ❌ PR #${PR}: Rebase conflicts detected."
               gh pr comment "$PR" --body "❌ Pipeline orchestrator: rebase onto main failed due to conflicts. Manual rebase needed."
-              gh pr edit "$PR" --add-label "aw-stuck:rebase"
+              gh pr edit "$PR" --add-label "aw-pr-stuck:rebase"
             fi
 
             git checkout --detach HEAD 2>/dev/null || true

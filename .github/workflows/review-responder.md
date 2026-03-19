@@ -53,9 +53,9 @@ Address review comments on pull request #${{ inputs.pr_number }}.
 
 This workflow addresses unresolved review comments on a pull request.
 
-1. Check if the PR already has the label `review-response-attempted`. If it does, add a comment to the PR saying "Review response already attempted — stopping to prevent loops. Manual intervention needed." and stop.
+1. Check if the PR already has the label `aw-review-response-attempted`. If it does, add a comment to the PR saying "Review response already attempted — stopping to prevent loops. Manual intervention needed." and stop.
 
-2. Add the label `review-response-attempted` to the PR.
+2. Add the label `aw-review-response-attempted` to the PR.
 
 3. Read the unresolved review comment threads on the PR using the GitHub REST API: fetch `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments` and `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews`. If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
 
