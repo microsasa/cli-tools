@@ -70,8 +70,8 @@ This workflow is dispatched by the pipeline orchestrator when a PR has CI green 
 
 4. Make your decision:
    - If code quality is good AND impact is LOW or MEDIUM: Submit an APPROVE review with a brief summary of what was evaluated (e.g., "Low-impact test addition with good coverage. Auto-approving for merge."). Also add the label `aw-quality-gate-approved` to the PR — this label is used by the PR Rescue workflow to know which PRs are safe to re-approve after rebase. The PR has auto-merge enabled — your approval satisfies the required review and triggers automatic merge.
-   - If code quality is good but impact is HIGH: Add a comment to the PR explaining: what the high-impact areas are, why manual review is recommended, and what specifically a human reviewer should look at. Do NOT approve — auto-merge will remain blocked until a human approves.
-   - If code quality is poor: Close the PR with a comment explaining the quality concerns (what's wrong and what needs to be fixed). The source issue stays open so the implementer can retry. Do NOT approve.
+   - If code quality is good but impact is HIGH: Add the label `aw-quality-gate-evaluated` to the PR, then add a comment explaining: what the high-impact areas are, why manual review is recommended, and what specifically a human reviewer should look at. Do NOT approve — auto-merge will remain blocked until a human approves.
+   - If code quality is poor: Add the label `aw-quality-gate-evaluated` to the PR, then close the PR with a comment explaining the quality concerns (what's wrong and what needs to be fixed). The source issue stays open so the implementer can retry. Do NOT approve.
 
 Be conservative — when in doubt about impact level, round up. It's better to flag something for human review than to auto-merge a risky change.
 
