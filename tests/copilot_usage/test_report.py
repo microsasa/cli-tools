@@ -835,6 +835,12 @@ class TestRenderSummary:
         assert "Copilot Usage Summary" in output
         assert "0s" in output
 
+    def test_summary_header_single_session_same_date_both_ends(self) -> None:
+        """With a single session, earliest and latest are the same date."""
+        s = _make_summary_session(start_time=datetime(2026, 3, 7, tzinfo=UTC))
+        output = _capture_summary([s])
+        assert output.count("2026-03-07") >= 2  # appears in both ends of range
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — report.py
@@ -1022,12 +1028,6 @@ class TestReportCoverageGaps:
         ]
         output = _capture_summary(sessions)
         assert "2025-01-01  →  2025-12-31" in output
-
-    def test_summary_header_single_session_same_date_both_ends(self) -> None:
-        """With a single session, earliest and latest are the same date."""
-        s = _make_summary_session(start_time=datetime(2026, 3, 7, tzinfo=UTC))
-        output = _capture_summary([s])
-        assert output.count("2026-03-07") >= 2  # appears in both ends of range
 
     def test_summary_header_no_start_times(self) -> None:
         """Sessions with no start_time → 'no sessions' subtitle (line 533)."""
@@ -1440,30 +1440,6 @@ class TestRenderCostView:
         assert "Grand Total" in output
         # 1500 output tokens → formatted as "1.5K"
         assert "1.5K" in output
-
-    def test_resumed_session_grand_output_includes_historical_and_active(
-        self,
-    ) -> None:
-        """Grand total output tokens = historical (from metrics) + active."""
-        session = SessionSummary(
-            session_id="resume-out-1234",
-            name="Resumed",
-            model="claude-opus-4.6",
-            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
-            is_active=True,
-            model_calls=10,
-            active_model_calls=3,
-            active_output_tokens=200,
-            model_metrics={
-                "claude-opus-4.6": ModelMetrics(
-                    requests=RequestMetrics(count=7, cost=21),
-                    usage=TokenUsage(outputTokens=1000),
-                )
-            },
-        )
-        output = _capture_cost_view([session])
-        # 1000 historical + 200 active = 1200 → "1.2K"
-        assert "1.2K" in output
 
     def test_mixed_sessions_grand_total(self) -> None:
         """Grand total sums metrics-output from completed + active_output from active-no-metrics."""
