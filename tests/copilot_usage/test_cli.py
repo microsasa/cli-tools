@@ -746,41 +746,7 @@ def test_group_path_propagates_to_live(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "live"])
     assert result.exit_code == 0
-
-
-def test_summary_group_path_propagation(tmp_path: Path) -> None:
-    """summary reads --path from group level when not provided at subcommand level."""
-    _write_session(tmp_path, "grp10000-0000-0000-0000-000000000000", name="GroupPath")
-    runner = CliRunner()
-    # --path before subcommand name → stored in ctx.obj, not subcommand
-    result = runner.invoke(main, ["--path", str(tmp_path), "summary"])
-    assert result.exit_code == 0
-    assert "GroupPath" in result.output
-
-
-def test_cost_group_path_propagation(tmp_path: Path) -> None:
-    _write_session(tmp_path, "grp20000-0000-0000-0000-000000000000", name="CostGroup")
-    runner = CliRunner()
-    result = runner.invoke(main, ["--path", str(tmp_path), "cost"])
-    assert result.exit_code == 0
-
-
-def test_live_group_path_propagation(tmp_path: Path) -> None:
-    _write_session(
-        tmp_path, "grp30000-0000-0000-0000-000000000000", name="LiveGroup", active=True
-    )
-    runner = CliRunner()
-    result = runner.invoke(main, ["--path", str(tmp_path), "live"])
-    assert result.exit_code == 0
-
-
-def test_session_group_path_propagation(tmp_path: Path) -> None:
-    sid = "grp40000-0000-0000-0000-000000000000"
-    _write_session(tmp_path, sid, name="SessGroup")
-    runner = CliRunner()
-    # session needs the session_id positional argument
-    result = runner.invoke(main, ["--path", str(tmp_path), "session", sid[:8]])
-    assert result.exit_code == 0
+    assert "grp_liv00" in result.output or "GrpLive" in result.output
 
 
 # 5. Auto-refresh branches in _interactive_loop -------------------------------
