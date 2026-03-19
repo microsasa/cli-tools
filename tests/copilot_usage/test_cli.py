@@ -746,6 +746,7 @@ def test_group_path_propagates_to_live(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "live"])
     assert result.exit_code == 0
+    assert "grp_liv00" in result.output or "GrpLive" in result.output
 
 
 # 5. Auto-refresh branches in _interactive_loop -------------------------------
