@@ -534,7 +534,7 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 | `code-health.md` | schedule (daily) / manual | Find refactoring/cleanup opportunities | `create-issue` (max 2), `dispatch-workflow` (implementer) |
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
-| `review-responder.md` | `pull_request_review` (moving to `workflow_dispatch`) | Address review comments | `push-to-pull-request-branch`, `reply-to-review-comment`, `add-labels` |
+| `review-responder.md` | `pull_request_review` (moving to `workflow_dispatch`) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
 | `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
 | `pipeline-orchestrator.yml` | `workflow_run` / `push` / `workflow_dispatch` | Resolve threads, rebase PRs | N/A (bash, not gh-aw) |
 
