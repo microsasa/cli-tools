@@ -835,6 +835,12 @@ class TestRenderSummary:
         assert "Copilot Usage Summary" in output
         assert "0s" in output
 
+    def test_summary_header_single_session_same_date_both_ends(self) -> None:
+        """With a single session, earliest and latest are the same date."""
+        s = _make_summary_session(start_time=datetime(2026, 3, 7, tzinfo=UTC))
+        output = _capture_summary([s])
+        assert output.count("2026-03-07") >= 2  # appears in both ends of range
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — report.py
@@ -1434,6 +1440,36 @@ class TestRenderCostView:
         assert "Grand Total" in output
         # 1500 output tokens → formatted as "1.5K"
         assert "1.5K" in output
+
+    def test_mixed_sessions_grand_total(self) -> None:
+        """Grand total sums metrics-output from completed + active_output from active-no-metrics."""
+        completed = SessionSummary(
+            session_id="comp-aaaa-111111",
+            name="Done",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 10, tzinfo=UTC),
+            is_active=False,
+            model_calls=5,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=5),
+                    usage=TokenUsage(outputTokens=2000),
+                )
+            },
+        )
+        active = SessionSummary(
+            session_id="actv-bbbb-222222",
+            name="Running",
+            model="claude-opus-4.6",
+            start_time=datetime(2025, 1, 15, tzinfo=UTC),
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=500,
+        )
+        output = _capture_cost_view([completed, active])
+        # 2000 + 500 = 2500 → "2.5K"
+        assert "2.5K" in output
 
 
 class TestRenderFullSummaryHelperReuse:
