@@ -57,7 +57,7 @@ This workflow addresses unresolved review comments on a pull request.
 
 2. Add the label `review-response-attempted` to the PR.
 
-3. Read the unresolved review comment threads on the PR (not just the latest review — get all unresolved threads). If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
+3. Read the unresolved review comment threads on the PR using the GitHub REST API: fetch `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments` and `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews`. If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
 
 4. For each unresolved review comment thread (up to 10):
    a. Read the comment and understand what change is being requested
