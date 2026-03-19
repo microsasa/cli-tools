@@ -26,25 +26,23 @@
 
 name: "Quality Gate"
 "on":
-  # bots: # Bots processed as bot check in pre-activation job
-  # - Copilot # Bots processed as bot check in pre-activation job
-  # - copilot-pull-request-reviewer # Bots processed as bot check in pre-activation job
-  pull_request_review:
-    types:
-    - submitted
-  # roles: all # Roles processed as role check in pre-activation job
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to evaluate for merge eligibility
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: "gh-aw-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}"
+  group: "gh-aw-${{ github.workflow }}-${{ inputs.pr_number || github.ref || github.run_id }}"
   cancel-in-progress: true
 
 run-name: "Quality Gate"
 
 jobs:
   activation:
-    if: contains(github.event.pull_request.labels.*.name, 'aw')
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -128,7 +126,7 @@ jobs:
           GH_AW_GITHUB_EVENT_COMMENT_ID: ${{ github.event.comment.id }}
           GH_AW_GITHUB_EVENT_DISCUSSION_NUMBER: ${{ github.event.discussion.number }}
           GH_AW_GITHUB_EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
-          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ inputs.pr_number }}
           GH_AW_GITHUB_REPOSITORY: ${{ github.repository }}
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -177,7 +175,7 @@ jobs:
           
           GH_AW_PROMPT_EOF
           cat "/opt/gh-aw/prompts/github_mcp_tools_with_safeoutputs_prompt.md"
-          if [ "$GITHUB_EVENT_NAME" = "issue_comment" ] && [ -n "$GH_AW_IS_PR_COMMENT" ] || [ "$GITHUB_EVENT_NAME" = "pull_request_review_comment" ] || [ "$GITHUB_EVENT_NAME" = "pull_request_review" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "issue_comment" ] && [ -n "$GH_AW_IS_PR_COMMENT" ] || [ "$GITHUB_EVENT_NAME" = "pull_request_review_comment" ] || [ "$GITHUB_EVENT_NAME" = "pull_request_review" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             cat "/opt/gh-aw/prompts/pr_context_prompt.md"
           fi
           cat << 'GH_AW_PROMPT_EOF'
@@ -191,7 +189,7 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           GH_AW_PROMPT: /tmp/gh-aw/aw-prompts/prompt.txt
-          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ inputs.pr_number }}
         with:
           script: |
             const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
@@ -206,7 +204,7 @@ jobs:
           GH_AW_GITHUB_EVENT_COMMENT_ID: ${{ github.event.comment.id }}
           GH_AW_GITHUB_EVENT_DISCUSSION_NUMBER: ${{ github.event.discussion.number }}
           GH_AW_GITHUB_EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
-          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          GH_AW_GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ inputs.pr_number }}
           GH_AW_GITHUB_REPOSITORY: ${{ github.repository }}
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -339,7 +337,7 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
           cat > /opt/gh-aw/safeoutputs/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-          {"add_comment":{"max":1},"add_labels":{"max":3},"close_pull_request":{"github-token":"${{ secrets.GH_AW_WRITE_TOKEN }}","max":1},"missing_data":{},"missing_tool":{},"noop":{"max":1},"submit_pull_request_review":{"max":1}}
+          {"add_comment":{"max":1,"target":"*"},"add_labels":{"max":3,"target":"*"},"close_pull_request":{"github-token":"${{ secrets.GH_AW_WRITE_TOKEN }}","max":1,"target":"*"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"submit_pull_request_review":{"max":1,"target":"*"}}
           GH_AW_SAFE_OUTPUTS_CONFIG_EOF
       - name: Write Safe Outputs Tools
         run: |
@@ -1052,7 +1050,7 @@ jobs:
           GH_AW_ALLOWED_DOMAINS: "api.business.githubcopilot.com,api.enterprise.githubcopilot.com,api.github.com,api.githubcopilot.com,api.individual.githubcopilot.com,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,ppa.launchpad.net,raw.githubusercontent.com,registry.npmjs.org,s.symcb.com,s.symcd.com,security.ubuntu.com,telemetry.enterprise.githubcopilot.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1},\"add_labels\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\"},\"close_pull_request\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1},\"missing_data\":{},\"missing_tool\":{},\"submit_pull_request_review\":{\"footer\":\"always\",\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"*\"},\"add_labels\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"target\":\"*\"},\"close_pull_request\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"*\"},\"missing_data\":{},\"missing_tool\":{},\"submit_pull_request_review\":{\"footer\":\"always\",\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"*\"}}"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |

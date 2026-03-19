@@ -17,7 +17,7 @@ name: "Pipeline Orchestrator"
 on:
   # Event-driven triggers (immediate response)
   workflow_run:
-    workflows: ["Review Responder", "CI Fixer", "CI"]
+    workflows: ["Review Responder", "CI Fixer", "CI", "Quality Gate"]
     types: [completed]
   pull_request_review:
     types: [submitted]
@@ -281,6 +281,22 @@ jobs:
             fi
 
             echo "  ✅ PR #${PR}: All threads resolved, CI passing."
+
+            # --- Step 4: Dispatch quality gate if not already approved ---
+            HAS_QG_APPROVED=$(echo "$LABELS" | jq -r 'if any(. == "aw-quality-gate-approved") then "yes" else "" end')
+
+            if [[ -n "$HAS_QG_APPROVED" ]]; then
+              echo "  ✅ PR #${PR}: Already quality-gate-approved. Auto-merge should handle it."
+            else
+              # Check if quality gate is already in flight for this PR
+              QG_RUNNING=$(gh run list --workflow=quality-gate.lock.yml --status=in_progress --status=queued --json databaseId --jq 'length' 2>/dev/null || echo "0")
+              if [[ "$QG_RUNNING" -gt 0 ]]; then
+                echo "  ⏳ PR #${PR}: Quality gate already in flight. Skipping."
+              else
+                echo "  🔍 PR #${PR}: Dispatching quality gate."
+                gh workflow run quality-gate.lock.yml -f pr_number="$PR"
+              fi
+            fi
             echo "::endgroup::"
           done
 
