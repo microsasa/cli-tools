@@ -17,4 +17,4 @@ def format_output(data: list[str], verbose: bool) -> str:
 
 
 def broken_function(value: int) -> str:
-    return value + 1  # type error: returns int, not str
+    return str(value + 1)
