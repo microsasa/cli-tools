@@ -190,7 +190,15 @@ class TestRenderLiveSessions:
             output_tokens=15000, start_time=now - timedelta(minutes=5)
         )
         output = _capture_output([session])
-        assert "15,000" in output
+        assert "15.0K" in output
+
+    def test_active_session_shows_output_tokens_m_suffix(self) -> None:
+        now = datetime.now(tz=UTC)
+        session = _make_session(
+            output_tokens=1_500_000, start_time=now - timedelta(minutes=5)
+        )
+        output = _capture_output([session])
+        assert "1.5M" in output
 
     def test_active_session_shows_cwd(self) -> None:
         now = datetime.now(tz=UTC)
