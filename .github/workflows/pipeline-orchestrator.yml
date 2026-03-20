@@ -52,6 +52,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled') ||
       (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'aw'))
     env:

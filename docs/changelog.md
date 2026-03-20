@@ -4,6 +4,16 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: cron schedule skipped — missing from orchestrator if: condition — 2026-03-20
+
+**Problem**: PR #174 enabled a 5-minute cron on the orchestrator but didn't add `schedule` to the job's `if:` condition. Cron fired correctly but the job was immediately skipped every time.
+
+**Root cause**: Copilot CLI added the trigger to `on:` without checking the job-level `if:` gate. This is the same class of bug as adding a `workflow_dispatch` trigger without updating event-specific conditions.
+
+**Fix**: Add `github.event_name == 'schedule'` to the `if:` condition. Fixes #175.
+
+---
+
 ## fix: quality gate dispatch + review approval + cron — 2026-03-19/20
 
 **Problem**: The quality gate workflow triggered on `pull_request_review: submitted`, but the gh-aw pre-activation job filters out bot-submitted reviews. Since the autonomous pipeline has no human reviewers, the quality gate never fired — clean PRs (green CI, no review comments) sat open indefinitely. Example: PR #167 was stuck for 30+ minutes.

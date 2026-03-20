@@ -485,6 +485,9 @@ The responder originally worked with simple instructions: "Read the unresolved r
 ### 21. Safe output `target` values differ by handler type
 Not all safe output handlers resolve `target` the same way. `submit-pull-request-review` with `target: "*"` fails because its tool schema has no `pull_request_number` field — the agent can't specify which PR to review. Use `target: ${{ inputs.pr_number }}` instead (per gh-aw docs). Meanwhile, `add-labels` works with `target: "*"` because its schema has `item_number`. When using `workflow_dispatch`, check each handler's schema to pick the right `target` value. Don't assume one value works for all.
 
+### 22. Adding a trigger to `on:` requires updating the job `if:` condition
+If a job has an `if:` condition that gates on `github.event_name`, adding a new trigger to `on:` is not enough — the `if:` must also include the new event name. The orchestrator had this bug twice: first when switching quality gate to `workflow_dispatch`, then when adding `schedule`. The cron fired correctly but the job was skipped because `'schedule'` wasn't in the `if:` condition. **Always check for `event_name` gates when adding triggers.**
+
 </details>
 
 ---
@@ -674,6 +677,7 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 - Discovered `submit_pull_request_review` safe output doesn't support `target: "*"` — no `pull_request_number` field in tool schema. Fix: use `target: ${{ inputs.pr_number }}` per gh-aw docs. `add_labels` uses `target: "*"` (different handler, has `item_number` field).
 - PR #167 eventually merged after testing the fix from branch via `gh workflow run --ref`.
 - Enabled 5-minute cron on orchestrator. Public repo — Actions minutes are unlimited. Cron catches new issues when pipeline is idle. Closes #135.
+- Bug: cron trigger was added to `on:` but `schedule` was not added to the job `if:` condition — cron fired but job was skipped every time. Fixed in #175.
 
 ### 2026-03-17/18 — Orchestrator v3 attempt, responder investigation, revert
 
