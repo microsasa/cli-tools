@@ -39,7 +39,7 @@ safe-outputs:
     target: ${{ inputs.pr_number }}
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
-    target: ${{ inputs.pr_number }}
+    target: "*"
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
 ---

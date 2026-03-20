@@ -22,7 +22,7 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"0b1e84693c9ae3b74ffc39a9e7fe469e500a67902c50ddbac1ad62241fad4305","compiler_version":"v0.60.0","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"9065f7641c6a8a15be280ac5bba1b5ab2bb0013c35a17e4d9c87058357b704da","compiler_version":"v0.60.0","strict":true}
 
 name: "Quality Gate"
 "on":
@@ -319,7 +319,7 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
           cat > /opt/gh-aw/safeoutputs/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-          {"add_comment":{"max":1,"target":"${{ inputs.pr_number }}"},"add_labels":{"max":3,"target":"${{ inputs.pr_number }}"},"close_pull_request":{"github-token":"${{ secrets.GH_AW_WRITE_TOKEN }}","max":1,"target":"${{ inputs.pr_number }}"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"submit_pull_request_review":{"max":1}}
+          {"add_comment":{"max":1,"target":"${{ inputs.pr_number }}"},"add_labels":{"max":3,"target":"*"},"close_pull_request":{"github-token":"${{ secrets.GH_AW_WRITE_TOKEN }}","max":1,"target":"${{ inputs.pr_number }}"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"submit_pull_request_review":{"max":1}}
           GH_AW_SAFE_OUTPUTS_CONFIG_EOF
       - name: Write Safe Outputs Tools
         run: |
@@ -327,7 +327,7 @@ jobs:
           {
             "description_suffixes": {
               "add_comment": " CONSTRAINTS: Maximum 1 comment(s) can be added. Target: ${{ inputs.pr_number }}.",
-              "add_labels": " CONSTRAINTS: Target: ${{ inputs.pr_number }}.",
+              "add_labels": " CONSTRAINTS: Target: *.",
               "close_pull_request": " CONSTRAINTS: Maximum 1 pull request(s) can be closed. Target: ${{ inputs.pr_number }}.",
               "submit_pull_request_review": " CONSTRAINTS: Maximum 1 review(s) can be submitted."
             },
@@ -1033,7 +1033,7 @@ jobs:
           GH_AW_ALLOWED_DOMAINS: "api.business.githubcopilot.com,api.enterprise.githubcopilot.com,api.github.com,api.githubcopilot.com,api.individual.githubcopilot.com,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,ppa.launchpad.net,raw.githubusercontent.com,registry.npmjs.org,s.symcb.com,s.symcd.com,security.ubuntu.com,telemetry.enterprise.githubcopilot.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"},\"add_labels\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"target\":\"${{ inputs.pr_number }}\"},\"close_pull_request\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"},\"missing_data\":{},\"missing_tool\":{},\"submit_pull_request_review\":{\"footer\":\"always\",\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"},\"add_labels\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"target\":\"*\"},\"close_pull_request\":{\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"},\"missing_data\":{},\"missing_tool\":{},\"submit_pull_request_review\":{\"footer\":\"always\",\"github-token\":\"${{ secrets.GH_AW_WRITE_TOKEN }}\",\"max\":1,\"target\":\"${{ inputs.pr_number }}\"}}"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
