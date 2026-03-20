@@ -34,9 +34,10 @@ def _write_session(
     premium: int = 3,
     output_tokens: int = 1500,
     active: bool = False,
+    use_full_uuid_dir: bool = False,
 ) -> Path:
     """Create a minimal events.jsonl file inside *base*/<dir>/."""
-    session_dir = base / session_id[:8]
+    session_dir = base / (session_id if use_full_uuid_dir else session_id[:8])
     session_dir.mkdir(parents=True, exist_ok=True)
 
     events: list[dict[str, Any]] = [
@@ -906,39 +907,6 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_uuid_session(base: Path, session_id: str) -> Path:
-    """Create a minimal session in a full-UUID-named directory."""
-    session_dir = base / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
-    events: list[dict[str, Any]] = [
-        {
-            "type": "session.start",
-            "timestamp": "2025-01-15T10:00:00Z",
-            "data": {
-                "sessionId": session_id,
-                "startTime": "2025-01-15T10:00:00Z",
-                "context": {"cwd": "/home/user"},
-            },
-        },
-        {
-            "type": "session.shutdown",
-            "timestamp": "2025-01-15T11:00:00Z",
-            "currentModel": "claude-sonnet-4",
-            "data": {
-                "shutdownType": "normal",
-                "totalPremiumRequests": 1,
-                "totalApiDurationMs": 100,
-                "modelMetrics": {},
-            },
-        },
-    ]
-    events_path = session_dir / "events.jsonl"
-    with events_path.open("w") as fh:
-        for ev in events:
-            fh.write(json.dumps(ev) + "\n")
-    return session_dir
-
-
 def test_session_prefilter_skips_non_matching_dirs(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -957,7 +925,7 @@ def test_session_prefilter_skips_non_matching_dirs(
     target = uuids[2]  # cccccccc-...
 
     for uid in uuids:
-        _write_uuid_session(tmp_path, uid)
+        _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
     def _fake_discover(_base: Path | None = None) -> list[Path]:
         return sorted(
@@ -999,12 +967,14 @@ def test_session_prefilter_short_prefix_parses_all(
         "cd333333-cccc-cccc-cccc-cccccccccccc",
     ]
     for uid in uuids:
-        _write_uuid_session(tmp_path, uid)
+        _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
     def _fake_discover(_base: Path | None = None) -> list[Path]:
+        # Sort reverse-alphabetically so cd333… (non-matching) is visited
+        # before ab… dirs, proving the pre-filter didn't skip it.
         return sorted(
             tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
+            key=lambda p: p.parent.name,
             reverse=True,
         )
 
@@ -1026,8 +996,10 @@ def test_session_prefilter_short_prefix_parses_all(
     result = runner.invoke(main, ["session", "ab"])
     assert result.exit_code == 0
 
-    # All 3 directories should have been visited (no pre-filter applied)
+    # The non-matching cd333… dir must have been parsed (no pre-filter applied).
     assert len(parse_calls) >= 2
+    parsed_dirs = {p.parent.name for p in parse_calls}
+    assert "cd333333-cccc-cccc-cccc-cccccccccccc" in parsed_dirs
 
 
 def test_session_prefilter_non_uuid_dirs_always_parsed(
