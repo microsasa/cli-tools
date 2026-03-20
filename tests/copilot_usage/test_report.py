@@ -313,14 +313,43 @@ class TestRenderLiveSessions:
         """Pure-active session (no prior shutdown) should still use totals."""
         now = datetime.now(tz=UTC)
         session = _make_session(
+            session_id="pure_active_session",
             user_messages=12,
             output_tokens=8_000,
             start_time=now - timedelta(minutes=5),
         )
         # active_user_messages and active_output_tokens default to 0
         output = _capture_output([session])
-        assert "12" in output  # user_messages
+        assert re.search(r"\b12\b", output)  # user_messages
         assert "8.0K" in output  # from model_metrics
+
+    def test_resumed_session_zero_activity_shows_zeros(self) -> None:
+        """Resumed session with zero post-resume activity shows 0, not historical totals."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="aabbccdd-eeee-ffff-aaaa-cccccccccccc",
+            name="Just Resumed",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(hours=1),
+            last_resume_time=now - timedelta(seconds=30),
+            user_messages=150,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100_000),
+                )
+            },
+            # Zero post-resume activity
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        output = _capture_output([session])
+        # Should show 0 for messages (active), not 150 (historical)
+        assert not re.search(r"\b150\b", output), (
+            "historical total (150) should not appear"
+        )
+        assert "100.0K" not in output  # historical tokens should NOT appear
 
 
 # ---------------------------------------------------------------------------
