@@ -334,6 +334,9 @@ def build_session_summary(
         model_calls=total_turn_starts,
         user_messages=user_message_count,
         is_active=True,
+        active_model_calls=total_turn_starts,
+        active_user_messages=user_message_count,
+        active_output_tokens=total_output_tokens,
     )
 
 

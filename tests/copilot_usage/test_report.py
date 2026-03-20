@@ -1262,6 +1262,33 @@ class TestRenderFullSummary:
         # Should show minutes (from last_resume_time), NOT days (from start_time)
         assert "3d" not in output and "72h" not in output
 
+    def test_active_section_shows_nonzero_activity(self) -> None:
+        """Active section renders the actual active_* field values, not zero."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="pure-active-abcdef",
+            name="Pure Active",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=10),
+            is_active=True,
+            user_messages=4,
+            model_calls=3,
+            active_model_calls=3,
+            active_user_messages=4,
+            active_output_tokens=1500,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1500),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+        # The active section should display the non-zero counts
+        assert "3" in output  # active_model_calls
+        assert "4" in output  # active_user_messages
+        assert "1.5K" in output  # active_output_tokens (format_tokens)
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
