@@ -4,6 +4,23 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: quality gate dispatch + review approval + cron — 2026-03-19/20
+
+**Problem**: The quality gate workflow triggered on `pull_request_review: submitted`, but the gh-aw pre-activation job filters out bot-submitted reviews. Since the autonomous pipeline has no human reviewers, the quality gate never fired — clean PRs (green CI, no review comments) sat open indefinitely. Example: PR #167 was stuck for 30+ minutes.
+
+**Fix (PRs #169, #170, this PR)**:
+1. Switched quality gate trigger from `pull_request_review` to `workflow_dispatch` with `pr_number` input.
+2. Added Step 4 to orchestrator: when CI green + 0 open threads → dispatch quality gate.
+3. Added `aw-quality-gate-evaluated` label to prevent re-dispatch loops for HIGH impact PRs.
+4. Fixed `submit_pull_request_review` safe output: `target: "*"` doesn't work because the tool schema has no `pull_request_number` field. Per gh-aw docs, the correct approach for `workflow_dispatch` is `target: ${{ inputs.pr_number }}`. Labels use `target: "*"` (different handler, resolves via `item_number` from agent output).
+5. Enabled 5-minute cron on orchestrator. Public repo — Actions minutes are unlimited. Cron catches new `aw`-labeled issues when the pipeline is idle and no event-driven triggers are firing. Closes #135.
+
+**Lesson**: Lock files are auto-generated — always edit the `.md` and run `gh aw compile`. Manually editing the lock file breaks the frontmatter hash validation (PR #170 was an emergency fix for this).
+
+**Lesson**: Each safe output handler resolves PR context differently. `submit_pull_request_review` needs an explicit target number. `add_labels` needs `target: "*"` with `item_number` in agent output. Read the gh-aw docs for each handler before configuring.
+
+---
+
 ## revert: undo orchestrator v3, responder changes, and trigger disable — 2026-03-18
 
 **Problem**: Three PRs were merged to main without adequate testing, creating cascading failures:
