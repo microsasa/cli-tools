@@ -330,9 +330,19 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
             click.echo("No sessions found.", err=True)
             sys.exit(1)
 
-        # Parse all sessions and find the one matching by prefix
-        available: list[str] = []
+        # Fast path: skip directories that clearly cannot match the prefix.
+        # Only apply the pre-filter on UUID-shaped directory names (36 chars
+        # with 4 dashes), where the directory name IS the session ID.
+        # Non-UUID dirs (e.g. test fixtures) always need a full parse.
         for events_path in event_paths:
+            dir_name = events_path.parent.name
+            is_uuid_dir = len(dir_name) == 36 and dir_name.count("-") == 4
+            if (
+                len(session_id) >= 4
+                and is_uuid_dir
+                and not dir_name.startswith(session_id)
+            ):
+                continue
             events = parse_events(events_path)
             if not events:
                 continue
@@ -340,6 +350,14 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
             if s.session_id.startswith(session_id):
                 render_session_detail(events, s)
                 return
+
+        # No match — collect available IDs for the error message.
+        available: list[str] = []
+        for events_path in event_paths:
+            events = parse_events(events_path)
+            if not events:
+                continue
+            s = build_session_summary(events, session_dir=events_path.parent)
             if s.session_id:
                 available.append(s.session_id[:8])
 
