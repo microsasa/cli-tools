@@ -474,13 +474,16 @@ When agents post comments or replies using `GH_AW_WRITE_TOKEN` (a PAT), the comm
 Adding `if: "contains(github.event.pull_request.labels.*.name, 'aw')"` to a workflow's frontmatter compiles to a job-level `if:` on the activation job. When the condition is false, the workflow skips entirely at the GitHub Actions level — zero tokens burned, no agent activation. This is fundamentally different from checking labels in the agent prompt (which still activates the agent, burns compute, then noops).
 
 ### 18. Safe output `target` config determines PR context resolution
-Safe outputs like `reply-to-pull-request-review-comment` and `push-to-pull-request-branch` default to `target: "triggering"`, which looks up the PR from `github.event.pull_request`. This only works with event-based triggers (`pull_request_review`, `pull_request`). With `workflow_dispatch`, there is no PR in the event context and safe outputs fail with "not running in a pull request context." Fix: set `target: "*"` in the safe output config — the agent includes `pull_request_number` in each message. Also requires `checkout: { fetch: ["*"], fetch-depth: 0 }` for push operations. Use `labels: [aw]` to restrict which PRs can receive pushes.
+Safe outputs like `reply-to-pull-request-review-comment` and `push-to-pull-request-branch` default to `target: "triggering"`, which looks up the PR from `github.event.pull_request`. This only works with event-based triggers (`pull_request_review`, `pull_request`). With `workflow_dispatch`, there is no PR in the event context and safe outputs fail with "not running in a pull request context." Fix: set `target: "*"` for handlers whose schema includes a PR/issue number field (like `add-labels` with `item_number`, `reply-to-pull-request-review-comment` with `comment_id`). For handlers without a number field (like `submit-pull-request-review`), use `target: ${{ inputs.pr_number }}` to pass the PR number directly. Also requires `checkout: { fetch: ["*"], fetch-depth: 0 }` for push operations. Use `labels: [aw]` to restrict which PRs can receive pushes.
 
 ### 19. `pull_request_review` trigger fires on ALL review submissions
 The `pull_request_review` trigger fires when ANY actor submits a review — not just the intended reviewer. Combined with `roles: all` (workaround for gh-aw#21098), this means Copilot reviews, quality gate approvals, and human comments ALL trigger the workflow. This caused infinite loops: responder fires → pushes → Copilot reviews → responder fires again. Fix: use `workflow_dispatch` instead and have the orchestrator decide when to run the responder.
 
 ### 20. Don't over-specify agent instructions
 The responder originally worked with simple instructions: "Read the unresolved review comment threads" and "Reply to the comment thread." Adding explicit `gh api graphql` queries, ordering constraints, and MCP avoidance notes broke the agent's ability to discover threads. The agent is capable of figuring out how to read threads on its own — telling it exactly which API to use interfered with that.
+
+### 21. Safe output `target` values differ by handler type
+Not all safe output handlers resolve `target` the same way. `submit-pull-request-review` with `target: "*"` fails because its tool schema has no `pull_request_number` field — the agent can't specify which PR to review. Use `target: ${{ inputs.pr_number }}` instead (per gh-aw docs). Meanwhile, `add-labels` works with `target: "*"` because its schema has `item_number`. When using `workflow_dispatch`, check each handler's schema to pick the right `target` value. Don't assume one value works for all.
 
 </details>
 
@@ -535,8 +538,8 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
 | `review-responder.md` | `pull_request_review` (moving to `workflow_dispatch`) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
-| `quality-gate.md` | `pull_request_review` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
-| `pipeline-orchestrator.yml` | `workflow_run` / `push` / `workflow_dispatch` | Resolve threads, rebase PRs | N/A (bash, not gh-aw) |
+| `quality-gate.md` | `workflow_dispatch` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
+| `pipeline-orchestrator.yml` | `workflow_run` / `push` / `pull_request_review` / `workflow_dispatch` | Dispatch implementer/ci-fixer/responder/quality-gate, resolve threads, rebase PRs | N/A (bash, not gh-aw) |
 
 ### Loop prevention
 
@@ -660,6 +663,17 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 - PR #113: First end-to-end orchestrator success — rebased a stuck PR, CI passed, auto-merge fired.
 - Issues closed: #89 (quality gate close), #88 (gh-aw outdated), #117 (thread resolution), #66 (code quality cleanups via PR #113).
 - **Key insight**: Bash orchestrator in 7 seconds vs gh-aw agent in 7-10 minutes. Same logic, 60x faster.
+
+### 2026-03-19/20 — Quality gate dispatch fix + first fully autonomous PR cycle
+
+- PR #163: Merged orchestrator v3 + responder fix + ci-fixer fix + label renames. All tested on sandbox PRs before merge.
+- PR #162: **First fully autonomous PR merge.** Issue #60 → implementer created PR → Copilot reviewed (4 comments) → responder addressed all 4 → threads auto-resolved → quality gate approved → auto-merge. Zero human intervention.
+- PR #166: Second autonomous merge (issue #126). Responder addressed 1 comment, quality gate approved.
+- PR #167: Exposed the quality gate happy-path bug. CI green, Copilot review clean (0 comments), but quality gate never fired because `pull_request_review` trigger has a bot filter that blocks Copilot-submitted reviews.
+- PRs #169, #170: Fixed quality gate — switched to `workflow_dispatch`, orchestrator dispatches it. PR #170 was emergency fix after manually editing the lock file instead of running `gh aw compile` (broke frontmatter hash).
+- Discovered `submit_pull_request_review` safe output doesn't support `target: "*"` — no `pull_request_number` field in tool schema. Fix: use `target: ${{ inputs.pr_number }}` per gh-aw docs. `add_labels` uses `target: "*"` (different handler, has `item_number` field).
+- PR #167 eventually merged after testing the fix from branch via `gh workflow run --ref`.
+- Enabled 5-minute cron on orchestrator. Public repo — Actions minutes are unlimited. Cron catches new issues when pipeline is idle. Closes #135.
 
 ### 2026-03-17/18 — Orchestrator v3 attempt, responder investigation, revert
 

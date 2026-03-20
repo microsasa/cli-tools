@@ -32,9 +32,8 @@ on:
         required: false
         type: string
 
-  # Cron disabled until testing complete — uncomment when ready
-  # schedule:
-  #   - cron: "*/5 * * * *"
+  schedule:
+    - cron: "*/5 * * * *"
 
 concurrency:
   group: pipeline-orchestrator
