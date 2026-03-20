@@ -155,8 +155,17 @@ def render_live_sessions(sessions: list[SessionSummary]) -> None:
         name = s.name or "—"
         model = s.model or "—"
         running = _format_session_running_time(s)
-        messages = str(s.user_messages)
-        tokens = format_tokens(_estimated_output_tokens(s))
+
+        if s.active_user_messages or s.active_output_tokens:
+            # Resumed session: show post-resume stats
+            messages = str(s.active_user_messages)
+            output_tok = s.active_output_tokens
+        else:
+            # Pure-active (never shut down): totals are already in model_metrics
+            messages = str(s.user_messages)
+            output_tok = _estimated_output_tokens(s)
+
+        tokens = format_tokens(output_tok)
         cwd = s.cwd or "—"
 
         table.add_row(
