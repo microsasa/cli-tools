@@ -1284,10 +1284,12 @@ class TestRenderFullSummary:
         )
         output = _capture_full_summary([session])
         assert "Active Sessions" in output
-        # The active section should display the non-zero counts
-        assert "3" in output  # active_model_calls
-        assert "4" in output  # active_user_messages
-        assert "1.5K" in output  # active_output_tokens (format_tokens)
+        # The active section should display the non-zero counts for this session
+        lines = output.splitlines()
+        pure_active_line = next(l for l in lines if "Pure Active" in l)
+        assert "3" in pure_active_line  # active_model_calls
+        assert "4" in pure_active_line  # active_user_messages
+        assert "1.5K" in pure_active_line  # active_output_tokens (format_tokens)
 
 
 # ---------------------------------------------------------------------------

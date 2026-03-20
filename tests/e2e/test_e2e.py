@@ -27,7 +27,7 @@ def _wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestSummaryE2E:
     """Tests for the ``summary`` command."""
 
-    def test_finds_eight_sessions(self) -> None:
+    def test_finds_all_sessions(self) -> None:
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
         assert "9 sessions" in result.output
@@ -182,7 +182,7 @@ class TestCorruptSessionE2E:
         """Summary still works when events.jsonl has malformed JSON lines."""
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        # 8 sessions total
+        # 9 sessions total
         assert "9 sessions" in result.output
 
     def test_corrupt_session_appears_in_summary(self) -> None:
@@ -544,11 +544,13 @@ class TestPureActiveSessionE2E:
 class TestPureActiveSessionActivityE2E:
     """Regression: pure active session must show non-zero activity counts."""
 
-    def test_live_shows_nonzero_model_calls(self) -> None:
-        """Pure active session with turn_starts shows model calls in live view."""
+    def test_live_shows_pure_active_session(self) -> None:
+        """Pure active session appears in the live view."""
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "pure-act" in result.output
+        lines = result.output.splitlines()
+        active_line = next(l for l in lines if "pure-act" in l)
+        assert "2" in active_line  # user_messages shown in Messages column
 
     def test_session_detail_shows_active(self) -> None:
         """Pure active session detail shows active status."""
