@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -279,29 +280,33 @@ class TestRenderLiveSessions:
         """Resumed session should show active_user_messages and active_output_tokens."""
         now = datetime.now(tz=UTC)
         session = SessionSummary(
-            session_id="resumed_12345678",
-            name="Resumed Heavy",
+            session_id="aabbccdd-eeee-ffff-aaaa-bbbbbbbbbbbb",
+            name="Resumed Task",
             model="claude-sonnet-4",
             is_active=True,
             start_time=now - timedelta(hours=3),
             last_resume_time=now - timedelta(minutes=10),
             # Historical totals (from shutdown events)
-            user_messages=50,
+            user_messages=263,
             model_metrics={
                 "claude-sonnet-4": ModelMetrics(
                     usage=TokenUsage(outputTokens=200_000),
                 )
             },
             # Post-resume activity
-            active_user_messages=7,
+            active_user_messages=91,
             active_output_tokens=35_000,
             active_model_calls=12,
         )
         output = _capture_output([session])
-        # Should show the active-period values, not historical totals
-        assert "7" in output  # active_user_messages, not 50
-        assert "35.0K" in output  # active_output_tokens, not 200K
-        assert "50" not in output  # historical total should NOT appear
+        # Should show the active-period values, not historical totals.
+        # Use word-boundary regex so assertions are not fooled by
+        # substring matches in session IDs, names, or other columns.
+        assert re.search(r"\b91\b", output), "active_user_messages (91) not found"
+        assert "35.0K" in output  # active_output_tokens
+        assert not re.search(r"\b263\b", output), (
+            "historical total (263) should not appear"
+        )
         assert "200.0K" not in output  # historical tokens should NOT appear
 
     def test_pure_active_session_uses_totals(self) -> None:
