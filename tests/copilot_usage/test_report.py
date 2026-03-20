@@ -350,6 +350,16 @@ class TestRenderLiveSessions:
             "historical total (150) should not appear"
         )
         assert "100.0K" not in output  # historical tokens should NOT appear
+        # And should explicitly render zeros for the active period
+        session_line = next(
+            (line for line in output.splitlines() if "Just Resumed" in line),
+            "",
+        )
+        # Expect at least two whole-word zeros on the session row (Messages and Output Tokens)
+        zeros_on_row = re.findall(r"\b0\b", session_line)
+        assert len(zeros_on_row) >= 2, (
+            "resumed session row should show 0 for both messages and output tokens"
+        )
 
 
 # ---------------------------------------------------------------------------
