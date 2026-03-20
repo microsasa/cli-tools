@@ -28,18 +28,18 @@ safe-outputs:
     report-as-issue: false
   submit-pull-request-review:
     max: 1
-    target: "*"
+    target: ${{ inputs.pr_number }}
     footer: "always"
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   close-pull-request:
     max: 1
-    target: "*"
+    target: ${{ inputs.pr_number }}
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-comment:
-    target: "*"
+    target: ${{ inputs.pr_number }}
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
-    target: "*"
+    target: ${{ inputs.pr_number }}
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
 ---
