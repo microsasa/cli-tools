@@ -549,7 +549,7 @@ class TestPureActiveSessionActivityE2E:
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
         lines = result.output.splitlines()
-        active_line = next(l for l in lines if "pure-act" in l)
+        active_line = next(line for line in lines if "pure-act" in line)
         assert "2" in active_line  # user_messages shown in Messages column
 
     def test_session_detail_shows_active(self) -> None:
