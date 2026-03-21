@@ -379,6 +379,54 @@ class TestRenderLiveSessions:
             "resumed session row should show 0 for both messages and output tokens"
         )
 
+    def test_est_cost_column_present(self) -> None:
+        """Live sessions table includes an Est. Cost column."""
+        now = datetime.now(tz=UTC)
+        session = _make_session(start_time=now - timedelta(minutes=5))
+        output = _capture_output([session])
+        assert "Est. Cost" in output
+
+    def test_est_cost_premium_model(self) -> None:
+        """Live session with a premium model shows estimated cost."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="live-premium-1234",
+            name="Premium Live",
+            model="claude-opus-4.6",
+            is_active=True,
+            start_time=now - timedelta(minutes=10),
+            user_messages=5,
+            model_calls=4,
+            model_metrics={
+                "claude-opus-4.6": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1000),
+                )
+            },
+        )
+        output = _capture_output([session])
+        # 4 calls × 3.0 multiplier = ~12
+        assert "~12" in output
+
+    def test_est_cost_free_model(self) -> None:
+        """Live session with gpt-5-mini (0× multiplier) shows ~0."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="live-free-12345678",
+            name="Free Live",
+            model="gpt-5-mini",
+            is_active=True,
+            start_time=now - timedelta(minutes=10),
+            user_messages=5,
+            model_calls=4,
+            model_metrics={
+                "gpt-5-mini": ModelMetrics(
+                    usage=TokenUsage(outputTokens=500),
+                )
+            },
+        )
+        output = _capture_output([session])
+        assert "~0" in output
+
 
 # ---------------------------------------------------------------------------
 # Helpers for session detail tests
@@ -1469,7 +1517,8 @@ class TestRenderCostView:
         )
         output = _capture_cost_view([session])
         assert "Since last shutdown" in output
-        assert "N/A" in output
+        # Premium Cost shows estimated cost (~9 = 3 calls × 3.0 multiplier)
+        assert "~9" in output
 
     def test_session_without_metrics(self) -> None:
         session = SessionSummary(
@@ -1561,7 +1610,8 @@ class TestRenderCostView:
         assert "Just Started" in output
         assert "—" in output  # placeholder row (no metrics)
         assert "Since last shutdown" in output  # active row
-        assert "N/A" in output
+        # Premium Cost shows estimated cost (~2 = 2 calls × 1.0 multiplier)
+        assert "~2" in output
 
     def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
         """Grand total output tokens includes active_output_tokens for no-metrics active session."""
@@ -1610,6 +1660,71 @@ class TestRenderCostView:
         output = _capture_cost_view([completed, active])
         # 2000 + 500 = 2500 → "2.5K"
         assert "2.5K" in output
+
+    def test_active_session_estimated_cost_known_model(self) -> None:
+        """Active session shows numeric estimated cost, not 'N/A', when model is known."""
+        session = SessionSummary(
+            session_id="est-cost-known-mod",
+            name="Known Model",
+            model="claude-opus-4.5",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=5,
+            active_model_calls=4,
+            active_output_tokens=800,
+            model_metrics={
+                "claude-opus-4.5": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=15),
+                    usage=TokenUsage(outputTokens=2000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        # claude-opus-4.5 multiplier = 3.0, active_model_calls = 4 → ~12
+        assert "~12" in output
+        # The "Since last shutdown" row should NOT show "N/A" for Premium Cost
+        lines = output.splitlines()
+        shutdown_line = next(
+            (line for line in lines if "Since last shutdown" in line), ""
+        )
+        assert "N/A" not in shutdown_line or shutdown_line.count("N/A") == 1
+
+    def test_estimated_cost_zero_for_free_model(self) -> None:
+        """gpt-5-mini has 0× multiplier → estimated cost is 0."""
+        session = SessionSummary(
+            session_id="est-cost-free-mod",
+            name="Free Model",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=5,
+            active_model_calls=5,
+            active_output_tokens=1000,
+        )
+        output = _capture_cost_view([session])
+        assert "~0" in output
+
+    def test_estimated_cost_premium_model_multiplier(self) -> None:
+        """3 calls of claude-opus-4.6 (3× multiplier) → estimated cost ~9."""
+        session = SessionSummary(
+            session_id="est-cost-prem-mod",
+            name="Premium Model",
+            model="claude-opus-4.6",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=500,
+            model_metrics={
+                "claude-opus-4.6": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=9),
+                    usage=TokenUsage(outputTokens=1000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        # 3 calls × 3.0 multiplier = ~9
+        assert "~9" in output
 
 
 class TestRenderFullSummaryHelperReuse:
