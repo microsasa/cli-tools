@@ -21,8 +21,6 @@ on:
     types: [completed]
   pull_request_review:
     types: [submitted]
-  push:
-    branches: [main]
 
   # Manual trigger for testing
   workflow_dispatch:
@@ -37,7 +35,7 @@ on:
 
 concurrency:
   group: pipeline-orchestrator
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -51,7 +49,6 @@ jobs:
     # Skip pull_request_review unless PR has aw label
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled') ||
       (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'aw'))
@@ -110,6 +107,13 @@ jobs:
 
           OWNER="${GITHUB_REPOSITORY_OWNER}"
           REPO="${GITHUB_REPOSITORY#*/}"
+
+          # Skip if an implementer is already running
+          IMPL_RUNNING=$(gh run list --workflow=issue-implementer.lock.yml --json databaseId,status --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length' 2>/dev/null || echo "1")
+          if [[ "$IMPL_RUNNING" -gt 0 ]]; then
+            echo "Implementer already in flight ($IMPL_RUNNING run(s)). Skipping dispatch."
+            exit 0
+          fi
 
           # Find oldest aw-labeled issue without aw-dispatched or aw-pr-stuck:*
           ISSUE=$(gh api graphql -f query='
