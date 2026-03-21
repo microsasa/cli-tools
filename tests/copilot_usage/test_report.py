@@ -1554,6 +1554,10 @@ class TestRenderFullSummary:
         # Should use active_* (7, 0, 0), not totals (40, 200, 100.0K)
         assert cols[3] == "7", f"Model Calls should be active (7), got '{cols[3]}'"
         assert cols[4] == "0", f"User Msgs should be active (0), got '{cols[4]}'"
+        assert cols[5] == "0", f"Output Tokens should be active (0), got '{cols[5]}'"
+        assert "100.0K" not in row, (
+            "Row should not display historical total output tokens '100.0K'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1908,7 +1912,11 @@ class TestRenderCostView:
         shutdown_row = next(line for line in lines if "Since last shutdown" in line)
         cols = [c.strip() for c in shutdown_row.split("│")]
         # Should show active_model_calls (3), not model_calls (10)
-        assert "3" in cols[5], f"Model Calls in active row should be 3, got '{cols[5]}'"
+        assert cols[5] == "3", f"Model Calls in active row should be 3, got '{cols[5]}'"
+        # Output Tokens column should use active_output_tokens (0), not historical 50.0K
+        assert cols[6] == "0", (
+            f"Output Tokens in active row should be 0, got '{cols[6]}'"
+        )
 
 
 class TestRenderFullSummaryHelperReuse:
