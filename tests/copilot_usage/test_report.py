@@ -380,6 +380,40 @@ class TestRenderLiveSessions:
             "resumed session row should show 0 for both messages and output tokens"
         )
 
+    def test_active_model_calls_only_uses_active_path(self) -> None:
+        """Edge case: active_model_calls > 0 but user_messages/output_tokens are 0.
+
+        When last_resume_time is None and only active_model_calls is non-zero,
+        the predicate must still take the active-stats path (issue #196).
+        """
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="model-calls-only-1234",
+            name="ModelCallsOnly",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(minutes=15),
+            last_resume_time=None,
+            user_messages=50,
+            model_calls=20,
+            active_model_calls=5,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=80_000),
+                )
+            },
+        )
+        output = _capture_output([session])
+        # Should show active_user_messages (0), NOT historical (50)
+        assert not re.search(r"\b50\b", output), (
+            "historical user_messages (50) should not appear"
+        )
+        assert "80.0K" not in output, (
+            "historical output tokens (80.0K) should not appear"
+        )
+
     def test_est_cost_column_present(self) -> None:
         """Live sessions table includes an Est. Cost column."""
         now = datetime.now(tz=UTC)
@@ -1486,6 +1520,41 @@ class TestRenderFullSummary:
             f"Output Tokens should fall back to total (204.0K), got '{cols[5]}'"
         )
 
+    def test_active_model_calls_only_uses_active_path(self) -> None:
+        """Full summary: active_model_calls > 0 with user_messages/output_tokens=0.
+
+        When last_resume_time is None and only active_model_calls is non-zero,
+        the predicate must take the active-stats path (issue #196).
+        """
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="model-calls-only-fs",
+            name="ModelCallsFS",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=20),
+            is_active=True,
+            last_resume_time=None,
+            user_messages=200,
+            model_calls=40,
+            active_model_calls=7,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100_000),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        row = next(line for line in lines if "ModelCallsFS" in line)
+        cols = [c.strip() for c in row.split("│")]
+        # Should use active_* (7, 0, 0), not totals (40, 200, 100.0K)
+        assert cols[3] == "7", f"Model Calls should be active (7), got '{cols[3]}'"
+        assert cols[4] == "0", f"User Msgs should be active (0), got '{cols[4]}'"
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
@@ -1806,6 +1875,40 @@ class TestRenderCostView:
         assert "50.0K" in cols[6], (
             f"Output Tokens in active row should be 50.0K, got '{cols[6]}'"
         )
+
+    def test_active_model_calls_only_uses_active_path(self) -> None:
+        """Cost view: active_model_calls > 0 with user_messages/output_tokens=0.
+
+        When last_resume_time is None and only active_model_calls is non-zero,
+        the predicate must take the active path (issue #196).
+        """
+        session = SessionSummary(
+            session_id="cost-mc-only",
+            name="Cost MC Only",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=10,
+            user_messages=8,
+            last_resume_time=None,
+            active_model_calls=3,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=10),
+                    usage=TokenUsage(outputTokens=50_000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        assert "Since last shutdown" in output
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        shutdown_row = next(line for line in lines if "Since last shutdown" in line)
+        cols = [c.strip() for c in shutdown_row.split("│")]
+        # Should show active_model_calls (3), not model_calls (10)
+        assert "3" in cols[5], f"Model Calls in active row should be 3, got '{cols[5]}'"
 
 
 class TestRenderFullSummaryHelperReuse:

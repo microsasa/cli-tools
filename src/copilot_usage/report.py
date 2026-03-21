@@ -180,6 +180,7 @@ def render_live_sessions(
             s.last_resume_time is not None
             or s.active_user_messages > 0
             or s.active_output_tokens > 0
+            or s.active_model_calls > 0
         )
         if has_active_stats:
             # Resumed/active session with post-resume stats (even when 0)
@@ -850,6 +851,7 @@ def _render_active_section(
             s.last_resume_time is not None
             or s.active_user_messages > 0
             or s.active_output_tokens > 0
+            or s.active_model_calls > 0
         )
         if has_active_stats:
             model_calls = str(s.active_model_calls)
@@ -970,6 +972,7 @@ def render_cost_view(
                 s.last_resume_time is not None
                 or s.active_user_messages > 0
                 or s.active_output_tokens > 0
+                or s.active_model_calls > 0
             )
             if has_active:
                 cost_calls = s.active_model_calls
