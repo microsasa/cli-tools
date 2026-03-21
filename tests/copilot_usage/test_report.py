@@ -309,6 +309,37 @@ class TestRenderLiveSessions:
         )
         assert "200.0K" not in output  # historical tokens should NOT appear
 
+    def test_active_session_without_last_resume_time_shows_active_fields(self) -> None:
+        """Active session with active_* but no last_resume_time should use active fields."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="no-resume-event-1234",
+            name="Active Without Explicit Resume",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(hours=2),
+            # Historical totals accumulated before the current active period
+            user_messages=263,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=200_000),
+                )
+            },
+            # Current active-period activity, even though last_resume_time is None
+            active_user_messages=91,
+            active_output_tokens=35_000,
+            active_model_calls=12,
+        )
+        output = _capture_output([session])
+        # Should show the active-period values, not historical totals,
+        # even when last_resume_time is None.
+        assert re.search(r"\b91\b", output), "active_user_messages (91) not found"
+        assert "35.0K" in output  # active_output_tokens
+        assert not re.search(r"\b263\b", output), (
+            "historical total (263) should not appear"
+        )
+        assert "200.0K" not in output  # historical tokens should NOT appear
+
     def test_pure_active_session_uses_totals(self) -> None:
         """Pure-active session (no prior shutdown) should still use totals."""
         now = datetime.now(tz=UTC)

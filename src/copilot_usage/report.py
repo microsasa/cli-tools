@@ -156,8 +156,13 @@ def render_live_sessions(sessions: list[SessionSummary]) -> None:
         model = s.model or "—"
         running = _format_session_running_time(s)
 
-        if s.last_resume_time is not None:
-            # Resumed session: show post-resume stats (even when 0)
+        has_active_stats = (
+            s.last_resume_time is not None
+            or s.active_user_messages > 0
+            or s.active_output_tokens > 0
+        )
+        if has_active_stats:
+            # Resumed/active session with post-resume stats (even when 0)
             messages = str(s.active_user_messages)
             output_tok = s.active_output_tokens
         else:
