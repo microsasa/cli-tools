@@ -83,6 +83,7 @@ _RAW_MULTIPLIERS: Final[dict[str, float]] = {
     "gpt-5.3-codex": 1.0,
     "gpt-5.1-codex-max": 1.0,
     "gpt-5.1-codex-mini": 0.33,
+    "gpt-5.4-mini": 0.0,
     "gpt-5-mini": 0.0,
     "gpt-4.1": 0.0,
     # Gemini -----------------------------------------------------------------

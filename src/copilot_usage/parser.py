@@ -8,6 +8,7 @@ aggregates.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -28,6 +29,16 @@ from copilot_usage.models import (
 
 _DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Path = Path.home() / ".copilot" / "config.json"
+
+_RESUME_INDICATOR_TYPES: frozenset[str] = frozenset(
+    {
+        EventType.SESSION_RESUME,
+        EventType.USER_MESSAGE,
+        EventType.ASSISTANT_MESSAGE,
+    }
+)
+
+_EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
 
 
 def _infer_model_from_metrics(metrics: dict[str, ModelMetrics]) -> str | None:
@@ -234,12 +245,6 @@ def build_session_summary(
     name = _extract_session_name(session_dir) if session_dir else None
 
     # --- Detect resumed session (events after last shutdown) --------------
-    _RESUME_INDICATOR_TYPES: set[str] = {
-        EventType.SESSION_RESUME,
-        EventType.USER_MESSAGE,
-        EventType.ASSISTANT_MESSAGE,
-    }
-
     session_resumed = False
     post_shutdown_output_tokens = 0
     post_shutdown_turn_starts = 0
@@ -365,10 +370,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         summary.events_path = events_path
         summaries.append(summary)
 
-    def _sort_key(s: SessionSummary) -> str:
-        if s.start_time is None:
-            return ""
-        return s.start_time.isoformat()
+    def _sort_key(s: SessionSummary) -> datetime:
+        return s.start_time if s.start_time is not None else _EPOCH
 
     summaries.sort(key=_sort_key, reverse=True)
     return summaries
