@@ -546,11 +546,16 @@ class TestPureActiveSessionActivityE2E:
 
     def test_live_shows_pure_active_session(self) -> None:
         """Pure active session appears in the live view."""
+        import re
+
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        lines = result.output.splitlines()
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        lines = clean.splitlines()
         active_line = next(line for line in lines if "pure-act" in line)
-        assert "2" in active_line  # user_messages shown in Messages column
+        # Live table columns: Session ID | Name | Model | Running | Messages | Output Tokens | CWD
+        cols = [c.strip() for c in active_line.split("│")]
+        assert cols[5] == "2", f"Messages column: expected '2', got '{cols[5]}'"
 
     def test_session_detail_shows_active(self) -> None:
         """Pure active session detail shows active status."""

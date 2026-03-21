@@ -1282,14 +1282,21 @@ class TestRenderFullSummary:
                 )
             },
         )
+        import re
+
         output = _capture_full_summary([session])
         assert "Active Sessions" in output
-        # The active section should display the non-zero counts for this session
-        lines = output.splitlines()
+        # Strip ANSI codes and split on │ to validate the correct columns
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
         pure_active_line = next(line for line in lines if "Pure Active" in line)
-        assert "3" in pure_active_line  # active_model_calls
-        assert "4" in pure_active_line  # active_user_messages
-        assert "1.5K" in pure_active_line  # active_output_tokens (format_tokens)
+        # Active Sessions columns: Name | Model | Model Calls | User Msgs | Output Tokens | Running Time
+        cols = [c.strip() for c in pure_active_line.split("│")]
+        assert cols[3] == "3", f"Model Calls column: expected '3', got '{cols[3]}'"
+        assert cols[4] == "4", f"User Msgs column: expected '4', got '{cols[4]}'"
+        assert cols[5] == "1.5K", (
+            f"Output Tokens column: expected '1.5K', got '{cols[5]}'"
+        )
 
 
 # ---------------------------------------------------------------------------
