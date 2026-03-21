@@ -25,6 +25,7 @@ from copilot_usage.models import (
     UserMessageData,
     merge_model_metrics,
 )
+from copilot_usage.pricing import lookup_model_pricing
 
 __all__ = [
     "format_duration",
@@ -111,6 +112,19 @@ def _estimated_output_tokens(session: SessionSummary) -> int:
     return sum(m.usage.outputTokens for m in session.model_metrics.values())
 
 
+def _estimate_premium_cost(model: str | None, calls: int) -> str:
+    """Return a ``~``-prefixed estimated premium cost string.
+
+    Uses :func:`lookup_model_pricing` to look up the multiplier for *model*
+    and multiplies by *calls*.  Returns ``"—"`` when *model* is ``None``.
+    """
+    if model is None:
+        return "—"
+    pricing = lookup_model_pricing(model)
+    cost = round(calls * pricing.multiplier)
+    return f"~{cost}"
+
+
 def _format_session_running_time(session: SessionSummary) -> str:
     """Return a human-readable running time for *session*.
 
@@ -151,6 +165,7 @@ def render_live_sessions(
     table.add_column("Model", style="magenta")
     table.add_column("Running", style="yellow", justify="right")
     table.add_column("Messages", style="blue", justify="right")
+    table.add_column("Est. Cost", style="green", justify="right")
     table.add_column("Output Tokens", style="red", justify="right")
     table.add_column("CWD", style="dim")
 
@@ -169,10 +184,12 @@ def render_live_sessions(
             # Resumed/active session with post-resume stats (even when 0)
             messages = str(s.active_user_messages)
             output_tok = s.active_output_tokens
+            est_cost = _estimate_premium_cost(s.model, s.active_model_calls)
         else:
             # Pure-active (never shut down): totals are already in model_metrics
             messages = str(s.user_messages)
             output_tok = _estimated_output_tokens(s)
+            est_cost = _estimate_premium_cost(s.model, s.model_calls)
 
         tokens = format_tokens(output_tok)
         cwd = s.cwd or "—"
@@ -183,6 +200,7 @@ def render_live_sessions(
             model,
             running,
             messages,
+            est_cost,
             tokens,
             cwd,
         )
@@ -921,11 +939,12 @@ def render_cost_view(
         grand_model_calls += s.model_calls
 
         if s.is_active:
+            est = _estimate_premium_cost(s.model, s.active_model_calls)
             table.add_row(
                 "  ↳ Since last shutdown",
                 s.model or "—",
                 "N/A",
-                "N/A",
+                est,
                 str(s.active_model_calls),
                 format_tokens(s.active_output_tokens),
             )
