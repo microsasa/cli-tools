@@ -4,6 +4,23 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## feat: enforce 90% coverage on new/changed lines in PRs — 2026-03-21
+
+**Problem**: CI only checked overall coverage (≥80%). A PR could add new code with zero tests and still pass as long as the average held.
+
+**Fix**: Added `diff-cover` to CI. After pytest generates `coverage.xml`, `diff-cover` checks that new/changed lines have ≥90% coverage. The diff-cover step is gated on `pull_request` events in CI, but can also be run locally with `uv run diff-cover coverage.xml --compare-branch=main --fail-under=90`.
+
+**Changes**:
+- Added `diff-cover` to dev dependencies
+- Added `--cov-report=xml` to pytest step
+- Added `fetch-depth: 0` to checkout (needed for git diff)
+- Added diff-cover step gated on `pull_request` event
+- Added `coverage.xml` to `.gitignore`
+
+Closes #63.
+
+---
+
 ## chore: adjust cron schedules for all workflows — 2026-03-21
 
 **Changes**:
