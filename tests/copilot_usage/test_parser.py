@@ -1999,7 +1999,7 @@ class TestExtractSessionName:
         plan.write_text("", encoding="utf-8")
         assert _extract_session_name(tmp_path) is None
 
-    def test_oserror_returns_none(self, tmp_path: Path) -> None:
+    def test_oserror_returns_none_and_logs(self, tmp_path: Path) -> None:
         plan = tmp_path / "plan.md"
         plan.write_text("# Title\n", encoding="utf-8")
 
@@ -2010,8 +2010,16 @@ class TestExtractSessionName:
                 raise OSError("denied")
             return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(Path, "read_text", _raise_os_error):
-            assert _extract_session_name(tmp_path) is None
+        from loguru import logger
+
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+        try:
+            with patch.object(Path, "read_text", _raise_os_error):
+                assert _extract_session_name(tmp_path) is None
+        finally:
+            logger.remove(handler_id)
+        assert any("Could not read session name" in msg for msg in log_messages)
 
 
 # ---------------------------------------------------------------------------
