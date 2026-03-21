@@ -133,10 +133,15 @@ def _estimate_premium_cost(model: str | None, calls: int) -> str:
 
     Uses :func:`lookup_model_pricing` to look up the multiplier for *model*
     and multiplies by *calls*.  Returns ``"—"`` when *model* is ``None``.
+
+    Warnings from :func:`lookup_model_pricing` (e.g. unknown models) are
+    suppressed so that normal CLI rendering never emits noise on stderr.
     """
     if model is None:
         return "—"
-    pricing = lookup_model_pricing(model)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        pricing = lookup_model_pricing(model)
     cost = round(calls * pricing.multiplier)
     return f"~{cost}"
 
@@ -914,8 +919,8 @@ def render_cost_view(
     """Render per-session, per-model cost breakdown.
 
     Filters sessions by date range when *since* and/or *until* are given.
-    For active sessions, appends a "↳ Since last shutdown" row with N/A
-    for premium and the active model calls / output tokens.
+    For active sessions, appends a "↳ Since last shutdown" row with an
+    estimated premium cost and the active model calls / output tokens.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)

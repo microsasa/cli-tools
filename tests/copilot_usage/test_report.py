@@ -25,6 +25,7 @@ from copilot_usage.models import (
 from copilot_usage.report import (
     _aggregate_model_metrics,
     _build_event_details,
+    _estimate_premium_cost,
     _event_type_label,
     _filter_sessions,
     _format_detail_duration,
@@ -1962,6 +1963,56 @@ class TestRenderCostView:
         assert cols[6] == "0", (
             f"Output Tokens in active row should be 0, got '{cols[6]}'"
         )
+
+    def test_active_session_unknown_model_no_warning(self) -> None:
+        """Active session with an unknown model must not emit UserWarning."""
+        session = SessionSummary(
+            session_id="unknown-model-1234",
+            name="Unknown Model",
+            model="experimental-model-42",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=4,
+            user_messages=2,
+            active_model_calls=2,
+            active_output_tokens=300,
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            output = _capture_cost_view([session])
+        assert "Since last shutdown" in output
+        assert len(caught) == 0, (
+            f"Expected no UserWarning, got {[str(w.message) for w in caught]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _estimate_premium_cost tests
+# ---------------------------------------------------------------------------
+
+
+class TestEstimatePremiumCost:
+    """Tests for _estimate_premium_cost helper."""
+
+    def test_none_model_returns_dash(self) -> None:
+        assert _estimate_premium_cost(None, 5) == "—"
+
+    def test_known_model_returns_estimate(self) -> None:
+        # claude-opus-4.6 has a 3× multiplier → 3 calls × 3.0 = ~9
+        assert _estimate_premium_cost("claude-opus-4.6", 3) == "~9"
+
+    def test_unknown_model_no_warning(self) -> None:
+        """Unknown model degrades to 1× multiplier without emitting warnings."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            result = _estimate_premium_cost("totally-unknown-model-xyz", 7)
+        assert result == "~7"  # 7 calls × 1.0 = ~7
+        assert len(caught) == 0, (
+            f"Expected no UserWarning, got {[str(w.message) for w in caught]}"
+        )
+
+    def test_zero_calls_returns_zero(self) -> None:
+        assert _estimate_premium_cost("claude-sonnet-4", 0) == "~0"
 
 
 class TestRenderFullSummaryHelperReuse:
