@@ -1,7 +1,7 @@
 ---
-# Daily code health analysis
+# Code health analysis — every 6 hours
 on:
-  schedule: daily
+  schedule: every 6 hours
   workflow_dispatch:
 
 permissions:

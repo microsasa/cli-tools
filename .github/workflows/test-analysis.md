@@ -1,7 +1,7 @@
 ---
-# Weekly test suite analysis
+# Test suite analysis — every 6 hours
 on:
-  schedule: weekly on monday
+  schedule: every 6 hours
   workflow_dispatch:
 
 permissions:

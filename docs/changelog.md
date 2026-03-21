@@ -4,6 +4,19 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## chore: adjust cron schedules for all workflows — 2026-03-21
+
+**Changes**:
+- Code-health: daily → every 6 hours (`:29` past the hour)
+- Test-analysis: weekly → every 6 hours (`:24` past the hour)
+- Pipeline orchestrator: every 5 min → every 30 min (`:00` and `:30`). The orchestrator is mostly event-driven (`workflow_run` triggers); cron is just a safety net.
+
+All schedules are offset to avoid collisions.
+
+Closes #217.
+
+---
+
 ## fix: skip quality gate dispatch if PR needs rebase + request Copilot review + quality gate in-flight check — 2026-03-21
 
 **Problem 1 (#211)**: The orchestrator dispatched the quality gate and rebased the PR in the same run. Race condition: quality gate agent takes minutes, rebase completes in seconds. Quality gate could evaluate pre-rebase code.
