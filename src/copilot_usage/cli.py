@@ -16,9 +16,11 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 from watchdog.events import FileSystemEventHandler  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
+from copilot_usage import __version__
 from copilot_usage.models import SessionSummary
 from copilot_usage.parser import (
     build_session_summary,
@@ -35,6 +37,20 @@ from copilot_usage.report import (
 )
 
 _DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
+
+console = Console()
+
+
+def _print_version_header(target: Console | None = None) -> None:
+    """Print 'Copilot Usage' left-aligned with version right-aligned."""
+    c = target or console
+    title = "Copilot Usage"
+    version_text = f"v{__version__}"
+    header = Text()
+    header.append(title, style="bold")
+    header.append(" " * max(1, c.width - len(title) - len(version_text)))
+    header.append(version_text, style="dim")
+    c.print(header)
 
 
 def _ensure_aware(dt: datetime | None) -> datetime | None:
@@ -96,6 +112,7 @@ def _show_session_by_index(
 def _draw_home(console: Console, sessions: list[SessionSummary]) -> None:
     """Clear screen and render the home view."""
     console.clear()
+    _print_version_header(console)
     render_full_summary(sessions, target_console=console)
     console.print()
     _render_session_list(console, sessions)
@@ -176,10 +193,12 @@ def _interactive_loop(path: Path | None) -> None:
                     _write_prompt(_HOME_PROMPT)
                 elif view == "cost":
                     console.clear()
+                    _print_version_header(console)
                     render_cost_view(sessions, target_console=console)
                     _write_prompt(_BACK_PROMPT)
                 elif view == "detail" and detail_idx is not None:
                     console.clear()
+                    _print_version_header(console)
                     _show_session_by_index(console, sessions, detail_idx)
                     _write_prompt(_BACK_PROMPT)
 
@@ -246,6 +265,7 @@ def _interactive_loop(path: Path | None) -> None:
 
 
 @click.group(invoke_without_command=True)
+@click.version_option(version=__version__, prog_name="copilot-usage")
 @click.option(
     "--path",
     type=click.Path(exists=True, path_type=Path),
@@ -298,6 +318,7 @@ def summary(
     path: Path | None,
 ) -> None:
     """Show usage summary across all sessions."""
+    _print_version_header()
     path = path or ctx.obj.get("path")
     try:
         sessions = get_all_sessions(path)
@@ -323,6 +344,7 @@ def summary(
 @click.pass_context
 def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     """Show detailed usage for a specific session."""
+    _print_version_header()
     path = path or ctx.obj.get("path")
     try:
         event_paths = discover_sessions(path)
@@ -398,6 +420,7 @@ def cost(
     path: Path | None,
 ) -> None:
     """Show premium request costs from shutdown data."""
+    _print_version_header()
     path = path or ctx.obj.get("path")
     try:
         sessions = get_all_sessions(path)
@@ -427,6 +450,7 @@ def cost(
 @click.pass_context
 def live(ctx: click.Context, path: Path | None) -> None:
     """Show usage for active sessions."""
+    _print_version_header()
     path = path or ctx.obj.get("path")
     try:
         sessions = get_all_sessions(path)

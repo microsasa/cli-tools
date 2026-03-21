@@ -7,7 +7,7 @@ packages = ["src/copilot_usage"]
 
 [project]
 name = "cli-tools"
-version = "0.1.0"
+version = "0.0.1"
 description = "Python CLI tools monorepo"
 readme = "README.md"
 requires-python = ">=3.12"
