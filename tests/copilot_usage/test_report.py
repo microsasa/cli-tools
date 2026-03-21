@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -274,6 +275,122 @@ class TestRenderLiveSessions:
         output = _capture_output([session])
         # Should show minutes (from last_resume_time), NOT days (from start_time)
         assert "2d" not in output and "48h" not in output
+
+    def test_resumed_session_shows_active_fields(self) -> None:
+        """Resumed session should show active_user_messages and active_output_tokens."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="aabbccdd-eeee-ffff-aaaa-bbbbbbbbbbbb",
+            name="Resumed Task",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(hours=3),
+            last_resume_time=now - timedelta(minutes=10),
+            # Historical totals (from shutdown events)
+            user_messages=263,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=200_000),
+                )
+            },
+            # Post-resume activity
+            active_user_messages=91,
+            active_output_tokens=35_000,
+            active_model_calls=12,
+        )
+        output = _capture_output([session])
+        # Should show the active-period values, not historical totals.
+        # Use word-boundary regex so assertions are not fooled by
+        # substring matches in session IDs, names, or other columns.
+        assert re.search(r"\b91\b", output), "active_user_messages (91) not found"
+        assert "35.0K" in output  # active_output_tokens
+        assert not re.search(r"\b263\b", output), (
+            "historical total (263) should not appear"
+        )
+        assert "200.0K" not in output  # historical tokens should NOT appear
+
+    def test_active_session_without_last_resume_time_shows_active_fields(self) -> None:
+        """Active session with active_* but no last_resume_time should use active fields."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="no-resume-event-1234",
+            name="Active Without Explicit Resume",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(hours=2),
+            # Historical totals accumulated before the current active period
+            user_messages=263,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=200_000),
+                )
+            },
+            # Current active-period activity, even though last_resume_time is None
+            active_user_messages=91,
+            active_output_tokens=35_000,
+            active_model_calls=12,
+        )
+        output = _capture_output([session])
+        # Should show the active-period values, not historical totals,
+        # even when last_resume_time is None.
+        assert re.search(r"\b91\b", output), "active_user_messages (91) not found"
+        assert "35.0K" in output  # active_output_tokens
+        assert not re.search(r"\b263\b", output), (
+            "historical total (263) should not appear"
+        )
+        assert "200.0K" not in output  # historical tokens should NOT appear
+
+    def test_pure_active_session_uses_totals(self) -> None:
+        """Pure-active session (no prior shutdown) should still use totals."""
+        now = datetime.now(tz=UTC)
+        session = _make_session(
+            session_id="pure_active_session",
+            user_messages=12,
+            output_tokens=8_000,
+            start_time=now - timedelta(minutes=5),
+        )
+        # active_user_messages and active_output_tokens default to 0
+        output = _capture_output([session])
+        assert re.search(r"\b12\b", output)  # user_messages
+        assert "8.0K" in output  # from model_metrics
+
+    def test_resumed_session_zero_activity_shows_zeros(self) -> None:
+        """Resumed session with zero post-resume activity shows 0, not historical totals."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="aabbccdd-eeee-ffff-aaaa-cccccccccccc",
+            name="Just Resumed",
+            model="claude-sonnet-4",
+            is_active=True,
+            start_time=now - timedelta(hours=1),
+            last_resume_time=now - timedelta(seconds=30),
+            user_messages=150,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100_000),
+                )
+            },
+            # Zero post-resume activity
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        output = _capture_output([session])
+        # Should show 0 for messages (active), not 150 (historical)
+        assert not re.search(r"\b150\b", output), (
+            "historical total (150) should not appear"
+        )
+        assert "100.0K" not in output  # historical tokens should NOT appear
+        # And should explicitly render zeros for the active period
+        session_line = next(
+            (line for line in output.splitlines() if "Just Resumed" in line),
+            "",
+        )
+        # Expect at least two whole-word zeros on the session row (Messages and Output Tokens)
+        zeros_on_row = re.findall(r"\b0\b", session_line)
+        assert len(zeros_on_row) >= 2, (
+            "resumed session row should show 0 for both messages and output tokens"
+        )
 
 
 # ---------------------------------------------------------------------------
