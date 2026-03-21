@@ -452,8 +452,8 @@ Never squash merge — it loses commit history and the user gets angry. Set merg
 ### 10. Issues are specs
 Issues describe WHAT to do, not HOW. The implementer agent reads the issue and decides the implementation.
 
-### 11. `labels:` on `create-pull-request` config is broken (gh-aw runtime bug)
-The `labels` field compiles into the lock file and the handler reads it, but the post-creation label API call fails non-deterministically with a node ID resolution error. Worse, the tool description tells the agent "Labels will be automatically added" — so the agent stops including labels in its own call. Do NOT use `labels:` config. Instead, instruct the agent to include labels in the `create_pull_request` call. Tracked in #108.
+### 11. ~~`labels:` on `create-pull-request` config is broken~~ (resolved)
+~~The `labels` field compiles into the lock file and the handler reads it, but the post-creation label API call fails non-deterministically with a node ID resolution error.~~ **Update (2026-03-21)**: Investigation found that `labels` is officially documented and supported in gh-aw. The "node ID resolution error" was never properly investigated and may have been misattributed to the auto-merge step (which does use node IDs). Re-enabled `labels: [aw]` on the implementer. The `labels` field applies labels via REST API after PR creation — use it for reliable labeling instead of depending on agent instructions. Closed #108.
 
 ### 12. Review thread IDs are invalidated by pushes
 Pushing code to a PR branch can invalidate GraphQL thread IDs. If the responder pushes before resolving threads, the resolve calls fail with stale node IDs. Always resolve threads BEFORE pushing.
@@ -487,6 +487,20 @@ Not all safe output handlers resolve `target` the same way. `submit-pull-request
 
 ### 22. Adding a trigger to `on:` requires updating the job `if:` condition
 If a job has an `if:` condition that gates on `github.event_name`, adding a new trigger to `on:` is not enough — the `if:` must also include the new event name. The orchestrator had this bug twice: first when switching quality gate to `workflow_dispatch`, then when adding `schedule`. The cron fired correctly but the job was skipped because `'schedule'` wasn't in the `if:` condition. **Always check for `event_name` gates when adding triggers.**
+### 23. `tools:` block in shared imports restricts the entire agent's tool allowlist
+Adding a `tools:` block (e.g., `tools: bash: [cat, grep, jq]`) to a shared import causes `gh aw compile` to switch from `--allow-all-tools` to a restricted `--allow-tool shell(...)` list in the compiled lock file. This affects the ENTIRE agent, not just the shared import's step. The agent gets "Permission denied" on any command not in the explicit list — including `uv`, `python3`, `pip`, `curl`, and `git fetch`. Since only the importing workflow is affected, the bug manifests as one agent failing while others work fine — it looks non-deterministic but is actually a consistent config issue. **Fix**: never add `tools:` blocks to shared imports. The pre-fetch step runs as a regular workflow step (not agent shell), so it doesn't need tool permissions.
+
+### 24. `gh run list --status` only accepts a single value
+The `--status` flag is type `string`, not array. Passing `--status=in_progress --status=queued` only uses the **last** value. To filter for multiple statuses, skip `--status` entirely and filter client-side with `--json databaseId,status --jq '[.[] | select(.status == "in_progress" or .status == "queued")]'`.
+
+### 25. `cancel-in-progress: true` is dangerous for workflows with side effects
+If a workflow modifies external state (labels, dispatches) and `cancel-in-progress: true` kills it mid-flight, the side effects may be partially applied. Example: orchestrator labels an issue `aw-dispatched` then gets cancelled before dispatching the implementer — the issue is orphaned. Use `cancel-in-progress: false` for workflows with non-atomic side effects.
+
+### 26. Quality gate approval label desyncs from actual approval state
+Branch protection's `dismiss_stale_reviews: true` dismisses the quality gate's APPROVE review when new code is pushed, but the `aw-quality-gate-approved` label persists. The orchestrator sees the label and skips re-dispatching the quality gate, leaving the PR stuck in BLOCKED state. Labels are hints, not source of truth — always verify actual review state.
+
+### 27. Shared imports use `imports:` + `steps:` pattern
+To pre-fetch data before the agent runs, create a shared `.md` file with a `steps:` block in the frontmatter. The importing workflow uses `imports: [shared/filename.md]`. The steps run as regular workflow steps (with full `gh` CLI access and `GITHUB_TOKEN`), writing data to `/tmp/gh-aw/` for the agent to read. This bypasses MCP tool limitations. Based on the pattern from `github/gh-aw`'s own `copilot-pr-data-fetch.md`.
 
 </details>
 
@@ -540,9 +554,9 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 | `code-health.md` | schedule (daily) / manual | Find refactoring/cleanup opportunities | `create-issue` (max 2), `dispatch-workflow` (implementer) |
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
-| `review-responder.md` | `pull_request_review` (moving to `workflow_dispatch`) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
+| `review-responder.md` | `workflow_dispatch` (PR number) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
 | `quality-gate.md` | `workflow_dispatch` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
-| `pipeline-orchestrator.yml` | `workflow_run` / `push` / `pull_request_review` / `workflow_dispatch` | Dispatch implementer/ci-fixer/responder/quality-gate, resolve threads, rebase PRs | N/A (bash, not gh-aw) |
+| `pipeline-orchestrator.yml` | `workflow_run` / `pull_request_review` / `workflow_dispatch` / `schedule` | Dispatch implementer/ci-fixer/responder/quality-gate, resolve threads, rebase PRs | N/A (bash, not gh-aw) |
 
 ### Loop prevention
 
@@ -698,5 +712,21 @@ The enhanced PR rescue (#116) went through three complete rewrites:
   - Don't over-specify agent instructions — the simple original version worked; adding explicit API calls and ordering constraints broke it.
   - `workflow_dispatch` is the right trigger for the responder — the orchestrator decides when to run it, eliminating trigger loops.
   - Always verify claims by reading actual data (run logs, thread state) before proceeding.
+
+### 2026-03-20/21 — Pre-fetch pattern, responder fix, duplicate dispatch fix
+
+- **PR #186**: Fixed responder's inability to read review comments. MCP `pull_request_read` returns `[]` in gh-aw sandbox. Solution: shared import (`shared/fetch-review-comments.md`) runs `gh api graphql` BEFORE the agent starts, writes threads to `/tmp/gh-aw/review-data/unresolved-threads.json`.
+- **Critical bug found and fixed**: The shared import initially included a `tools:` block with an allowlist of shell commands. This caused `gh aw compile` to switch from `--allow-all-tools` to `--allow-tool shell(cat) --allow-tool shell(grep) ...` in the lock file. The agent got "Permission denied" on everything not in the list (uv, python3, pip, curl, git fetch). Only the responder was affected because only it imported the shared file. Fix: removed the `tools:` block entirely. Same class of bug as pitfall #13.
+- **Pre-fetch pattern tested end-to-end**: Responder found and addressed review comments on PRs #172 and #177. Both subsequently passed quality gate and auto-merged. First successful responder runs with both comment reading AND CI validation.
+- **PR #190**: Fixed duplicate implementer dispatches. Orchestrator was dispatching multiple implementers in quick succession because: (1) `push` trigger fired on every merge, (2) `cancel-in-progress: true` killed runs mid-flight after labeling, (3) no check for in-flight implementer. Fix: removed `push` trigger, switched to `cancel-in-progress: false`, added in-flight check via `gh run list` with jq filter. Copilot review caught that `--status` only accepts a single value — fixed to client-side jq filter. Also changed API error fallback from "0" (fail open) to "1" (fail safe).
+- **Quality gate label desync discovered**: `dismiss_stale_reviews: true` dismisses the quality gate's approval when new code is pushed, but the `aw-quality-gate-approved` label persists. Orchestrator sees label, skips quality gate, PR stays stuck. Filed issue #187.
+- **Issues filed**: #183 (astral.sh blocked — not needed), #184 (audit workflows — not needed), #187 (quality gate label/approval desync).
+- **Issues closed**: #180 (MCP empty comments), #164 (duplicate dispatches).
+- **Key lessons**:
+  - `tools:` blocks in shared imports affect the entire compiled agent, not just the import's step.
+  - `cancel-in-progress: true` + side effects = orphaned state. Use `false` for workflows that label/dispatch.
+  - `gh run list --status` is single-value — use jq for multi-status filtering.
+  - Labels are hints, not source of truth — always verify actual state (review approval, run status).
+  - When a bug looks non-deterministic (one agent fails, others don't), it's almost always a config difference — find it.
 
 </details>
