@@ -4,6 +4,21 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: quality gate waits for Copilot review and checks actual approval state — 2026-03-21
+
+**Problem 1 (#178)**: The orchestrator dispatched the quality gate as soon as CI was green and threads were resolved, without checking whether Copilot had reviewed yet. The quality gate approved PRs before Copilot's review arrived — then Copilot's comments went unaddressed because the PR was already approved/merged.
+
+**Problem 2 (#187)**: The orchestrator checked for the `aw-quality-gate-approved` label to skip re-dispatch. But `dismiss_stale_reviews: true` in branch protection dismisses the approval when new code is pushed — while the label persists. The orchestrator saw the stale label and skipped the quality gate, leaving the PR stuck with no valid approval.
+
+**Fix**: Replaced the label-based quality gate check with three verification steps:
+1. **Copilot review exists** — check `latestReviews` for `copilot-pull-request-reviewer` on the current head commit. Skip if missing.
+2. **Copilot review not in progress** — check `gh run list` for active "Copilot code review" runs. Skip if one is running.
+3. **Valid approval check** — check `latestReviews` for a non-dismissed APPROVE from the quality gate's token owner (resolved via `github.repository_owner`) on the current head commit. Only skip dispatch if a valid approval exists.
+
+Fixes #178, #187. Follow-up: #203 (no fallback if Copilot review never runs).
+
+---
+
 ## fix: re-add labels config to implementer — 2026-03-21
 
 **Problem**: The `labels: [aw]` config on `create-pull-request` was removed weeks ago due to a vague "node ID resolution error" that was never properly investigated. Without it, labeling depends on the agent including labels in its call — which is non-deterministic. Some PRs were created without the `aw` label.
