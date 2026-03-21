@@ -682,6 +682,7 @@ def _render_model_table(
     table.add_column("Input Tokens", justify="right")
     table.add_column("Output Tokens", justify="right")
     table.add_column("Cache Read", justify="right")
+    table.add_column("Cache Write", justify="right")
 
     for model_name in sorted(merged):
         mm = merged[model_name]
@@ -692,6 +693,7 @@ def _render_model_table(
             format_tokens(mm.usage.inputTokens),
             format_tokens(mm.usage.outputTokens),
             format_tokens(mm.usage.cacheReadTokens),
+            format_tokens(mm.usage.cacheWriteTokens),
         )
 
     console.print(table)

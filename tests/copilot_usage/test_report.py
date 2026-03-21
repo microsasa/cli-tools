@@ -31,6 +31,7 @@ from copilot_usage.report import (
     _format_detail_duration,
     _format_relative_time,
     _format_session_running_time,
+    _render_model_table,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -2387,3 +2388,57 @@ class TestFilterSessionsReversedDateRange:
             result = _filter_sessions([session], since=since, until=until)
         assert len(result) == 1
         assert len(caught) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #208 — _render_model_table shows Cache Write column
+# ---------------------------------------------------------------------------
+
+
+class TestRenderModelTable:
+    """Verify _render_model_table renders the Cache Write column."""
+
+    def test_cache_write_column_present(self) -> None:
+        """Cache Write header and formatted value appear in output."""
+        session = SessionSummary(
+            session_id="cw-test",
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=3),
+                    usage=TokenUsage(
+                        inputTokens=10_000,
+                        outputTokens=2_000,
+                        cacheReadTokens=8_000,
+                        cacheWriteTokens=5_000,
+                    ),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        assert "Cache Write" in output
+        assert "5.0K" in output
+
+    def test_cache_write_zero_renders(self) -> None:
+        """Zero cacheWriteTokens still produces a Cache Write column."""
+        session = SessionSummary(
+            session_id="cw-zero",
+            model_metrics={
+                "gpt-5.1": ModelMetrics(
+                    requests=RequestMetrics(count=1, cost=1),
+                    usage=TokenUsage(
+                        inputTokens=100,
+                        outputTokens=50,
+                        cacheReadTokens=0,
+                        cacheWriteTokens=0,
+                    ),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        assert "Cache Write" in output
