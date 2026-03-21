@@ -51,6 +51,7 @@ class TestKnownPricing:
             ("gpt-5.1-codex-max", 1.0),
             ("gpt-4.1", 0.0),
             ("gpt-5-mini", 0.0),
+            ("gpt-5.4-mini", 0.0),
             ("gemini-3-pro-preview", 1.0),
         ],
     )
@@ -64,6 +65,7 @@ class TestKnownPricing:
             ("claude-sonnet-4.6", PricingTier.STANDARD),
             ("claude-haiku-4.5", PricingTier.LIGHT),
             ("gpt-5-mini", PricingTier.LIGHT),
+            ("gpt-5.4-mini", PricingTier.LIGHT),
         ],
     )
     def test_known_tiers(self, model: str, expected_tier: PricingTier) -> None:
