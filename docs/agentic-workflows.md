@@ -502,6 +502,18 @@ Branch protection's `dismiss_stale_reviews: true` dismisses the quality gate's A
 ### 27. Shared imports use `imports:` + `steps:` pattern
 To pre-fetch data before the agent runs, create a shared `.md` file with a `steps:` block in the frontmatter. The importing workflow uses `imports: [shared/filename.md]`. The steps run as regular workflow steps (with full `gh` CLI access and `GITHUB_TOKEN`), writing data to `/tmp/gh-aw/` for the agent to read. This bypasses MCP tool limitations. Based on the pattern from `github/gh-aw`'s own `copilot-pr-data-fetch.md`.
 
+### 28. Don't dispatch quality gate until Copilot has reviewed the current commit
+Copilot code review runs asynchronously. If the orchestrator dispatches the quality gate as soon as CI passes and threads are resolved, it can approve before Copilot reviews. Then Copilot's comments arrive after merge — too late. Always verify a Copilot review exists on the current head commit AND no Copilot review is in-progress before dispatching the quality gate. Use `latestReviews` in GraphQL to check review state and `gh run list` to check for active review runs.
+
+### 29. Check actual review approval state, not labels
+Labels like `aw-quality-gate-approved` persist even after `dismiss_stale_reviews` invalidates the approval. Never use labels as the source of truth for review state. Query `latestReviews` and verify the APPROVE review is on the current head commit and not dismissed. Labels are hints for humans, not gates for automation.
+
+### 30. Copilot code review always submits as COMMENTED
+GitHub Copilot code review never submits APPROVED or CHANGES_REQUESTED — always COMMENTED. This means: (1) Copilot reviews don't count toward required approvals, (2) they're never dismissed by `dismiss_stale_reviews`, (3) when checking if Copilot has reviewed, filter by author login, not by review state. The quality gate approval (from a PAT) is separate from Copilot's review — don't conflate them.
+
+### 31. Quality gate approval author is the PAT owner, not github-actions
+The quality gate uses `GH_AW_WRITE_TOKEN` (a PAT) for `submit-pull-request-review`. The approval appears as the PAT owner (e.g., the repo owner), not as `github-actions[bot]`. Use `${{ github.repository_owner }}` to derive the identity at runtime — never hardcode usernames. This same mistake was made three times in this project (thread resolution, approval detection, changelog docs) before being codified as a rule.
+
 </details>
 
 ---

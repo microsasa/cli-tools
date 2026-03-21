@@ -159,12 +159,13 @@ jobs:
           for PR in $PR_NUMBERS; do
             echo "::group::Checking CI and reviews for PR #${PR}"
 
-            # Query PR state: CI status, labels, review threads
+            # Query PR state: CI status, labels, review threads, reviews
             PR_DATA=$(gh api graphql -f query='
               query($owner: String!, $repo: String!, $pr: Int!) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $pr) {
                     headRefName
+                    headRefOid
                     labels(first: 15) { nodes { name } }
                     commits(last: 1) { nodes { commit {
                       statusCheckRollup { state contexts(first: 30) { nodes {
@@ -174,6 +175,11 @@ jobs:
                     reviewThreads(first: 100) { nodes {
                       id isResolved
                       comments(last: 1) { nodes { author { login } } }
+                    }}
+                    latestReviews(first: 10) { nodes {
+                      author { login }
+                      state
+                      commit { oid }
                     }}
                   }
                 }
@@ -185,6 +191,7 @@ jobs:
 
             LABELS=$(echo "$PR_DATA" | jq -r '[.data.repository.pullRequest.labels.nodes[].name]')
             BRANCH=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefName')
+            HEAD_SHA=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefOid')
 
             # Check CI status — look for the "check" job specifically
             CI_CONCLUSION=$(echo "$PR_DATA" | jq -r '
@@ -286,12 +293,40 @@ jobs:
 
             echo "  ✅ PR #${PR}: All threads resolved, CI passing."
 
-            # --- Step 4: Dispatch quality gate if not already approved ---
-            HAS_QG_APPROVED=$(echo "$LABELS" | jq -r 'if any(. == "aw-quality-gate-approved") then "yes" else "" end')
+            # --- Step 4: Dispatch quality gate if ready ---
+            # Check 1: Has Copilot reviewed the current head commit?
+            HAS_COPILOT_REVIEW=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
+              [.data.repository.pullRequest.latestReviews.nodes[]
+               | select(.author.login == "copilot-pull-request-reviewer")
+               | select(.commit.oid == $sha)]
+              | length > 0')
+
+            if [[ "$HAS_COPILOT_REVIEW" != "true" ]]; then
+              echo "  ⏳ PR #${PR}: Waiting for Copilot review on current commit. Skipping quality gate."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Check 2: Is a Copilot code review currently in progress for this commit?
+            COPILOT_REVIEW_RUNNING=$(gh run list --workflow="Copilot code review" --json headSha,status --jq --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha) | select(.status == "in_progress" or .status == "queued")] | length' 2>/dev/null || echo "1")
+            if [[ "$COPILOT_REVIEW_RUNNING" -gt 0 ]]; then
+              echo "  ⏳ PR #${PR}: Copilot review in progress. Skipping quality gate."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Check 3: Is there a valid (non-dismissed) approval on the current commit?
+            HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
+              [.data.repository.pullRequest.latestReviews.nodes[]
+               | select(.author.login == "${{ github.repository_owner }}")
+               | select(.state == "APPROVED")
+               | select(.commit.oid == $sha)]
+              | length > 0')
+
             HAS_QG_EVALUATED=$(echo "$LABELS" | jq -r 'if any(. == "aw-quality-gate-evaluated") then "yes" else "" end')
 
-            if [[ -n "$HAS_QG_APPROVED" ]]; then
-              echo "  ✅ PR #${PR}: Already quality-gate-approved. Auto-merge should handle it."
+            if [[ "$HAS_VALID_APPROVAL" == "true" ]]; then
+              echo "  ✅ PR #${PR}: Valid quality-gate approval on current commit. Auto-merge should handle it."
             elif [[ -n "$HAS_QG_EVALUATED" ]]; then
               echo "  ⏸️ PR #${PR}: Quality gate already evaluated (needs human review). Skipping."
             else
