@@ -64,8 +64,9 @@ class TestKnownPricing:
             ("claude-opus-4.5", PricingTier.PREMIUM),
             ("claude-sonnet-4.6", PricingTier.STANDARD),
             ("claude-haiku-4.5", PricingTier.LIGHT),
-            ("gpt-5-mini", PricingTier.LIGHT),
-            ("gpt-5.4-mini", PricingTier.LIGHT),
+            ("gpt-5-mini", PricingTier.FREE),
+            ("gpt-5.4-mini", PricingTier.FREE),
+            ("gpt-4.1", PricingTier.FREE),
         ],
     )
     def test_known_tiers(self, model: str, expected_tier: PricingTier) -> None:
@@ -123,3 +124,9 @@ class TestCategorizeModel:
 
     def test_light(self) -> None:
         assert categorize_model("claude-haiku-4.5") == PricingTier.LIGHT
+
+    def test_free(self) -> None:
+        assert categorize_model("gpt-5-mini") == PricingTier.FREE
+
+    def test_free_gpt_4_1(self) -> None:
+        assert categorize_model("gpt-4.1") == PricingTier.FREE

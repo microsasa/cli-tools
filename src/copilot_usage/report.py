@@ -6,6 +6,7 @@ the terminal.
 
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime, timedelta
 
 from rich.console import Console
@@ -569,6 +570,14 @@ def _filter_sessions(
     until: datetime | None,
 ) -> list[SessionSummary]:
     """Return sessions whose start_time falls within [since, until]."""
+    if since is not None and until is not None and since > until:
+        warnings.warn(
+            f"--since ({since.date()}) is after --until ({until.date()}); "
+            "no sessions will match.",
+            UserWarning,
+            stacklevel=3,
+        )
+
     if since is None and until is None:
         return sessions
 

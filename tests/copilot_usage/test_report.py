@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -2142,3 +2143,40 @@ class TestRenderTotalsSingularLabels:
         # "session" appears without trailing 's'
         stripped = output.replace("sessions", "")
         assert "session" in stripped
+
+
+# ---------------------------------------------------------------------------
+# Issue #161 — _filter_sessions reversed date range warning
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsReversedDateRange:
+    def test_reversed_since_until_warns(self) -> None:
+        """Passing since > until emits a UserWarning."""
+        session = SessionSummary(
+            session_id="s1",
+            start_time=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+        since = datetime(2026, 12, 31, tzinfo=UTC)
+        until = datetime(2026, 1, 1, tzinfo=UTC)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _filter_sessions([session], since=since, until=until)
+        assert result == []
+        assert len(caught) == 1
+        assert "--since" in str(caught[0].message)
+        assert "after" in str(caught[0].message)
+
+    def test_normal_range_no_warning(self) -> None:
+        """Passing since < until does NOT emit a warning."""
+        session = SessionSummary(
+            session_id="s1",
+            start_time=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        until = datetime(2026, 12, 31, tzinfo=UTC)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _filter_sessions([session], since=since, until=until)
+        assert len(result) == 1
+        assert len(caught) == 0

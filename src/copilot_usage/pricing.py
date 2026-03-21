@@ -37,6 +37,7 @@ class PricingTier(StrEnum):
     PREMIUM = "premium"
     STANDARD = "standard"
     LIGHT = "light"
+    FREE = "free"
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,8 @@ class ModelPricing(BaseModel):
 def _tier_from_multiplier(m: float) -> PricingTier:
     if m >= 3.0:
         return PricingTier.PREMIUM
+    if m == 0.0:
+        return PricingTier.FREE
     if m < 1.0:
         return PricingTier.LIGHT
     return PricingTier.STANDARD
