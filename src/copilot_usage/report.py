@@ -113,6 +113,21 @@ def _estimated_output_tokens(session: SessionSummary) -> int:
     return sum(m.usage.outputTokens for m in session.model_metrics.values())
 
 
+def _has_active_period_stats(session: SessionSummary) -> bool:
+    """Return True when *session* has meaningful active-period stats.
+
+    A session has active-period stats when it was resumed (``last_resume_time``
+    is set) **or** any of its ``active_*`` counters are positive.  When this
+    returns ``False`` callers should fall back to the session totals.
+    """
+    return (
+        session.last_resume_time is not None
+        or session.active_user_messages > 0
+        or session.active_output_tokens > 0
+        or session.active_model_calls > 0
+    )
+
+
 def _estimate_premium_cost(model: str | None, calls: int) -> str:
     """Return a ``~``-prefixed estimated premium cost string.
 
@@ -176,12 +191,7 @@ def render_live_sessions(
         model = s.model or "—"
         running = _format_session_running_time(s)
 
-        has_active_stats = (
-            s.last_resume_time is not None
-            or s.active_user_messages > 0
-            or s.active_output_tokens > 0
-        )
-        if has_active_stats:
+        if _has_active_period_stats(s):
             # Resumed/active session with post-resume stats (even when 0)
             messages = str(s.active_user_messages)
             output_tok = s.active_output_tokens
@@ -846,12 +856,7 @@ def _render_active_section(
         # or pure-active sessions processed by the current parser).
         # Fall back to session totals for pure-active sessions whose
         # active_* fields were never set (issue #132).
-        has_active_stats = (
-            s.last_resume_time is not None
-            or s.active_user_messages > 0
-            or s.active_output_tokens > 0
-        )
-        if has_active_stats:
+        if _has_active_period_stats(s):
             model_calls = str(s.active_model_calls)
             user_msgs = str(s.active_user_messages)
             output_tokens = format_tokens(s.active_output_tokens)
@@ -966,12 +971,7 @@ def render_cost_view(
         grand_model_calls += s.model_calls
 
         if s.is_active:
-            has_active = (
-                s.last_resume_time is not None
-                or s.active_user_messages > 0
-                or s.active_output_tokens > 0
-            )
-            if has_active:
+            if _has_active_period_stats(s):
                 cost_calls = s.active_model_calls
                 cost_tokens = s.active_output_tokens
             else:
