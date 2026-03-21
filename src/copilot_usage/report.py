@@ -28,6 +28,14 @@ from copilot_usage.models import (
 )
 from copilot_usage.pricing import lookup_model_pricing
 
+_EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """Return *dt* with UTC tzinfo attached when it is naive."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
 __all__ = [
     "format_duration",
     "format_tokens",
@@ -97,9 +105,7 @@ def _format_elapsed_since(start: datetime) -> str:
     Formats as ``Xh Ym`` when >= 1 hour, otherwise ``Ym Zs``.
     """
     now = datetime.now(tz=UTC)
-    # Ensure start is timezone-aware for subtraction
-    start_aware = start.replace(tzinfo=UTC) if start.tzinfo is None else start
-    delta = now - start_aware
+    delta = now - _ensure_aware(start)
     total_seconds = max(int(delta.total_seconds()), 0)
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -711,7 +717,9 @@ def _render_session_table(
 
     sorted_sessions = sorted(
         sessions,
-        key=lambda s: s.start_time.isoformat() if s.start_time else "",
+        key=lambda s: (
+            _ensure_aware(s.start_time) if s.start_time is not None else _EPOCH
+        ),
         reverse=True,
     )
 
@@ -861,8 +869,10 @@ def _render_active_section(
 
         # Use active_* fields when they are populated (resumed sessions
         # or pure-active sessions processed by the current parser).
-        # Fall back to session totals for pure-active sessions whose
-        # active_* fields were never set (issue #132).
+        # Fall back to session totals for older or externally-constructed
+        # SessionSummary objects whose active_* fields may still be at
+        # their defaults (the current parser always populates active_*
+        # for pure-active sessions via build_session_summary).
         if _has_active_period_stats(s):
             model_calls = str(s.active_model_calls)
             user_msgs = str(s.active_user_messages)

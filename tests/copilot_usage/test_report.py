@@ -31,6 +31,7 @@ from copilot_usage.report import (
     _format_detail_duration,
     _format_relative_time,
     _format_session_running_time,
+    _has_active_period_stats,
     _render_model_table,
     format_duration,
     format_tokens,
@@ -2442,3 +2443,74 @@ class TestRenderModelTable:
         _render_model_table(console, [session])
         output = buf.getvalue()
         assert "Cache Write" in output
+
+
+# ---------------------------------------------------------------------------
+# _has_active_period_stats
+# ---------------------------------------------------------------------------
+
+
+class TestHasActivePeriodStats:
+    """Tests for the _has_active_period_stats helper."""
+
+    def test_returns_true_with_last_resume_time(self) -> None:
+        """Resumed session with last_resume_time set returns True."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="resumed-session-1234",
+            is_active=True,
+            start_time=now - timedelta(hours=2),
+            last_resume_time=now - timedelta(minutes=5),
+            user_messages=50,
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        assert _has_active_period_stats(session) is True
+
+    def test_returns_true_with_active_user_messages(self) -> None:
+        """Session with positive active_user_messages returns True."""
+        session = SessionSummary(
+            session_id="active-msgs-1234",
+            is_active=True,
+            active_user_messages=5,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        assert _has_active_period_stats(session) is True
+
+    def test_returns_true_with_active_output_tokens(self) -> None:
+        """Session with positive active_output_tokens returns True."""
+        session = SessionSummary(
+            session_id="active-tokens-1234",
+            is_active=True,
+            active_user_messages=0,
+            active_output_tokens=1000,
+            active_model_calls=0,
+        )
+        assert _has_active_period_stats(session) is True
+
+    def test_returns_true_with_active_model_calls(self) -> None:
+        """Session with positive active_model_calls returns True."""
+        session = SessionSummary(
+            session_id="active-calls-1234",
+            is_active=True,
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=3,
+        )
+        assert _has_active_period_stats(session) is True
+
+    def test_returns_false_for_pure_active_never_shutdown(self) -> None:
+        """Pure-active session with no shutdown and all active_* counters zero returns False."""
+        session = SessionSummary(
+            session_id="pure-active-1234",
+            is_active=True,
+            start_time=datetime.now(tz=UTC) - timedelta(minutes=10),
+            user_messages=8,
+            model_calls=5,
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        assert _has_active_period_stats(session) is False
