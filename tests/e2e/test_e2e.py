@@ -27,10 +27,10 @@ def _wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestSummaryE2E:
     """Tests for the ``summary`` command."""
 
-    def test_finds_eight_sessions(self) -> None:
+    def test_finds_all_sessions(self) -> None:
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "8 sessions" in result.output
+        assert "9 sessions" in result.output
 
     def test_total_premium_requests(self) -> None:
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
@@ -62,12 +62,12 @@ class TestSummaryE2E:
     def test_model_calls_shown(self) -> None:
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "20 model calls" in result.output
+        assert "22 model calls" in result.output
 
     def test_user_messages_shown(self) -> None:
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "14 user messages" in result.output
+        assert "16 user messages" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +182,8 @@ class TestCorruptSessionE2E:
         """Summary still works when events.jsonl has malformed JSON lines."""
         result = CliRunner().invoke(main, ["summary", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        # 8 sessions total
-        assert "8 sessions" in result.output
+        # 9 sessions total
+        assert "9 sessions" in result.output
 
     def test_corrupt_session_appears_in_summary(self) -> None:
         """The corrupt session is parsed (valid lines kept) and shown."""
@@ -245,7 +245,7 @@ class TestSummaryDateFilterPartialE2E:
             ["summary", "--path", str(FIXTURES), "--since", "2020-01-01"],
         )
         assert result.exit_code == 0
-        assert "8 sessions" in result.output
+        assert "9 sessions" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +534,52 @@ class TestPureActiveSessionE2E:
         )
         assert result.exit_code == 0
         assert "Recent Events" in result.output
+
+
+# ---------------------------------------------------------------------------
+# pure active session with activity (regression for #154)
+# ---------------------------------------------------------------------------
+
+
+class TestPureActiveSessionActivityE2E:
+    """Regression: pure active session must show non-zero activity counts."""
+
+    def test_live_shows_pure_active_session(self) -> None:
+        """Pure active session appears in the live view."""
+        import re
+
+        result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        lines = clean.splitlines()
+        active_line = next(line for line in lines if "pure-act" in line)
+        # Live table columns: Session ID | Name | Model | Running | Messages | Output Tokens | CWD
+        cols = [c.strip() for c in active_line.split("│")]
+        assert cols[5] == "2", f"Messages column: expected '2', got '{cols[5]}'"
+
+    def test_session_detail_shows_active(self) -> None:
+        """Pure active session detail shows active status."""
+        result = CliRunner().invoke(
+            main, ["session", "pure-active", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "active" in result.output.lower()
+
+    def test_session_detail_shows_user_messages(self) -> None:
+        """Pure active session detail shows 2 user messages."""
+        result = CliRunner().invoke(
+            main, ["session", "pure-active", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "2 user messages" in result.output
+
+    def test_session_detail_shows_model_calls(self) -> None:
+        """Pure active session detail shows 2 model calls."""
+        result = CliRunner().invoke(
+            main, ["session", "pure-active", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "2 model calls" in result.output
 
 
 # ---------------------------------------------------------------------------

@@ -515,6 +515,27 @@ class TestBuildSessionSummaryActive:
         summary = build_session_summary(events, session_dir=sdir)
         assert summary.last_resume_time is None
 
+    def test_active_fields_populated(self, tmp_path: Path) -> None:
+        """Pure active session populates active_model_calls/user_messages/output_tokens."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _USER_MSG,  # second user message (same fixture reused)
+            _TURN_START_2,
+            _ASSISTANT_MSG_2,
+            _TOOL_EXEC,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events, session_dir=p.parent)
+        assert summary.is_active is True
+        assert summary.active_model_calls == 2
+        assert summary.active_user_messages == 2
+        assert summary.active_output_tokens == 350  # 150 + 200
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — resumed session (shutdown followed by more events)

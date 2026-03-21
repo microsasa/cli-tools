@@ -1,0 +1,10 @@
+{"type":"session.start","data":{"sessionId":"pure-active-0000-0000-000000000001","version":1,"producer":"copilot-agent","copilotVersion":"1.0.2","startTime":"2026-03-07T09:00:00.000Z","context":{"cwd":"/Users/testuser/active-project"}},"id":"pa-start","timestamp":"2026-03-07T09:00:00.000Z","parentId":null}
+{"type":"user.message","data":{"content":"First user message.","transformedContent":"First user message.","attachments":[],"interactionId":"pa-int-1"},"id":"pa-user1","timestamp":"2026-03-07T09:01:00.000Z","parentId":"pa-start"}
+{"type":"assistant.turn_start","data":{"turnId":"0","interactionId":"pa-int-1"},"id":"pa-turn-start-1","timestamp":"2026-03-07T09:01:01.000Z","parentId":"pa-user1"}
+{"type":"assistant.message","data":{"messageId":"pa-msg-1","content":"First assistant reply.","toolRequests":[],"interactionId":"pa-int-1","outputTokens":300},"id":"pa-asst1","timestamp":"2026-03-07T09:01:10.000Z","parentId":"pa-turn-start-1"}
+{"type":"assistant.turn_end","data":{"turnId":"0"},"id":"pa-turn-end-1","timestamp":"2026-03-07T09:01:11.000Z","parentId":"pa-asst1"}
+{"type":"user.message","data":{"content":"Second user message.","transformedContent":"Second user message.","attachments":[],"interactionId":"pa-int-2"},"id":"pa-user2","timestamp":"2026-03-07T09:02:00.000Z","parentId":"pa-turn-end-1"}
+{"type":"assistant.turn_start","data":{"turnId":"1","interactionId":"pa-int-2"},"id":"pa-turn-start-2","timestamp":"2026-03-07T09:02:01.000Z","parentId":"pa-user2"}
+{"type":"assistant.message","data":{"messageId":"pa-msg-2","content":"Second assistant reply.","toolRequests":[],"interactionId":"pa-int-2","outputTokens":400},"id":"pa-asst2","timestamp":"2026-03-07T09:02:10.000Z","parentId":"pa-turn-start-2"}
+{"type":"tool.execution_start","data":{"toolCallId":"pa-tc-1","toolName":"bash","arguments":{"command":"echo hello"}},"id":"pa-tool-start","timestamp":"2026-03-07T09:02:11.000Z","parentId":"pa-asst2"}
+{"type":"tool.execution_complete","data":{"toolCallId":"pa-tc-1","model":"claude-sonnet-4","interactionId":"pa-int-2","success":true},"id":"pa-tool-end","timestamp":"2026-03-07T09:02:12.000Z","parentId":"pa-tool-start"}

@@ -1262,6 +1262,42 @@ class TestRenderFullSummary:
         # Should show minutes (from last_resume_time), NOT days (from start_time)
         assert "3d" not in output and "72h" not in output
 
+    def test_active_section_shows_nonzero_activity(self) -> None:
+        """Active section renders the actual active_* field values, not zero."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="pure-active-abcdef",
+            name="Pure Active",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=10),
+            is_active=True,
+            user_messages=4,
+            model_calls=3,
+            active_model_calls=3,
+            active_user_messages=4,
+            active_output_tokens=1500,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1500),
+                )
+            },
+        )
+        import re
+
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+        # Strip ANSI codes and split on │ to validate the correct columns
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        pure_active_line = next(line for line in lines if "Pure Active" in line)
+        # Active Sessions columns: Name | Model | Model Calls | User Msgs | Output Tokens | Running Time
+        cols = [c.strip() for c in pure_active_line.split("│")]
+        assert cols[3] == "3", f"Model Calls column: expected '3', got '{cols[3]}'"
+        assert cols[4] == "4", f"User Msgs column: expected '4', got '{cols[4]}'"
+        assert cols[5] == "1.5K", (
+            f"Output Tokens column: expected '1.5K', got '{cols[5]}'"
+        )
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
