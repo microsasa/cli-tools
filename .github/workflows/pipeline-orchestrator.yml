@@ -166,6 +166,7 @@ jobs:
                   pullRequest(number: $pr) {
                     headRefName
                     headRefOid
+                    mergeStateStatus
                     labels(first: 15) { nodes { name } }
                     commits(last: 1) { nodes { commit {
                       statusCheckRollup { state contexts(first: 30) { nodes {
@@ -282,6 +283,14 @@ jobs:
 
             # Dispatch responder for unaddressed threads
             if [[ "$UNADDRESSED_COUNT" -gt 0 ]]; then
+              # Check if a responder is already running
+              RESP_RUNNING=$(gh run list --workflow=review-responder.lock.yml --json databaseId,status 2>/dev/null | jq -r '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length' 2>/dev/null || echo "1")
+              if [[ "$RESP_RUNNING" -gt 0 ]]; then
+                echo "  ⏳ PR #${PR}: Responder already in flight. Skipping dispatch."
+                echo "::endgroup::"
+                continue
+              fi
+
               if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
                 # Count review-response-N labels for round tracking
                 ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
@@ -308,6 +317,14 @@ jobs:
 
             echo "  ✅ PR #${PR}: All threads resolved, CI passing."
 
+            # --- Step 3.5: Skip quality gate if PR needs rebase ---
+            MERGE_STATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.mergeStateStatus')
+            if [[ "$MERGE_STATE" == "BEHIND" || "$MERGE_STATE" == "DIRTY" ]]; then
+              echo "  ⏳ PR #${PR}: PR is $MERGE_STATE — rebase needed before quality gate. Skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
             # --- Step 4: Dispatch quality gate if ready ---
             # Check 1: Has Copilot reviewed the current head commit?
             HAS_COPILOT_REVIEW=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
@@ -317,7 +334,10 @@ jobs:
               | length > 0')
 
             if [[ "$HAS_COPILOT_REVIEW" != "true" ]]; then
-              echo "  ⏳ PR #${PR}: Waiting for Copilot review on current commit. Skipping quality gate."
+              echo "  ⏳ PR #${PR}: No Copilot review on current commit. Requesting review."
+              if ! gh pr edit "$PR" --add-reviewer "@copilot" 2>&1; then
+                echo "  ⚠️ PR #${PR}: Failed to request Copilot review. Will retry next cycle."
+              fi
               echo "::endgroup::"
               continue
             fi
@@ -345,8 +365,14 @@ jobs:
             elif [[ -n "$HAS_QG_EVALUATED" ]]; then
               echo "  ⏸️ PR #${PR}: Quality gate already evaluated (needs human review). Skipping."
             else
-              echo "  🔍 PR #${PR}: Dispatching quality gate."
-              gh workflow run quality-gate.lock.yml -f pr_number="$PR"
+              # Check 4: Is a quality gate already running?
+              QG_RUNNING=$(gh run list --workflow=quality-gate.lock.yml --json databaseId,status 2>/dev/null | jq -r '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length' 2>/dev/null || echo "1")
+              if [[ "$QG_RUNNING" -gt 0 ]]; then
+                echo "  ⏳ PR #${PR}: Quality gate already in flight. Skipping dispatch."
+              else
+                echo "  🔍 PR #${PR}: Dispatching quality gate."
+                gh workflow run quality-gate.lock.yml -f pr_number="$PR"
+              fi
             fi
             echo "::endgroup::"
           done

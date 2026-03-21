@@ -4,6 +4,23 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: skip quality gate dispatch if PR needs rebase + request Copilot review + quality gate in-flight check — 2026-03-21
+
+**Problem 1 (#211)**: The orchestrator dispatched the quality gate and rebased the PR in the same run. Race condition: quality gate agent takes minutes, rebase completes in seconds. Quality gate could evaluate pre-rebase code.
+
+**Problem 2 (#203)**: If Copilot code review didn't trigger on a push (observed on PR #210 — responder pushed but Copilot never reviewed for 14+ minutes), the orchestrator waited forever. No way to programmatically trigger Copilot review was known. Found: `gh pr edit --add-reviewer @copilot` works (requires gh v2.88+). Safe to call repeatedly — if review is in progress, request is ignored.
+
+**Problem 3 (#213)**: The orchestrator didn't check if a quality gate was already running before dispatching. Multiple orchestrator runs (from `workflow_run` triggers) each dispatched the quality gate, wasting Opus inference tokens. Same class of bug as duplicate implementer (#164).
+
+**Fix**:
+1. Check `mergeStateStatus` before step 4 — if PR is `BEHIND` or `DIRTY`, skip quality gate, let rebase step handle it.
+2. When no Copilot review exists on current commit, proactively request one via `gh pr edit --add-reviewer @copilot`.
+3. Before dispatching quality gate, check if one is already in_progress/queued/waiting.
+
+Fixes #211, #203, #213.
+
+---
+
 ## fix: quality gate waits for Copilot review and checks actual approval state — 2026-03-21
 
 **Problem 1 (#178)**: The orchestrator dispatched the quality gate as soon as CI was green and threads were resolved, without checking whether Copilot had reviewed yet. The quality gate approved PRs before Copilot's review arrived — then Copilot's comments went unaddressed because the PR was already approved/merged.
