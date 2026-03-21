@@ -121,13 +121,17 @@ def _format_session_running_time(session: SessionSummary) -> str:
     return _format_elapsed_since(session.last_resume_time or session.start_time)
 
 
-def render_live_sessions(sessions: list[SessionSummary]) -> None:
+def render_live_sessions(
+    sessions: list[SessionSummary],
+    *,
+    target_console: Console | None = None,
+) -> None:
     """Render overview of active sessions only.
 
     Filters to ``is_active=True`` sessions.
     Shows running time as ``Xh Ym`` or ``Ym Zs``.
     """
-    console = Console()
+    console = target_console or Console()
 
     active = [s for s in sessions if s.is_active]
 
@@ -710,12 +714,14 @@ def render_summary(
     sessions: list[SessionSummary],
     since: datetime | None = None,
     until: datetime | None = None,
+    *,
+    target_console: Console | None = None,
 ) -> None:
     """Render the full summary report to the terminal using Rich.
 
     Filters sessions by date range when *since* and/or *until* are given.
     """
-    console = Console()
+    console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
 
     if not filtered:
