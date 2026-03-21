@@ -4,6 +4,69 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## fix: re-add labels config to implementer — 2026-03-21
+
+**Problem**: The `labels: [aw]` config on `create-pull-request` was removed weeks ago due to a vague "node ID resolution error" that was never properly investigated. Without it, labeling depends on the agent including labels in its call — which is non-deterministic. Some PRs were created without the `aw` label.
+
+**Investigation**: Read the gh-aw docs and source. The `labels` field is officially documented and supported — labels are applied via REST API after PR creation. The "node ID error" was likely misattributed (possibly from the `auto-merge` step which uses GraphQL node IDs, not from label application).
+
+**Fix**: Re-added `labels: [aw]` to `issue-implementer.md` and recompiled lock file. Labels are now applied by infrastructure, not dependent on agent behavior. Note: recompiling also introduced SHA pinning for `gh-aw-actions/setup` (`@v0.60.0` → `@SHA # v0.60.0`) — this is a compiler behavior change expected in future recompilations.
+
+Closes #108.
+
+---
+
+## fix: prevent duplicate implementer dispatches — 2026-03-21
+
+**Problem**: The orchestrator dispatched a new implementer on every trigger without checking if one was already running. When multiple triggers fired in quick succession (e.g., two PRs merging back-to-back via auto-merge), multiple implementers were dispatched for different issues. GitHub's concurrency group (`cancel-in-progress` was `true`) then cancelled intermediate runs, leaving issues labeled `aw-dispatched` but never worked on. Observed: 4 implementer dispatches in 10 minutes for issues #155, #160, #161, #181 — one cancelled, issues orphaned.
+
+**Root cause**: Three compounding issues: (1) the `push` trigger fired on every merge to main, causing rapid-fire orchestrator runs, (2) `cancel-in-progress: true` killed orchestrator runs mid-flight (potentially after labeling but before the implementer started), (3) no check for in-flight implementer runs.
+
+**Fix (PR #190)**:
+1. Removed `push` trigger — 5-minute cron covers post-merge dispatch without the rapid-fire problem.
+2. Changed `cancel-in-progress` to `false` — orchestrator runs queue instead of cancelling, so each run sees state left by the previous one.
+3. Added in-flight implementer check before dispatching — queries `gh run list` for `in_progress`/`queued`/`waiting` implementer runs and skips dispatch if any exist.
+4. Fail-safe: if the `gh run list` API call errors, defaults to "1" (assume something is running) rather than "0" (dispatch anyway).
+
+**Review finding**: `gh run list --status` only accepts a single value — passing it multiple times only uses the last one. Fixed by filtering client-side with `--json databaseId,status --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length'`. Caught by Copilot code reviewer.
+
+**Lesson**: `cancel-in-progress: true` is dangerous for workflows that modify external state (labels, dispatches) before completing. Use `false` when the workflow has side effects that must complete atomically.
+
+Fixes #164.
+
+---
+
+## fix: pre-fetch review comments via GraphQL — 2026-03-20/21
+
+**Problem**: The MCP `pull_request_read` tool returns empty `[]` for review comments inside the gh-aw agent sandbox. This was confirmed across multiple responder runs — the tool never reliably returns review comment data. The responder couldn't find comments to address.
+
+**Root cause**: Unknown upstream issue with MCP tool behavior in gh-aw sandbox. The GitHub GraphQL API works fine via `gh api graphql` in workflow steps.
+
+**Fix (PR #186)**:
+1. Created `.github/workflows/shared/fetch-review-comments.md` — a shared import that runs `gh api graphql` BEFORE the agent starts, writing unresolved review threads to `/tmp/gh-aw/review-data/unresolved-threads.json`.
+2. Updated `review-responder.md` to import the shared step and read from the pre-fetched file instead of using MCP tools.
+3. Added `databaseId` to GraphQL query so the agent can use `reply_to_pull_request_review_comment` with the correct comment ID.
+4. Bumped `comments(first: 10)` to `comments(first: 100)` — proper pagination tracked in issue #185.
+5. jq error handling: fail loudly on parse errors instead of silently writing `[]`.
+
+**Critical discovery — `tools:` block in shared imports**: The initial shared import included a `tools: bash:` block listing allowed shell commands. This caused `gh aw compile` to switch from `--allow-all-tools` to a restricted `--allow-tool` list in the lock file. The agent could only run commands explicitly listed (cat, grep, jq, etc.) — everything else got "Permission denied." This broke `uv sync`, `python3 --version`, `pip install`, `curl`, even `git fetch`. Only the responder was affected because only it imported the shared file. **Fix**: removed the `tools:` block entirely from the shared import. This is the same class of bug as pitfall #13 in agentic-workflows.md.
+
+**Tested**: Responder successfully found and addressed review comments on PRs #172 and #177. Both PRs subsequently passed quality gate and auto-merged — first end-to-end test of the pre-fetch pattern.
+
+Closes #180. Related: #183 (astral.sh — not needed), #184 (audit — astral.sh not needed).
+
+---
+
+## fix: quality gate label/approval desync — 2026-03-21
+
+**Problem**: The orchestrator checks for the `aw-quality-gate-approved` label to decide whether to dispatch the quality gate. But branch protection has `dismiss_stale_reviews: true` — when a new commit is pushed (e.g., by the responder or ci-fixer), GitHub automatically dismisses all existing approvals including the quality gate's APPROVE review. The label persists even though the approval is gone, so the orchestrator sees the label and skips the quality gate dispatch. PR stays BLOCKED with no valid approval.
+
+**Observed on PR #177**: Quality gate approved → responder pushed fix commit → GitHub dismissed approval → orchestrator saw label → skipped quality gate → PR stuck.
+
+**Fix**: Manually removed stale labels. Filed issue #187 to fix the orchestrator to check actual review state, not just labels. Proposed solution: agents remove `aw-quality-gate-approved` when they push, AND orchestrator verifies a non-dismissed approval exists.
+
+---
+
 ## fix: cron schedule skipped — missing from orchestrator if: condition — 2026-03-20
 
 **Problem**: PR #174 enabled a 5-minute cron on the orchestrator but didn't add `schedule` to the job's `if:` condition. Cron fired correctly but the job was immediately skipped every time.
