@@ -22,13 +22,13 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"b9b1d4c9873e57676d3d4c1863c16aecf1033ce5568c4146fdf839ebc2774f19","compiler_version":"v0.60.0","strict":true}
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"fb3ba76efad5d2eb36aa6647532141853cc339fd21245a061d31c8f3835f67e5","compiler_version":"v0.60.0","strict":true}
 
 name: "Test Suite Analysis"
 "on":
   schedule:
-  - cron: "24 1 * * 1"
-    # Friendly format: weekly on monday (scattered)
+  - cron: "24 */6 * * *"
+    # Friendly format: every 6 hours (scattered)
   workflow_dispatch:
 
 permissions: {}
@@ -50,7 +50,7 @@ jobs:
       secret_verification_result: ${{ steps.validate-secret.outputs.verification_result }}
     steps:
       - name: Setup Scripts
-        uses: github/gh-aw-actions/setup@v0.60.0
+        uses: github/gh-aw-actions/setup@998487a673ace02b3d9586e7511268089af88971 # v0.60.0
         with:
           destination: /opt/gh-aw/actions
       - name: Generate agentic run info
@@ -255,7 +255,7 @@ jobs:
       output_types: ${{ steps.collect_output.outputs.output_types }}
     steps:
       - name: Setup Scripts
-        uses: github/gh-aw-actions/setup@v0.60.0
+        uses: github/gh-aw-actions/setup@998487a673ace02b3d9586e7511268089af88971 # v0.60.0
         with:
           destination: /opt/gh-aw/actions
       - name: Checkout repository
@@ -847,7 +847,7 @@ jobs:
       total_count: ${{ steps.missing_tool.outputs.total_count }}
     steps:
       - name: Setup Scripts
-        uses: github/gh-aw-actions/setup@v0.60.0
+        uses: github/gh-aw-actions/setup@998487a673ace02b3d9586e7511268089af88971 # v0.60.0
         with:
           destination: /opt/gh-aw/actions
       - name: Download agent output artifact
@@ -954,7 +954,7 @@ jobs:
       process_safe_outputs_temporary_id_map: ${{ steps.process_safe_outputs.outputs.temporary_id_map }}
     steps:
       - name: Setup Scripts
-        uses: github/gh-aw-actions/setup@v0.60.0
+        uses: github/gh-aw-actions/setup@998487a673ace02b3d9586e7511268089af88971 # v0.60.0
         with:
           destination: /opt/gh-aw/actions
           safe-output-custom-tokens: 'true'
