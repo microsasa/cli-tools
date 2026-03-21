@@ -190,7 +190,7 @@ uv sync
 | Command | Description |
 |---|---|
 | `make check` | Run all checks (lint + typecheck + security + tests) |
-| `make test` | Unit tests (80% coverage enforced) + e2e tests |
+| `make test` | Unit tests (80% overall coverage enforced) + e2e tests |
 | `make test-unit` | Unit tests only with verbose output |
 | `make test-e2e` | E2E tests only |
 | `make lint` | Ruff lint + format check |
@@ -232,7 +232,8 @@ cli-tools/
 - **Pydantic v2** — runtime-validated data models
 - **Ruff** — linting + formatting
 - **Bandit** — security scanning
-- **pytest + pytest-cov** — testing (80% coverage minimum)
+- **pytest + pytest-cov** — testing (80% overall coverage minimum)
+- **diff-cover** — PRs must have ≥90% coverage on new/changed lines
 
 ## Future Tools
 

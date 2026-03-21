@@ -745,7 +745,9 @@ def test_group_path_propagates_to_live(tmp_path: Path) -> None:
         active=True,
     )
     runner = CliRunner()
-    result = runner.invoke(main, ["--path", str(tmp_path), "live"])
+    result = runner.invoke(
+        main, ["--path", str(tmp_path), "live"], env={"COLUMNS": "200"}
+    )
     assert result.exit_code == 0
     assert "grp_liv00" in result.output or "GrpLive" in result.output
 
