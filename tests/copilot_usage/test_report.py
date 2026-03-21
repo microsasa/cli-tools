@@ -2502,7 +2502,7 @@ class TestHasActivePeriodStats:
         assert _has_active_period_stats(session) is True
 
     def test_returns_false_for_pure_active_never_shutdown(self) -> None:
-        """Pure-active session with no shutdown and all zeros returns False."""
+        """Pure-active session with no shutdown and all active_* counters zero returns False."""
         session = SessionSummary(
             session_id="pure-active-1234",
             is_active=True,

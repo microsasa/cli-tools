@@ -863,9 +863,10 @@ def _render_active_section(
 
         # Use active_* fields when they are populated (resumed sessions
         # or pure-active sessions processed by the current parser).
-        # Fall back to session totals for pure-active sessions whose
-        # active_* fields were never set — pure-active sessions set
-        # active_* equal to totals in build_session_summary.
+        # Fall back to session totals for older or externally-constructed
+        # SessionSummary objects whose active_* fields may still be at
+        # their defaults (the current parser always populates active_*
+        # for pure-active sessions via build_session_summary).
         if _has_active_period_stats(s):
             model_calls = str(s.active_model_calls)
             user_msgs = str(s.active_user_messages)
