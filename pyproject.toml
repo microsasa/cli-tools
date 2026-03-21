@@ -29,6 +29,7 @@ dev = [
     "pyright",
     "ruff",
     "bandit",
+    "diff-cover",
 ]
 
 [tool.ruff]
