@@ -514,6 +514,15 @@ GitHub Copilot code review never submits APPROVED or CHANGES_REQUESTED — alway
 ### 31. Quality gate approval author is the PAT owner, not github-actions
 The quality gate uses `GH_AW_WRITE_TOKEN` (a PAT) for `submit-pull-request-review`. The approval appears as the PAT owner (e.g., the repo owner), not as `github-actions[bot]`. Use `${{ github.repository_owner }}` to derive the identity at runtime — never hardcode usernames. This same mistake was made three times in this project (thread resolution, approval detection, changelog docs) before being codified as a rule.
 
+### 32. Don't dispatch quality gate and rebase in the same orchestrator run
+If the orchestrator dispatches the quality gate (slow — agent takes minutes) and then rebases (fast — git push in seconds) in the same run, the quality gate may evaluate pre-rebase code. The rebase push also dismisses any approval via `dismiss_stale_reviews`. Fix: check `mergeStateStatus` before dispatching quality gate — if `BEHIND` or `DIRTY`, skip and let the rebase step handle it. The next orchestrator cycle dispatches quality gate on the rebased commit.
+
+### 33. Proactively request Copilot review — don't just wait
+Copilot code review does not reliably auto-trigger on every push — observed on PR #210 where the responder pushed but Copilot never reviewed for 14+ minutes. Use `gh pr edit "$PR" --add-reviewer @copilot` (requires gh v2.88+) to proactively request a review. Safe to call repeatedly — if a review is already in progress, the request is ignored. Don't just wait and hope.
+
+### 34. Check for in-flight workflows before dispatching
+Before dispatching any agent workflow (implementer, quality gate, responder), check if one is already running. Use `gh run list --workflow=NAME --json databaseId,status | jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length'`. Without this check, multiple orchestrator runs from rapid-fire `workflow_run` triggers will dispatch duplicates, wasting compute and inference tokens. This bug occurred for both the implementer (#164) and quality gate (#213).
+
 </details>
 
 ---
