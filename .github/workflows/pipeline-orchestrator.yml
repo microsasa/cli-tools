@@ -31,7 +31,7 @@ on:
         type: string
 
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0,30 * * * *"
 
 concurrency:
   group: pipeline-orchestrator
