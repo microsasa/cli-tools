@@ -173,7 +173,7 @@ GitHub Copilot charges different premium-request multipliers per model. This too
 | `gpt-5.4` / `gpt-5.2` / `gpt-5.1` / `gpt-5.x-codex` / `gpt-5.1-codex-max` | 1× | Standard |
 | `gemini-3-pro-preview` | 1× | Standard |
 | `claude-haiku-4.5` / `gpt-5.1-codex-mini` | 0.33× | Light |
-| `gpt-5-mini` / `gpt-4.1` | 0× | Free/Included |
+| `gpt-5-mini` / `gpt-4.1` / `gpt-5.4-mini` | 0× | Free/Included |
 
 ## Development
 
