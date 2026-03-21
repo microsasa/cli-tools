@@ -1442,6 +1442,49 @@ class TestRenderFullSummary:
             f"Output Tokens column: expected '1.5K', got '{cols[5]}'"
         )
 
+    def test_pure_active_never_shutdown_falls_back_to_totals(self) -> None:
+        """Pure-active session with active_*=0 should fall back to total fields.
+
+        Regression test for issue #132: default view shows 0s when a
+        session has never been shutdown and active_* fields are not set.
+        """
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="never-shutdown-abcdef",
+            name="Never Shutdown",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=30),
+            is_active=True,
+            user_messages=382,
+            model_calls=58,
+            # active_* default to 0 — simulating old parser or direct construction
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=204_000),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+        # Strip ANSI codes and locate the session row
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        row = next(line for line in lines if "Never Shutdown" in line)
+        cols = [c.strip() for c in row.split("│")]
+        # Columns: Name | Model | Model Calls | User Msgs | Output Tokens | Running Time
+        assert cols[3] == "58", (
+            f"Model Calls should fall back to total (58), got '{cols[3]}'"
+        )
+        assert cols[4] == "382", (
+            f"User Msgs should fall back to total (382), got '{cols[4]}'"
+        )
+        assert cols[5] == "204.0K", (
+            f"Output Tokens should fall back to total (204.0K), got '{cols[5]}'"
+        )
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
@@ -1725,6 +1768,43 @@ class TestRenderCostView:
         output = _capture_cost_view([session])
         # 3 calls × 3.0 multiplier = ~9
         assert "~9" in output
+
+    def test_pure_active_never_shutdown_cost_falls_back(self) -> None:
+        """Cost view: pure-active session with active_*=0 uses totals for the active row.
+
+        Regression test for issue #132.
+        """
+        session = SessionSummary(
+            session_id="cost-never-shut",
+            name="Cost No Shutdown",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=10,
+            user_messages=8,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=10),
+                    usage=TokenUsage(outputTokens=50_000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        assert "Since last shutdown" in output
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        shutdown_row = next(line for line in lines if "Since last shutdown" in line)
+        cols = [c.strip() for c in shutdown_row.split("│")]
+        # Should show model_calls (10) and model_metrics tokens (50.0K), not 0
+        assert "10" in cols[5], (
+            f"Model Calls in active row should be 10, got '{cols[5]}'"
+        )
+        assert "50.0K" in cols[6], (
+            f"Output Tokens in active row should be 50.0K, got '{cols[6]}'"
+        )
 
 
 class TestRenderFullSummaryHelperReuse:

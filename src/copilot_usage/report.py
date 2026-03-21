@@ -833,12 +833,30 @@ def _render_active_section(
         model = s.model or "—"
         running = _format_session_running_time(s)
 
+        # Use active_* fields when they are populated (resumed sessions
+        # or pure-active sessions processed by the current parser).
+        # Fall back to session totals for pure-active sessions whose
+        # active_* fields were never set (issue #132).
+        has_active_stats = (
+            s.last_resume_time is not None
+            or s.active_user_messages > 0
+            or s.active_output_tokens > 0
+        )
+        if has_active_stats:
+            model_calls = str(s.active_model_calls)
+            user_msgs = str(s.active_user_messages)
+            output_tokens = format_tokens(s.active_output_tokens)
+        else:
+            model_calls = str(s.model_calls)
+            user_msgs = str(s.user_messages)
+            output_tokens = format_tokens(_estimated_output_tokens(s))
+
         table.add_row(
             name,
             model,
-            str(s.active_model_calls),
-            str(s.active_user_messages),
-            format_tokens(s.active_output_tokens),
+            model_calls,
+            user_msgs,
+            output_tokens,
             running,
         )
 
@@ -939,16 +957,27 @@ def render_cost_view(
         grand_model_calls += s.model_calls
 
         if s.is_active:
-            est = _estimate_premium_cost(s.model, s.active_model_calls)
+            has_active = (
+                s.last_resume_time is not None
+                or s.active_user_messages > 0
+                or s.active_output_tokens > 0
+            )
+            if has_active:
+                cost_calls = s.active_model_calls
+                cost_tokens = s.active_output_tokens
+            else:
+                cost_calls = s.model_calls
+                cost_tokens = _estimated_output_tokens(s)
+            est = _estimate_premium_cost(s.model, cost_calls)
             table.add_row(
                 "  ↳ Since last shutdown",
                 s.model or "—",
                 "N/A",
                 est,
-                str(s.active_model_calls),
-                format_tokens(s.active_output_tokens),
+                str(cost_calls),
+                format_tokens(cost_tokens),
             )
-            grand_output += s.active_output_tokens
+            grand_output += cost_tokens
 
     table.add_section()
     table.add_row(
