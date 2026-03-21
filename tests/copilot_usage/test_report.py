@@ -74,23 +74,10 @@ def _make_session(
 
 def _capture_output(sessions: list[SessionSummary]) -> str:
     """Render live sessions and capture the console output as a string."""
-    buf: list[str] = []
-    console = Console(file=None, force_terminal=False, width=120)
-
-    with patch("copilot_usage.report.Console", return_value=console):
-
-        def _capture_print(*args: object, **kwargs: object) -> None:
-            from io import StringIO
-
-            sio = StringIO()
-            c = Console(file=sio, force_terminal=False, width=120)
-            c.print(*args, **kwargs)  # type: ignore[arg-type]
-            buf.append(sio.getvalue())
-
-        console.print = _capture_print  # type: ignore[method-assign]
-        render_live_sessions(sessions)
-
-    return "\n".join(buf)
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    render_live_sessions(sessions, target_console=console)
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -825,15 +812,7 @@ def _capture_summary(
     """Capture Rich output from render_summary to a plain string."""
     buf = StringIO()
     console = Console(file=buf, force_terminal=True, width=120)
-
-    from copilot_usage import report as _mod
-
-    original = _mod.Console  # type: ignore[attr-defined]
-    _mod.Console = lambda **_kwargs: console  # type: ignore[assignment,misc,return-value,attr-defined]
-    try:
-        render_summary(sessions, since=since, until=until)
-    finally:
-        _mod.Console = original  # type: ignore[assignment,attr-defined]
+    render_summary(sessions, since=since, until=until, target_console=console)
     return buf.getvalue()
 
 
