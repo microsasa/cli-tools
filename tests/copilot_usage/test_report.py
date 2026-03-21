@@ -1802,11 +1802,17 @@ class TestRenderCostView:
         # The "Since last shutdown" row should NOT show "N/A" for Premium Cost
         lines = output.splitlines()
         shutdown_line = next(
-            (line for line in lines if "Since last shutdown" in line), ""
+            (line for line in lines if "Since last shutdown" in line),
+            None,
         )
-        assert "N/A" not in shutdown_line or shutdown_line.count("N/A") == 1
-
-    def test_estimated_cost_zero_for_free_model(self) -> None:
+        assert shutdown_line is not None
+        assert shutdown_line.count("N/A") == 1
+        # Grand Total output tokens: 2000 (model_metrics) + 800 (active) = 2800 → "2.8K"
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert "2.8K" in grand_cols[6], (
+            f"Grand Total output tokens should be 2.8K, got '{grand_cols[6]}'"
+        )
         """gpt-5-mini has 0× multiplier → estimated cost is 0."""
         session = SessionSummary(
             session_id="est-cost-free-mod",
@@ -1842,6 +1848,41 @@ class TestRenderCostView:
         output = _capture_cost_view([session])
         # 3 calls × 3.0 multiplier = ~9
         assert "~9" in output
+
+    def test_pure_active_with_synthetic_metrics_no_double_count(self) -> None:
+        """Pure-active session with synthetic model_metrics must not double-count output tokens.
+
+        When build_session_summary creates a pure-active session, it sets both
+        model_metrics.outputTokens and active_output_tokens to the same total.
+        Grand Total must count them only once.
+        """
+        session = SessionSummary(
+            session_id="pure-synth-aaaa",
+            name="Pure Synth",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=8000,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    # Synthetic metrics have requests at defaults (count=0)
+                    usage=TokenUsage(outputTokens=8000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        # 8000 → "8.0K", NOT 16.0K (which would indicate double-counting)
+        assert "8.0K" in grand_cols[6], (
+            f"Grand Total output tokens should be 8.0K, got '{grand_cols[6]}'"
+        )
 
     def test_pure_active_never_shutdown_cost_falls_back(self) -> None:
         """Cost view: pure-active session with active_*=0 uses totals for the active row.
@@ -1879,8 +1920,12 @@ class TestRenderCostView:
         assert "50.0K" in cols[6], (
             f"Output Tokens in active row should be 50.0K, got '{cols[6]}'"
         )
-
-    def test_active_model_calls_only_uses_active_path(self) -> None:
+        # Grand Total output tokens must NOT double-count: should be 50.0K, not 100.0K
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert "50.0K" in grand_cols[6], (
+            f"Grand Total output tokens should be 50.0K, got '{grand_cols[6]}'"
+        )
         """Cost view: active_model_calls > 0 with user_messages/output_tokens=0.
 
         When last_resume_time is None and only active_model_calls is non-zero,
