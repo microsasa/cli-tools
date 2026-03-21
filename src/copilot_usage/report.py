@@ -987,7 +987,15 @@ def render_cost_view(
                 str(cost_calls),
                 format_tokens(cost_tokens),
             )
-            if has_active or not s.model_metrics:
+            # Only add active tokens when they represent a post-shutdown
+            # increment (shutdown-derived metrics have requests.count > 0)
+            # or when there are no model_metrics at all.  Pure-active
+            # synthetic metrics already mirror active_output_tokens so
+            # adding them again would double-count.
+            has_shutdown_metrics = any(
+                mm.requests.count > 0 for mm in s.model_metrics.values()
+            )
+            if (has_active and has_shutdown_metrics) or not s.model_metrics:
                 grand_output += cost_tokens
 
     table.add_section()
