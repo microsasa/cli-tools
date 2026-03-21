@@ -12,6 +12,9 @@ permissions:
   issues: read
   pull-requests: read
 
+imports:
+  - shared/fetch-review-comments.md
+
 checkout:
   fetch: ["*"]
   fetch-depth: 0
@@ -57,13 +60,13 @@ This workflow addresses unresolved review comments on a pull request.
 
 2. Add the label `aw-review-response-attempted` to the PR.
 
-3. Read the unresolved review comment threads on the PR using the GitHub REST API: fetch `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments` and `https://api.github.com/repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews`. If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
+3. Read the pre-fetched unresolved review threads from the file `/tmp/gh-aw/review-data/unresolved-threads.json`. This file was populated before you started by a workflow step that queried the GitHub GraphQL API. Each thread contains an `id`, `comments` array (with `databaseId`, `body`, `path`, `line`, `author`), and resolution status. If the file is empty or contains `[]`, there are no unresolved threads — stop and report via noop. If there are more than 10 unresolved threads, address the first 10 and leave a summary comment on the PR noting how many remain for manual follow-up.
 
 4. For each unresolved review comment thread (up to 10):
    a. Read the comment and understand what change is being requested
    b. Read the relevant file and surrounding code context
    c. Make the requested fix in the code
-   d. Reply to the comment thread explaining what you changed
+   d. Reply to the comment thread using `reply_to_pull_request_review_comment` with the comment's `databaseId` as the `comment_id`
 
 5. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
 

@@ -22,7 +22,11 @@
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
 #
-# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"e9dedf9ee2f5a6beffd74f5c1ac40c9263eda4f41e3db146c13a4d8576fd3970","compiler_version":"v0.60.0","strict":true}
+# Resolved workflow manifest:
+#   Imports:
+#     - shared/fetch-review-comments.md
+#
+# gh-aw-metadata: {"schema_version":"v2","frontmatter_hash":"99594989482cadf66785af7f0d8a7a3f7ca7c7826a814c07734bb8942a84eae0","compiler_version":"v0.60.0","strict":true}
 
 name: "Review Responder"
 "on":
@@ -170,6 +174,9 @@ jobs:
           </system>
           GH_AW_PROMPT_EOF
           cat << 'GH_AW_PROMPT_EOF'
+          {{#runtime-import .github/workflows/shared/fetch-review-comments.md}}
+          GH_AW_PROMPT_EOF
+          cat << 'GH_AW_PROMPT_EOF'
           {{#runtime-import .github/workflows/review-responder.md}}
           GH_AW_PROMPT_EOF
           } > "$GH_AW_PROMPT"
@@ -281,6 +288,13 @@ jobs:
           git -c "http.extraheader=Authorization: Basic ${header}" fetch origin '+refs/heads/*:refs/remotes/origin/*'
       - name: Create gh-aw temp directory
         run: bash /opt/gh-aw/actions/create_gh_aw_tmp_dir.sh
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        name: Fetch PR review comments
+        run: "mkdir -p /tmp/gh-aw/review-data\n\nOWNER=\"${GITHUB_REPOSITORY_OWNER}\"\nREPO=\"${GITHUB_REPOSITORY#*/}\"\n\necho \"Fetching review comments for PR #${PR_NUMBER}...\"\n\n# Fetch review comment threads via GraphQL (includes resolution status)\ngh api graphql -f query='\n  query($owner: String!, $repo: String!, $pr: Int!) {\n    repository(owner: $owner, name: $repo) {\n      pullRequest(number: $pr) {\n        title\n        body\n        reviewThreads(first: 100) {\n          nodes {\n            id\n            isResolved\n            isOutdated\n            comments(first: 100) {\n              nodes {\n                id\n                databaseId\n                body\n                path\n                line\n                author { login }\n                createdAt\n              }\n            }\n          }\n        }\n      }\n    }\n  }' -f owner=\"$OWNER\" -f repo=\"$REPO\" -F pr=\"$PR_NUMBER\" \\\n  > /tmp/gh-aw/review-data/threads.json\n\n# Extract unresolved threads for easy agent consumption\nif ! jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments = .comments.nodes]' \\\n  /tmp/gh-aw/review-data/threads.json \\\n  > /tmp/gh-aw/review-data/unresolved-threads.json; then\n  echo \"Error: Failed to extract unresolved review threads from GraphQL response\" >&2\n  exit 1\nfi\n\nUNRESOLVED=$(jq 'length' /tmp/gh-aw/review-data/unresolved-threads.json)\necho \"Found ${UNRESOLVED} unresolved thread(s)\"\necho \"Data saved to /tmp/gh-aw/review-data/\""
+
       - name: Configure Git credentials
         env:
           REPO_NAME: ${{ github.repository }}
