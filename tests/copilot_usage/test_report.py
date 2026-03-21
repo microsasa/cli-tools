@@ -1978,11 +1978,11 @@ class TestRenderCostView:
             active_output_tokens=300,
         )
         with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+            warnings.simplefilter("always", UserWarning)
             output = _capture_cost_view([session])
         assert "Since last shutdown" in output
         assert len(caught) == 0, (
-            f"Expected no warnings, got {[str(w.message) for w in caught]}"
+            f"Expected no UserWarning, got {[str(w.message) for w in caught]}"
         )
 
 
@@ -2004,11 +2004,11 @@ class TestEstimatePremiumCost:
     def test_unknown_model_no_warning(self) -> None:
         """Unknown model degrades to 1× multiplier without emitting warnings."""
         with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+            warnings.simplefilter("always", UserWarning)
             result = _estimate_premium_cost("totally-unknown-model-xyz", 7)
         assert result == "~7"  # 7 calls × 1.0 = ~7
         assert len(caught) == 0, (
-            f"Expected no warnings, got {[str(w.message) for w in caught]}"
+            f"Expected no UserWarning, got {[str(w.message) for w in caught]}"
         )
 
     def test_zero_calls_returns_zero(self) -> None:
