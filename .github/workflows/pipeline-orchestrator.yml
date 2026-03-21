@@ -17,7 +17,7 @@ name: "Pipeline Orchestrator"
 on:
   # Event-driven triggers (immediate response)
   workflow_run:
-    workflows: ["Review Responder", "CI Fixer", "CI", "Quality Gate"]
+    workflows: ["Review Responder", "CI Fixer", "CI", "Quality Gate", "Copilot code review"]
     types: [completed]
   pull_request_review:
     types: [submitted]
