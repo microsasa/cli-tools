@@ -17,7 +17,7 @@ name: "Pipeline Orchestrator"
 on:
   # Event-driven triggers (immediate response)
   workflow_run:
-    workflows: ["Review Responder", "CI Fixer", "CI", "Quality Gate"]
+    workflows: ["Review Responder", "CI Fixer", "CI", "Quality Gate", "Copilot code review"]
     types: [completed]
   pull_request_review:
     types: [submitted]
@@ -193,6 +193,21 @@ jobs:
             BRANCH=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefName')
             HEAD_SHA=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.headRefOid')
 
+            # Clean up stale quality-gate-approved label if approval is no longer valid
+            HAS_QG_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-quality-gate-approved") then "yes" else "" end')
+            if [[ -n "$HAS_QG_LABEL" ]]; then
+              HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
+                [.data.repository.pullRequest.latestReviews.nodes[]
+                 | select(.author.login == "${{ github.repository_owner }}")
+                 | select(.state == "APPROVED")
+                 | select(.commit.oid == $sha)]
+                | length > 0')
+              if [[ "$HAS_VALID_APPROVAL" != "true" ]]; then
+                echo "  🏷️ PR #${PR}: Removing stale aw-quality-gate-approved label."
+                gh api repos/"$OWNER"/"$REPO"/issues/"$PR"/labels/aw-quality-gate-approved -X DELETE --silent 2>/dev/null || true
+              fi
+            fi
+
             # Check CI status — look for the "check" job specifically
             CI_CONCLUSION=$(echo "$PR_DATA" | jq -r '
               .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
@@ -308,7 +323,7 @@ jobs:
             fi
 
             # Check 2: Is a Copilot code review currently in progress for this commit?
-            COPILOT_REVIEW_RUNNING=$(gh run list --workflow="Copilot code review" --json headSha,status --jq --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha) | select(.status == "in_progress" or .status == "queued")] | length' 2>/dev/null || echo "1")
+            COPILOT_REVIEW_RUNNING=$(gh run list --workflow="Copilot code review" --json headSha,status 2>/dev/null | jq -r --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha) | select(.status == "in_progress" or .status == "queued")] | length' 2>/dev/null || echo "1")
             if [[ "$COPILOT_REVIEW_RUNNING" -gt 0 ]]; then
               echo "  ⏳ PR #${PR}: Copilot review in progress. Skipping quality gate."
               echo "::endgroup::"
