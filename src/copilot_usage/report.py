@@ -971,7 +971,8 @@ def render_cost_view(
         grand_model_calls += s.model_calls
 
         if s.is_active:
-            if _has_active_period_stats(s):
+            has_active = _has_active_period_stats(s)
+            if has_active:
                 cost_calls = s.active_model_calls
                 cost_tokens = s.active_output_tokens
             else:
@@ -986,7 +987,8 @@ def render_cost_view(
                 str(cost_calls),
                 format_tokens(cost_tokens),
             )
-            grand_output += cost_tokens
+            if has_active or not s.model_metrics:
+                grand_output += cost_tokens
 
     table.add_section()
     table.add_row(

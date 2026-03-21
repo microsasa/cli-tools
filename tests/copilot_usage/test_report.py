@@ -1802,11 +1802,17 @@ class TestRenderCostView:
         # The "Since last shutdown" row should NOT show "N/A" for Premium Cost
         lines = output.splitlines()
         shutdown_line = next(
-            (line for line in lines if "Since last shutdown" in line), ""
+            (line for line in lines if "Since last shutdown" in line),
+            None,
         )
-        assert "N/A" not in shutdown_line or shutdown_line.count("N/A") == 1
-
-    def test_estimated_cost_zero_for_free_model(self) -> None:
+        assert shutdown_line is not None
+        assert shutdown_line.count("N/A") == 1
+        # Grand Total output tokens: 2000 (model_metrics) + 800 (active) = 2800 → "2.8K"
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert "2.8K" in grand_cols[6], (
+            f"Grand Total output tokens should be 2.8K, got '{grand_cols[6]}'"
+        )
         """gpt-5-mini has 0× multiplier → estimated cost is 0."""
         session = SessionSummary(
             session_id="est-cost-free-mod",
@@ -1879,8 +1885,12 @@ class TestRenderCostView:
         assert "50.0K" in cols[6], (
             f"Output Tokens in active row should be 50.0K, got '{cols[6]}'"
         )
-
-    def test_active_model_calls_only_uses_active_path(self) -> None:
+        # Grand Total output tokens must NOT double-count: should be 50.0K, not 100.0K
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert "50.0K" in grand_cols[6], (
+            f"Grand Total output tokens should be 50.0K, got '{grand_cols[6]}'"
+        )
         """Cost view: active_model_calls > 0 with user_messages/output_tokens=0.
 
         When last_resume_time is None and only active_model_calls is non-zero,
