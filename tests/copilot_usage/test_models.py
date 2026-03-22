@@ -112,6 +112,7 @@ def test_request_metrics() -> None:
 
     r2 = RequestMetrics(count=10, cost=5)
     assert r2.count == 10
+    assert r2.cost == 5
 
 
 def test_model_metrics() -> None:
@@ -125,7 +126,9 @@ def test_model_metrics() -> None:
         usage=TokenUsage(inputTokens=500, outputTokens=200),
     )
     assert m2.requests.count == 3
+    assert m2.requests.cost == 10
     assert m2.usage.inputTokens == 500
+    assert m2.usage.outputTokens == 200
 
 
 def test_code_changes() -> None:
@@ -135,6 +138,8 @@ def test_code_changes() -> None:
     assert c.filesModified == []
 
     c2 = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
+    assert c2.linesAdded == 10
+    assert c2.linesRemoved == 2
     assert len(c2.filesModified) == 1
 
 
