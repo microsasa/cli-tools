@@ -41,6 +41,9 @@ echo ""
 echo "=== Disabling enforce_admins ==="
 gh api "repos/${REPO}/branches/main/protection/enforce_admins" -X DELETE > /dev/null
 
+# Re-enable enforce_admins if anything below fails
+trap 'echo "ERROR: re-enabling enforce_admins after failure"; gh api "repos/${REPO}/branches/main/protection/enforce_admins" -X POST > /dev/null 2>&1; exit 1' ERR
+
 AFTER=$(get_protection)
 echo ""
 echo "${BEFORE}" | AFTER_JSON="${AFTER}" python3 -c "
@@ -48,7 +51,7 @@ import json, os, sys
 before = json.load(sys.stdin)
 after = json.loads(os.environ['AFTER_JSON'])
 changing = {'enforce_admins'}
-R, G, Y, NC = '\033[0;31m', '\033[0;32m', '\033[0;33m', '\033[0m'
+R, G, NC = '\033[0;31m', '\033[0;32m', '\033[0m'
 h = ('Setting', 'Before', 'After', 'Status')
 print(f'{h[0]:<35} {h[1]:<15} {h[2]:<15} {h[3]}')
 print(f'{chr(45)*35} {chr(45)*15} {chr(45)*15} {chr(45)*20}')

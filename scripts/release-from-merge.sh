@@ -82,4 +82,4 @@ if not ok:
 print(f'\n{G}All settings restored correctly.{NC}')
 "
 
-rm "${STASH}"
+rm -f "${STASH}"

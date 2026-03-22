@@ -335,7 +335,7 @@ Settings required for the autonomous pipeline:
 |---|---|---|
 | Auto-merge | `gh api repos/OWNER/REPO -X PATCH -f allow_auto_merge=true` | `true` |
 | Branch protection: required reviews | API (see below) | 1 approving review |
-| Branch protection: dismiss stale | API | `false` (disabled for PR rescue rebase flow) |
+| Branch protection: dismiss stale | API | `true` (new pushes invalidate old approvals) |
 | Branch protection: required status | API | `check` (strict: must be up to date) |
 | Branch protection: enforce admins | API | `true` |
 | Branch protection: conversation resolution | API | `true` (all review threads must be resolved) |
