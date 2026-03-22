@@ -33,6 +33,7 @@ from copilot_usage.report import (
     _format_elapsed_since,
     _format_relative_time,
     _format_session_running_time,
+    _format_timedelta,
     _has_active_period_stats,
     _render_model_table,
     _render_shutdown_cycles,
@@ -2895,12 +2896,12 @@ class TestFormatElapsedSince:
         assert result == "5m 30s"
 
     def test_zero_elapsed(self) -> None:
-        """When start == now, format is '0m 0s'."""
+        """When start == now, format is '0s'."""
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
         with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
             mock_dt.now.return_value = now
             result = _format_elapsed_since(now)
-        assert result == "0m 0s"
+        assert result == "0s"
 
 
 # ---------------------------------------------------------------------------
@@ -2910,16 +2911,14 @@ class TestFormatElapsedSince:
 
 class TestFormatDetailDurationBoundaries:
     def test_exactly_60_seconds(self) -> None:
-        """60s sits on the < 60 boundary — should produce '1m 0s'."""
+        """60s sits on the < 60 boundary — should produce '1m'."""
         start = datetime(2025, 1, 1, tzinfo=UTC)
-        assert _format_detail_duration(start, start + timedelta(seconds=60)) == "1m 0s"
+        assert _format_detail_duration(start, start + timedelta(seconds=60)) == "1m"
 
     def test_exactly_3600_seconds(self) -> None:
-        """3600s sits on the minutes < 60 boundary — should produce '1h 0m'."""
+        """3600s sits on the minutes < 60 boundary — should produce '1h'."""
         start = datetime(2025, 1, 1, tzinfo=UTC)
-        assert (
-            _format_detail_duration(start, start + timedelta(seconds=3600)) == "1h 0m"
-        )
+        assert _format_detail_duration(start, start + timedelta(seconds=3600)) == "1h"
 
     def test_start_none(self) -> None:
         """None start should return em-dash."""
@@ -2930,3 +2929,40 @@ class TestFormatDetailDurationBoundaries:
         """None end should return em-dash."""
         start = datetime(2025, 1, 1, tzinfo=UTC)
         assert _format_detail_duration(start, None) == "—"
+
+
+# ---------------------------------------------------------------------------
+# Issue #243 — Unit tests for _format_timedelta core helper
+# ---------------------------------------------------------------------------
+
+
+class TestFormatTimedelta:
+    def test_zero(self) -> None:
+        assert _format_timedelta(timedelta(0)) == "0s"
+
+    def test_seconds_only(self) -> None:
+        assert _format_timedelta(timedelta(seconds=5)) == "5s"
+
+    def test_minutes_and_seconds(self) -> None:
+        assert _format_timedelta(timedelta(minutes=6, seconds=29)) == "6m 29s"
+
+    def test_exact_minute(self) -> None:
+        assert _format_timedelta(timedelta(minutes=1)) == "1m"
+
+    def test_exact_hour(self) -> None:
+        assert _format_timedelta(timedelta(hours=1)) == "1h"
+
+    def test_hours_minutes_seconds(self) -> None:
+        assert _format_timedelta(timedelta(hours=1, minutes=1, seconds=1)) == "1h 1m 1s"
+
+    def test_hours_and_minutes_no_seconds(self) -> None:
+        assert _format_timedelta(timedelta(hours=2, minutes=30)) == "2h 30m"
+
+    def test_negative_clamped_to_zero(self) -> None:
+        assert _format_timedelta(timedelta(seconds=-10)) == "0s"
+
+    def test_large_duration(self) -> None:
+        assert (
+            _format_timedelta(timedelta(hours=100, minutes=5, seconds=3))
+            == "100h 5m 3s"
+        )
