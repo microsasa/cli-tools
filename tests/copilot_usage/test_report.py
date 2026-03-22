@@ -2745,6 +2745,18 @@ class TestTruncate:
         assert len(result) == 5
         assert result.endswith("…")
 
+    def test_max_len_zero_returns_empty(self) -> None:
+        """max_len=0 must return an empty string."""
+        assert _truncate("hello", max_len=0) == ""
+
+    def test_max_len_one_returns_ellipsis(self) -> None:
+        """max_len=1 with text longer than 1 returns just the ellipsis."""
+        assert _truncate("hello", max_len=1) == "…"
+
+    def test_max_len_one_single_char_no_truncation(self) -> None:
+        """max_len=1 with a single-char string returns it unchanged."""
+        assert _truncate("x", max_len=1) == "x"
+
 
 # ---------------------------------------------------------------------------
 # Issue #237 — Direct unit tests for _format_elapsed_since
@@ -2756,7 +2768,7 @@ class TestFormatElapsedSince:
         """When elapsed >= 1 hour, format is 'Xh Ym'."""
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
         start = now - timedelta(hours=2, minutes=15)
-        with patch("copilot_usage.report.datetime") as mock_dt:
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
             mock_dt.now.return_value = now
             result = _format_elapsed_since(start)
         assert result == "2h 15m"
@@ -2765,7 +2777,7 @@ class TestFormatElapsedSince:
         """When elapsed < 1 hour, format is 'Ym Zs'."""
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
         start = now - timedelta(minutes=5, seconds=30)
-        with patch("copilot_usage.report.datetime") as mock_dt:
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
             mock_dt.now.return_value = now
             result = _format_elapsed_since(start)
         assert result == "5m 30s"
@@ -2773,7 +2785,7 @@ class TestFormatElapsedSince:
     def test_zero_elapsed(self) -> None:
         """When start == now, format is '0m 0s'."""
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
-        with patch("copilot_usage.report.datetime") as mock_dt:
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
             mock_dt.now.return_value = now
             result = _format_elapsed_since(now)
         assert result == "0m 0s"
