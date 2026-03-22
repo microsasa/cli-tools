@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from copilot_usage.models import (
+    EPOCH,
     AssistantMessageData,
     CodeChanges,
     EventType,
@@ -18,6 +19,8 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     UserMessageData,
+    ensure_aware,
+    ensure_aware_opt,
     merge_model_metrics,
 )
 
@@ -410,3 +413,62 @@ class TestAsToolExecution:
         ev = SessionEvent.model_validate(RAW_SESSION_START)
         with pytest.raises(ValueError, match="tool.execution_complete"):
             ev.as_tool_execution()
+
+
+# ---------------------------------------------------------------------------
+# Shared datetime utilities (EPOCH, ensure_aware, ensure_aware_opt)
+# ---------------------------------------------------------------------------
+
+
+class TestEpochSentinel:
+    """Tests for the EPOCH constant."""
+
+    def test_is_aware(self) -> None:
+        assert EPOCH.tzinfo is not None
+
+    def test_is_utc(self) -> None:
+        assert EPOCH.tzinfo == UTC
+
+    def test_is_datetime_min(self) -> None:
+        assert EPOCH.replace(tzinfo=None) == datetime.min
+
+
+class TestEnsureAware:
+    """Tests for ensure_aware (non-None variant)."""
+
+    def test_naive_gets_utc(self) -> None:
+        naive = datetime(2026, 1, 15, 12, 0, 0)
+        result = ensure_aware(naive)
+        assert result.tzinfo == UTC
+        assert result.replace(tzinfo=None) == naive
+
+    def test_already_aware_unchanged(self) -> None:
+        aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        result = ensure_aware(aware)
+        assert result is aware
+
+    def test_preserves_values(self) -> None:
+        naive = datetime(2026, 6, 15, 8, 30, 45, 123456)
+        result = ensure_aware(naive)
+        assert result.year == 2026
+        assert result.month == 6
+        assert result.microsecond == 123456
+        assert result.tzinfo == UTC
+
+
+class TestEnsureAwareOpt:
+    """Tests for ensure_aware_opt (None-safe variant)."""
+
+    def test_none_returns_none(self) -> None:
+        assert ensure_aware_opt(None) is None
+
+    def test_naive_gets_utc(self) -> None:
+        naive = datetime(2026, 1, 15, 12, 0, 0)
+        result = ensure_aware_opt(naive)
+        assert result is not None
+        assert result.tzinfo == UTC
+
+    def test_already_aware_unchanged(self) -> None:
+        aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        result = ensure_aware_opt(aware)
+        assert result is aware

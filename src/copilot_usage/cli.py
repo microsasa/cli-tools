@@ -8,7 +8,7 @@ import select
 import sys
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -19,7 +19,7 @@ from watchdog.events import FileSystemEventHandler  # type: ignore[import-untype
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from copilot_usage import __version__
-from copilot_usage.models import SessionSummary
+from copilot_usage.models import SessionSummary, ensure_aware_opt
 from copilot_usage.parser import (
     build_session_summary,
     discover_sessions,
@@ -49,13 +49,6 @@ def _print_version_header(target: Console | None = None) -> None:
     header.append(" " * max(1, c.width - len(title) - len(version_text)))
     header.append(version_text, style="dim")
     c.print(header)
-
-
-def _ensure_aware(dt: datetime | None) -> datetime | None:
-    """Attach UTC timezone if *dt* is naive (click.DateTime produces naive)."""
-    if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +313,9 @@ def summary(
     path = path or ctx.obj.get("path")
     try:
         sessions = get_all_sessions(path)
-        render_summary(sessions, since=_ensure_aware(since), until=_ensure_aware(until))
+        render_summary(
+            sessions, since=ensure_aware_opt(since), until=ensure_aware_opt(until)
+        )
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
@@ -425,8 +420,8 @@ def cost(
 
         render_cost_view(
             sessions,
-            since=_ensure_aware(since),
-            until=_ensure_aware(until),
+            since=ensure_aware_opt(since),
+            until=ensure_aware_opt(until),
         )
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error: {exc}", err=True)

@@ -11,12 +11,12 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
-    _ensure_aware,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
     main,
 )
+from copilot_usage.models import ensure_aware_opt
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -619,7 +619,7 @@ class TestFileChangeHandler:
 # ---------------------------------------------------------------------------
 
 
-# 1. _ensure_aware unit tests ------------------------------------------------
+# 1. ensure_aware_opt unit tests ----------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -639,8 +639,8 @@ class TestFileChangeHandler:
     ],
 )
 def test_ensure_aware(dt_in: datetime | None, expected: datetime | None) -> None:
-    """_ensure_aware handles None, aware, and naive datetimes correctly."""
-    result = _ensure_aware(dt_in)
+    """ensure_aware_opt handles None, aware, and naive datetimes correctly."""
+    result = ensure_aware_opt(dt_in)
     assert result == expected
     if result is not None and expected is not None:
         assert result.tzinfo is not None
@@ -650,7 +650,7 @@ def test_ensure_aware_preserves_non_utc_timezone() -> None:
     """An already-aware dt with a non-UTC tz is returned unchanged."""
     non_utc = timezone(offset=timedelta(hours=5))
     dt_in = datetime(2025, 1, 1, 12, 0, 0, tzinfo=non_utc)
-    result = _ensure_aware(dt_in)
+    result = ensure_aware_opt(dt_in)
     assert result is dt_in  # exact same object
 
 
