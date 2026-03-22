@@ -268,7 +268,7 @@ def test_summary_invalid_path() -> None:
 
 
 def test_summary_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
-    """Exercise the except-Exception branch (lines 77-79) in summary."""
+    """OSError in get_all_sessions produces a friendly error message."""
 
     def _exploding_sessions(_base: Path | None = None) -> list[object]:
         msg = "disk on fire"
@@ -279,6 +279,7 @@ def test_summary_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["summary", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "disk on fire" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 def test_session_no_sessions(tmp_path: Path, monkeypatch: Any) -> None:
@@ -319,7 +320,7 @@ def test_session_skips_empty_events(tmp_path: Path, monkeypatch: Any) -> None:
 
 
 def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
-    """Trigger an exception in session detail → friendly error (lines 129-131)."""
+    """PermissionError in discover_sessions produces a friendly error message."""
 
     def _exploding_discover(_base: Path | None = None) -> list[Path]:
         msg = "permission denied"
@@ -387,31 +388,33 @@ def test_cost_zero_multiplier_model(tmp_path: Path) -> None:
 
 
 def test_cost_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
-    """Exercise the except-Exception branch (lines 226-228) in cost."""
+    """OSError in get_all_sessions produces a friendly error message."""
 
     def _exploding_sessions(_base: Path | None = None) -> list[object]:
         msg = "cost explosion"
-        raise RuntimeError(msg)
+        raise OSError(msg)
 
     monkeypatch.setattr("copilot_usage.cli.get_all_sessions", _exploding_sessions)
     runner = CliRunner()
     result = runner.invoke(main, ["cost", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "cost explosion" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 def test_live_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
-    """Exercise the except-Exception branch (lines 248-250) in live."""
+    """OSError in get_all_sessions produces a friendly error message."""
 
     def _exploding_sessions(_base: Path | None = None) -> list[object]:
         msg = "live explosion"
-        raise RuntimeError(msg)
+        raise OSError(msg)
 
     monkeypatch.setattr("copilot_usage.cli.get_all_sessions", _exploding_sessions)
     runner = CliRunner()
     result = runner.invoke(main, ["live", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "live explosion" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 # ---------------------------------------------------------------------------
