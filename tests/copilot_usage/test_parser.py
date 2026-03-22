@@ -759,6 +759,62 @@ class TestBuildSessionSummaryResumed:
         # 100 post-resume goes to active
         assert summary.active_output_tokens == 100
 
+    def test_user_message_alone_marks_resumed(self, tmp_path: Path) -> None:
+        """Shutdown → USER_MESSAGE (no session.resume) → is_active=True."""
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "continue", "attachments": []},
+                "id": "ev-u-noresume",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_user,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.active_user_messages == 1
+
+    def test_assistant_message_alone_marks_resumed(self, tmp_path: Path) -> None:
+        """Shutdown → ASSISTANT_MESSAGE (no session.resume) → is_active=True."""
+        post_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-noresume",
+                    "content": "continuing",
+                    "toolRequests": [],
+                    "interactionId": "int-nr",
+                    "outputTokens": 120,
+                },
+                "id": "ev-a-noresume",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_asst,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.active_output_tokens == 120
+
     def test_model_inferred_from_highest_request_count(self, tmp_path: Path) -> None:
         """Shutdown with multiple models, no currentModel → picks highest requests.count."""
         shutdown_multi = json.dumps(
@@ -1785,6 +1841,34 @@ class TestConfigModelReading:
         events = parse_events(p)
         summary = build_session_summary(events, config_path=config)
         assert summary.model is None
+
+    def test_active_session_model_none_with_output_tokens_has_empty_metrics(
+        self, tmp_path: Path
+    ) -> None:
+        """model=None + output tokens → model_metrics empty, active_output_tokens set."""
+        config = tmp_path / "nonexistent" / "config.json"
+        asst_250 = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-250",
+                    "content": "hello",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 250,
+                },
+                "id": "ev-asst-250",
+                "timestamp": "2026-03-07T10:01:05.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, asst_250)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model is None
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 250
 
     def test_invalid_config_json(self, tmp_path: Path) -> None:
         """Malformed config.json → model stays None."""
