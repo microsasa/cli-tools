@@ -24,6 +24,8 @@ from copilot_usage.report import (
     _aggregate_model_metrics,
     _build_event_details,
     _compute_session_totals,
+    _effective_stats,
+    _EffectiveStats,
     _estimate_premium_cost,
     _event_type_label,
     _filter_sessions,
@@ -2670,6 +2672,65 @@ class TestHasActivePeriodStats:
             active_model_calls=0,
         )
         assert _has_active_period_stats(session) is False
+
+
+class TestEffectiveStats:
+    """Tests for the _effective_stats helper."""
+
+    def test_returns_active_stats_when_active_period_present(self) -> None:
+        """Session with active-period stats returns active_* field values."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="resumed-eff-1234",
+            is_active=True,
+            start_time=now - timedelta(hours=1),
+            last_resume_time=now - timedelta(minutes=5),
+            model_calls=100,
+            user_messages=50,
+            active_model_calls=7,
+            active_user_messages=3,
+            active_output_tokens=2500,
+            model_metrics={
+                "gpt-4": ModelMetrics(usage=TokenUsage(outputTokens=9000)),
+            },
+        )
+        stats = _effective_stats(session)
+        assert isinstance(stats, _EffectiveStats)
+        assert stats.model_calls == 7
+        assert stats.user_messages == 3
+        assert stats.output_tokens == 2500
+
+    def test_returns_session_totals_when_no_active_period(self) -> None:
+        """Pure-active session without active-period stats falls back to totals."""
+        session = SessionSummary(
+            session_id="pure-active-eff-1234",
+            is_active=True,
+            start_time=datetime.now(tz=UTC) - timedelta(minutes=10),
+            model_calls=12,
+            user_messages=8,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "gpt-4": ModelMetrics(usage=TokenUsage(outputTokens=4200)),
+            },
+        )
+        stats = _effective_stats(session)
+        assert isinstance(stats, _EffectiveStats)
+        assert stats.model_calls == 12
+        assert stats.user_messages == 8
+        # Falls back to _estimated_output_tokens which sums model_metrics
+        assert stats.output_tokens == 4200
+
+    def test_frozen_dataclass(self) -> None:
+        """_EffectiveStats instances are immutable."""
+        session = SessionSummary(
+            session_id="frozen-test-1234",
+            active_model_calls=1,
+        )
+        stats = _effective_stats(session)
+        with pytest.raises(AttributeError):
+            stats.model_calls = 99  # type: ignore[misc]
 
 
 class TestComputeSessionTotals:
