@@ -2427,6 +2427,57 @@ class TestFilterSessionsReversedDateRange:
 
 
 # ---------------------------------------------------------------------------
+# Issue #240 — _filter_sessions naive start_time vs aware since/until
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsNaiveStartTime:
+    """Regression: naive start_time must not raise TypeError against aware bounds."""
+
+    def test_naive_start_time_with_aware_since_included(self) -> None:
+        """Naive start_time after aware since should be included, not raise."""
+        session = SessionSummary(
+            session_id="naive",
+            start_time=datetime(2026, 6, 15),  # naive
+        )
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        result = _filter_sessions([session], since=since, until=None)
+        assert len(result) == 1
+        assert result[0].session_id == "naive"
+
+    def test_naive_start_time_with_aware_until_included(self) -> None:
+        """Naive start_time before aware until should be included, not raise."""
+        session = SessionSummary(
+            session_id="naive",
+            start_time=datetime(2026, 6, 15),  # naive
+        )
+        until = datetime(2026, 12, 31, tzinfo=UTC)
+        result = _filter_sessions([session], since=None, until=until)
+        assert len(result) == 1
+        assert result[0].session_id == "naive"
+
+    def test_naive_start_time_before_since_excluded(self) -> None:
+        """Naive start_time before aware since should be excluded."""
+        session = SessionSummary(
+            session_id="old-naive",
+            start_time=datetime(2025, 1, 1),  # naive, before since
+        )
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        result = _filter_sessions([session], since=since, until=None)
+        assert result == []
+
+    def test_naive_start_time_after_until_excluded(self) -> None:
+        """Naive start_time after aware until should be excluded."""
+        session = SessionSummary(
+            session_id="future-naive",
+            start_time=datetime(2027, 1, 1),  # naive, after until
+        )
+        until = datetime(2026, 12, 31, tzinfo=UTC)
+        result = _filter_sessions([session], since=None, until=until)
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
 # Issue #208 — _render_model_table shows Cache Write column
 # ---------------------------------------------------------------------------
 
