@@ -68,10 +68,10 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 
 
 def _safe_mtime(path: Path) -> float:
-    """Return *path*'s mtime, or ``0`` if the file no longer exists."""
+    """Return *path*'s mtime, or ``0`` on any OS-level error (deleted, permission denied, etc.)."""
     try:
         return path.stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return 0.0
 
 
