@@ -20,10 +20,8 @@ from copilot_usage.models import (
     ModelMetrics,
     SessionEvent,
     SessionShutdownData,
-    SessionStartData,
     SessionSummary,
     TokenUsage,
-    ToolExecutionData,
     merge_model_metrics,
 )
 
@@ -205,27 +203,25 @@ def build_session_summary(
         # -- session.start ------------------------------------------------
         if ev.type == EventType.SESSION_START:
             try:
-                data = ev.parse_data()
+                data = ev.as_session_start()
             except ValidationError:
                 continue
-            if isinstance(data, SessionStartData):
-                session_id = data.sessionId
-                start_time = data.startTime
-                cwd = data.context.cwd
+            session_id = data.sessionId
+            start_time = data.startTime
+            cwd = data.context.cwd
 
         # -- session.shutdown ---------------------------------------------
         elif ev.type == EventType.SESSION_SHUTDOWN:
             try:
-                data = ev.parse_data()
+                data = ev.as_session_shutdown()
             except ValidationError:
                 continue
-            if isinstance(data, SessionShutdownData):
-                current_model = ev.currentModel or data.currentModel
-                if not current_model and data.modelMetrics:
-                    current_model = _infer_model_from_metrics(data.modelMetrics)
-                all_shutdowns.append((idx, data, current_model))
-                end_time = ev.timestamp
-                model = current_model
+            current_model = ev.currentModel or data.currentModel
+            if not current_model and data.modelMetrics:
+                current_model = _infer_model_from_metrics(data.modelMetrics)
+            all_shutdowns.append((idx, data, current_model))
+            end_time = ev.timestamp
+            model = current_model
 
         # -- user.message -------------------------------------------------
         elif ev.type == EventType.USER_MESSAGE:
@@ -308,10 +304,10 @@ def build_session_summary(
     for ev in events:
         if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
             try:
-                parsed = ev.parse_data()
+                parsed = ev.as_tool_execution()
             except ValidationError:
                 continue
-            if isinstance(parsed, ToolExecutionData) and parsed.model:
+            if parsed.model:
                 model = parsed.model
                 break
 

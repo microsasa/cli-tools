@@ -3,6 +3,8 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from copilot_usage.models import (
     AssistantMessageData,
     CodeChanges,
@@ -327,3 +329,84 @@ class TestMergeModelMetrics:
         additional = {"m1": ModelMetrics(requests=RequestMetrics(count=5))}
         merge_model_metrics(base, additional)
         assert additional["m1"].requests.count == 5
+
+
+# ---------------------------------------------------------------------------
+# Typed accessor methods (as_*)
+# ---------------------------------------------------------------------------
+
+
+class TestAsSessionStart:
+    """Tests for SessionEvent.as_session_start()."""
+
+    def test_happy_path(self) -> None:
+        ev = SessionEvent.model_validate(RAW_SESSION_START)
+        data = ev.as_session_start()
+        assert isinstance(data, SessionStartData)
+        assert data.sessionId == "0faecbdf-b889-4bca-a51a-5254f5488cb6"
+
+    def test_wrong_event_type_raises(self) -> None:
+        ev = SessionEvent.model_validate(RAW_SHUTDOWN)
+        with pytest.raises(ValueError, match="session.start"):
+            ev.as_session_start()
+
+
+class TestAsSessionShutdown:
+    """Tests for SessionEvent.as_session_shutdown()."""
+
+    def test_happy_path(self) -> None:
+        ev = SessionEvent.model_validate(RAW_SHUTDOWN)
+        data = ev.as_session_shutdown()
+        assert isinstance(data, SessionShutdownData)
+        assert data.totalPremiumRequests == 24
+
+    def test_wrong_event_type_raises(self) -> None:
+        ev = SessionEvent.model_validate(RAW_SESSION_START)
+        with pytest.raises(ValueError, match="session.shutdown"):
+            ev.as_session_shutdown()
+
+
+class TestAsAssistantMessage:
+    """Tests for SessionEvent.as_assistant_message()."""
+
+    def test_happy_path(self) -> None:
+        ev = SessionEvent.model_validate(RAW_ASSISTANT_MESSAGE)
+        data = ev.as_assistant_message()
+        assert isinstance(data, AssistantMessageData)
+        assert data.outputTokens == 373
+
+    def test_wrong_event_type_raises(self) -> None:
+        ev = SessionEvent.model_validate(RAW_USER_MESSAGE)
+        with pytest.raises(ValueError, match="assistant.message"):
+            ev.as_assistant_message()
+
+
+class TestAsUserMessage:
+    """Tests for SessionEvent.as_user_message()."""
+
+    def test_happy_path(self) -> None:
+        ev = SessionEvent.model_validate(RAW_USER_MESSAGE)
+        data = ev.as_user_message()
+        assert isinstance(data, UserMessageData)
+        assert data.content == "hey there"
+
+    def test_wrong_event_type_raises(self) -> None:
+        ev = SessionEvent.model_validate(RAW_ASSISTANT_MESSAGE)
+        with pytest.raises(ValueError, match="user.message"):
+            ev.as_user_message()
+
+
+class TestAsToolExecution:
+    """Tests for SessionEvent.as_tool_execution()."""
+
+    def test_happy_path(self) -> None:
+        ev = SessionEvent.model_validate(RAW_TOOL_EXEC)
+        data = ev.as_tool_execution()
+        assert isinstance(data, ToolExecutionData)
+        assert data.success is True
+        assert data.model == "claude-opus-4.6-1m"
+
+    def test_wrong_event_type_raises(self) -> None:
+        ev = SessionEvent.model_validate(RAW_SESSION_START)
+        with pytest.raises(ValueError, match="tool.execution_complete"):
+            ev.as_tool_execution()

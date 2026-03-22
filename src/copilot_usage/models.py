@@ -10,8 +10,11 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
+
+_T = TypeVar("_T", bound=BaseModel)
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -225,6 +228,62 @@ class SessionEvent(BaseModel):
                 return UserMessageData.model_validate(self.data)
             case _:
                 return GenericEventData.model_validate(self.data)
+
+    def _as(self, expected_type: EventType, model_cls: type[_T]) -> _T:
+        """Validate event type and return parsed data.
+
+        Raises:
+            ValueError: If ``self.type`` does not match *expected_type*.
+            pydantic.ValidationError: If the ``data`` payload is malformed.
+        """
+        if self.type != expected_type:
+            raise ValueError(f"Expected {expected_type}, got {self.type}")
+        return model_cls.model_validate(self.data)
+
+    def as_session_start(self) -> SessionStartData:
+        """Return typed data.
+
+        Raises:
+            ValueError: If the event type is not ``session.start``.
+            pydantic.ValidationError: If the underlying ``data`` payload is malformed.
+        """
+        return self._as(EventType.SESSION_START, SessionStartData)
+
+    def as_session_shutdown(self) -> SessionShutdownData:
+        """Return typed data.
+
+        Raises:
+            ValueError: If the event type is not ``session.shutdown``.
+            pydantic.ValidationError: If the underlying ``data`` payload is malformed.
+        """
+        return self._as(EventType.SESSION_SHUTDOWN, SessionShutdownData)
+
+    def as_assistant_message(self) -> AssistantMessageData:
+        """Return typed data.
+
+        Raises:
+            ValueError: If the event type is not ``assistant.message``.
+            pydantic.ValidationError: If the underlying ``data`` payload is malformed.
+        """
+        return self._as(EventType.ASSISTANT_MESSAGE, AssistantMessageData)
+
+    def as_user_message(self) -> UserMessageData:
+        """Return typed data.
+
+        Raises:
+            ValueError: If the event type is not ``user.message``.
+            pydantic.ValidationError: If the underlying ``data`` payload is malformed.
+        """
+        return self._as(EventType.USER_MESSAGE, UserMessageData)
+
+    def as_tool_execution(self) -> ToolExecutionData:
+        """Return typed data.
+
+        Raises:
+            ValueError: If the event type is not ``tool.execution_complete``.
+            pydantic.ValidationError: If the underlying ``data`` payload is malformed.
+        """
+        return self._as(EventType.TOOL_EXECUTION_COMPLETE, ToolExecutionData)
 
 
 # ---------------------------------------------------------------------------
