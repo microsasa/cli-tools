@@ -23,6 +23,7 @@ from copilot_usage.models import (
 from copilot_usage.report import (
     _aggregate_model_metrics,
     _build_event_details,
+    _compute_session_totals,
     _estimate_premium_cost,
     _event_type_label,
     _filter_sessions,
@@ -2616,3 +2617,100 @@ class TestHasActivePeriodStats:
             active_model_calls=0,
         )
         assert _has_active_period_stats(session) is False
+
+
+class TestComputeSessionTotals:
+    """Tests for _compute_session_totals helper."""
+
+    def test_empty_list(self) -> None:
+        """An empty session list yields all-zero totals."""
+        totals = _compute_session_totals([])
+        assert totals.premium == 0
+        assert totals.model_calls == 0
+        assert totals.user_messages == 0
+        assert totals.api_duration_ms == 0
+        assert totals.output_tokens == 0
+        assert totals.session_count == 0
+
+    def test_single_session(self) -> None:
+        """A single session's values are reflected exactly."""
+        session = SessionSummary(
+            session_id="single-session",
+            total_premium_requests=10,
+            model_calls=5,
+            user_messages=3,
+            total_api_duration_ms=2000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        totals = _compute_session_totals([session])
+        assert totals.premium == 10
+        assert totals.model_calls == 5
+        assert totals.user_messages == 3
+        assert totals.api_duration_ms == 2000
+        assert totals.output_tokens == 500
+        assert totals.session_count == 1
+
+    def test_multiple_sessions(self) -> None:
+        """Totals are summed across multiple sessions."""
+        s1 = SessionSummary(
+            session_id="s1",
+            total_premium_requests=10,
+            model_calls=5,
+            user_messages=3,
+            total_api_duration_ms=2000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        s2 = SessionSummary(
+            session_id="s2",
+            total_premium_requests=20,
+            model_calls=15,
+            user_messages=7,
+            total_api_duration_ms=3000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1000),
+                ),
+            },
+        )
+        totals = _compute_session_totals([s1, s2])
+        assert totals.premium == 30
+        assert totals.model_calls == 20
+        assert totals.user_messages == 10
+        assert totals.api_duration_ms == 5000
+        assert totals.output_tokens == 1500
+        assert totals.session_count == 2
+
+    def test_sessions_with_multiple_models(self) -> None:
+        """Output tokens are summed across all models in all sessions."""
+        session = SessionSummary(
+            session_id="multi-model",
+            total_premium_requests=5,
+            model_calls=4,
+            user_messages=2,
+            total_api_duration_ms=1000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=300),
+                ),
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=700),
+                ),
+            },
+        )
+        totals = _compute_session_totals([session])
+        assert totals.output_tokens == 1000
+        assert totals.session_count == 1
+
+    def test_frozen_dataclass(self) -> None:
+        """_SessionTotals instances are immutable."""
+        totals = _compute_session_totals([])
+        with pytest.raises(AttributeError):
+            totals.premium = 42  # type: ignore[misc]
