@@ -36,21 +36,25 @@ gh api "repos/${REPO}/branches/main/protection/enforce_admins" -X POST > /dev/nu
 echo ""
 echo "=== Re-enabling auto-merge on saved PRs ==="
 if [[ -s "${STASH}" ]]; then
-  for PR in $(cat "${STASH}"); do
-    gh pr merge --repo "${REPO}" --auto --merge "$PR"
-    echo "  enabled auto-merge on #${PR}"
-  done
+  while read -r PR METHOD; do
+    case "${METHOD}" in
+      SQUASH) merge_flag="--squash" ;;
+      REBASE) merge_flag="--rebase" ;;
+      *)      merge_flag="--merge" ;;
+    esac
+    gh pr merge --repo "${REPO}" --auto "${merge_flag}" "$PR"
+    echo "  enabled auto-merge on #${PR} (${METHOD})"
+  done < "${STASH}"
 else
   echo "  (none to restore)"
 fi
-rm "${STASH}"
 
 AFTER=$(get_protection)
 echo ""
-echo "${BEFORE}" | python3 -c "
-import json, sys
+echo "${BEFORE}" | AFTER_JSON="${AFTER}" python3 -c "
+import json, os, sys
 before = json.load(sys.stdin)
-after = json.loads('''$(echo "${AFTER}")''')
+after = json.loads(os.environ['AFTER_JSON'])
 changing = {'enforce_admins'}
 R, G, NC = '\033[0;31m', '\033[0;32m', '\033[0m'
 h = ('Setting', 'Before', 'After', 'Status')
@@ -77,3 +81,5 @@ if not ok:
     sys.exit(1)
 print(f'\n{G}All settings restored correctly.{NC}')
 "
+
+rm "${STASH}"

@@ -585,7 +585,7 @@ gh api repos/microsasa/cli-tools/branches/main/protection | python3 -m json.tool
 | `required_approving_review_count` | `0` | The agent pipeline needs to self-merge. The quality gate submits an APPROVE review which satisfies auto-merge. Setting this to 1+ would block the agent pipeline entirely since there's no human in the loop. |
 | `dismiss_stale_reviews` | `true` | New pushes invalidate old approvals. Forces the quality gate to re-approve after any code changes (e.g., responder fixes). Without this, a push after quality gate approval could merge unreviewed code. |
 | `require_code_owner_reviews` | `false` | No CODEOWNERS file. Enabling would block the agent since no code owner can approve. |
-| `require_last_push_approval` | `false` | Requires someone OTHER than the last pusher to approve. The implementer and quality gate are both `github-actions[bot]` (same identity, database ID `41898282`). Enabling would block the agent pipeline. |
+| `require_last_push_approval` | `false` | Requires someone OTHER than the last pusher to approve. Currently the implementer (`github-actions[bot]`) and quality gate (PAT owner) are different actors, but we leave this disabled as a safety margin in case token usage changes. |
 | `required_conversation_resolution` | `true` | All review threads must be resolved before merge. Ensures Copilot review comments and human feedback are addressed. |
 | `enforce_admins` | `true` | Branch protection rules apply to admins too. Prevents accidental direct pushes to main. Must be temporarily disabled for safe admin merge. |
 | `required_signatures` | `false` | The agent cannot GPG-sign commits. Enabling would block the pipeline. |
@@ -598,7 +598,7 @@ gh api repos/microsasa/cli-tools/branches/main/protection | python3 -m json.tool
 
 ### Why `require_last_push_approval` cannot be enabled
 
-The implementer agent pushes code as `github-actions[bot]` (ID: `MDM6Qm90NDE4OTgyODI=`, database ID: `41898282`). The quality gate approves as `github-actions` (same ID: `MDM6Qm90NDE4OTgyODI=`, database ID: `41898282`). GitHub treats these as the same actor despite the display name difference (`[bot]` suffix). Enabling `require_last_push_approval` would mean the quality gate cannot approve PRs it also pushed to — which is every agent PR.
+The implementer agent pushes code via the default `GITHUB_TOKEN`, which appears as `github-actions[bot]` (database ID: `41898282`). The quality gate submits approvals via `GH_AW_WRITE_TOKEN` (a PAT), which appears as the PAT owner (the repo owner). Despite being different display names, the key question is whether GitHub considers the last pusher and the approver to be the same actor. In our setup, the implementer pushes as `github-actions[bot]` and the quality gate approves as the PAT owner — they are different actors. However, if workflows ever change to use the same token for both push and approve, enabling this setting would block the pipeline. We leave it disabled as a safety margin.
 
 ### Why the status check is `check` not `CI`
 
