@@ -29,6 +29,7 @@ from copilot_usage.models import (
 )
 from copilot_usage.parser import (
     _extract_session_name,
+    _infer_model_from_metrics,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -2117,3 +2118,100 @@ class TestGetAllSessionsOsError:
 
         assert len(results) == 1
         assert results[0].session_id == "sess-b"
+
+
+# ---------------------------------------------------------------------------
+# _infer_model_from_metrics — direct unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestInferModelFromMetrics:
+    """Direct unit tests for every branch of _infer_model_from_metrics."""
+
+    def test_empty_returns_none(self) -> None:
+        assert _infer_model_from_metrics({}) is None
+
+    def test_single_key_returns_it(self) -> None:
+        metrics = {"claude-sonnet-4": ModelMetrics(requests=RequestMetrics(count=5))}
+        assert _infer_model_from_metrics(metrics) == "claude-sonnet-4"
+
+    def test_multi_key_returns_highest_count(self) -> None:
+        metrics = {
+            "claude-sonnet-4": ModelMetrics(requests=RequestMetrics(count=3)),
+            "claude-opus-4.6": ModelMetrics(requests=RequestMetrics(count=10)),
+        }
+        assert _infer_model_from_metrics(metrics) == "claude-opus-4.6"
+
+    def test_tie_returns_a_model_deterministically(self) -> None:
+        """When counts are equal, tie-breaking must be stable and by insertion order.
+
+        This test documents (and locks in) the current tie-breaking behaviour:
+        the first key by insertion order wins when counts are equal.
+        If the behaviour changes, the test should be updated intentionally.
+        """
+        # First insertion order: model-a, then model-b
+        metrics = {
+            "model-a": ModelMetrics(requests=RequestMetrics(count=5)),
+            "model-b": ModelMetrics(requests=RequestMetrics(count=5)),
+        }
+        assert _infer_model_from_metrics(metrics) == "model-a"
+
+        # Reversed insertion order: model-b, then model-a
+        metrics_reversed = {
+            "model-b": ModelMetrics(requests=RequestMetrics(count=5)),
+            "model-a": ModelMetrics(requests=RequestMetrics(count=5)),
+        }
+        assert _infer_model_from_metrics(metrics_reversed) == "model-b"
+
+
+# ---------------------------------------------------------------------------
+# build_session_summary — completed session without currentModel (integration)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryInfersModelWhenCurrentModelAbsent:
+    """Shutdown event with no currentModel → _infer_model_from_metrics is used."""
+
+    def test_completed_session_infers_model_from_metrics(self, tmp_path: Path) -> None:
+        shutdown_no_model = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 8,
+                    "totalApiDurationMs": 5000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 3, "cost": 3},
+                            "usage": {
+                                "inputTokens": 1000,
+                                "outputTokens": 200,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        },
+                        "claude-opus-4.6": {
+                            "requests": {"count": 8, "cost": 8},
+                            "usage": {
+                                "inputTokens": 3000,
+                                "outputTokens": 600,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        },
+                    },
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, shutdown_no_model)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        # Highest count wins
+        assert summary.model == "claude-opus-4.6"
+        assert summary.is_active is False
+        assert summary.total_premium_requests == 8
