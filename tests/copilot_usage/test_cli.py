@@ -110,6 +110,14 @@ def test_cli_help() -> None:
     assert "usage tracker" in result.output.lower()
 
 
+def test_cli_version() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert "copilot-usage" in result.output
+    assert "0.0.1" in result.output
+
+
 def test_summary_command(tmp_path: Path) -> None:
     _write_session(tmp_path, "aaaa1111-0000-0000-0000-000000000000", name="First")
     _write_session(tmp_path, "bbbb2222-0000-0000-0000-000000000000", name="Second")
