@@ -127,6 +127,30 @@ def _has_active_period_stats(session: SessionSummary) -> bool:
 
 
 @dataclass(frozen=True)
+class _EffectiveStats:
+    """Active-period stats when available, otherwise session totals."""
+
+    model_calls: int
+    user_messages: int
+    output_tokens: int
+
+
+def _effective_stats(session: SessionSummary) -> _EffectiveStats:
+    """Return active-period stats if available, otherwise session totals."""
+    if _has_active_period_stats(session):
+        return _EffectiveStats(
+            model_calls=session.active_model_calls,
+            user_messages=session.active_user_messages,
+            output_tokens=session.active_output_tokens,
+        )
+    return _EffectiveStats(
+        model_calls=session.model_calls,
+        user_messages=session.user_messages,
+        output_tokens=_estimated_output_tokens(session),
+    )
+
+
+@dataclass(frozen=True)
 class _SessionTotals:
     """Aggregated totals across a list of sessions."""
 
@@ -218,18 +242,10 @@ def render_live_sessions(
         model = s.model or "—"
         running = _format_session_running_time(s)
 
-        if _has_active_period_stats(s):
-            # Resumed/active session with post-resume stats (even when 0)
-            messages = str(s.active_user_messages)
-            output_tok = s.active_output_tokens
-            est_cost = _estimate_premium_cost(s.model, s.active_model_calls)
-        else:
-            # Pure-active (never shut down): totals are already in model_metrics
-            messages = str(s.user_messages)
-            output_tok = _estimated_output_tokens(s)
-            est_cost = _estimate_premium_cost(s.model, s.model_calls)
-
-        tokens = format_tokens(output_tok)
+        stats = _effective_stats(s)
+        messages = str(stats.user_messages)
+        est_cost = _estimate_premium_cost(s.model, stats.model_calls)
+        tokens = format_tokens(stats.output_tokens)
         cwd = s.cwd or "—"
 
         table.add_row(
@@ -880,20 +896,10 @@ def _render_active_section(
         model = s.model or "—"
         running = _format_session_running_time(s)
 
-        # Use active_* fields when they are populated (resumed sessions
-        # or pure-active sessions processed by the current parser).
-        # Fall back to session totals for older or externally-constructed
-        # SessionSummary objects whose active_* fields may still be at
-        # their defaults (the current parser always populates active_*
-        # for pure-active sessions via build_session_summary).
-        if _has_active_period_stats(s):
-            model_calls = str(s.active_model_calls)
-            user_msgs = str(s.active_user_messages)
-            output_tokens = format_tokens(s.active_output_tokens)
-        else:
-            model_calls = str(s.model_calls)
-            user_msgs = str(s.user_messages)
-            output_tokens = format_tokens(_estimated_output_tokens(s))
+        stats = _effective_stats(s)
+        model_calls = str(stats.model_calls)
+        user_msgs = str(stats.user_messages)
+        output_tokens = format_tokens(stats.output_tokens)
 
         table.add_row(
             name,
@@ -1001,13 +1007,9 @@ def render_cost_view(
         grand_model_calls += s.model_calls
 
         if s.is_active:
-            has_active = _has_active_period_stats(s)
-            if has_active:
-                cost_calls = s.active_model_calls
-                cost_tokens = s.active_output_tokens
-            else:
-                cost_calls = s.model_calls
-                cost_tokens = _estimated_output_tokens(s)
+            cost_stats = _effective_stats(s)
+            cost_calls = cost_stats.model_calls
+            cost_tokens = cost_stats.output_tokens
             est = _estimate_premium_cost(s.model, cost_calls)
             table.add_row(
                 "  ↳ Since last shutdown",
@@ -1025,7 +1027,9 @@ def render_cost_view(
             has_shutdown_metrics = any(
                 mm.requests.count > 0 for mm in s.model_metrics.values()
             )
-            if (has_active and has_shutdown_metrics) or not s.model_metrics:
+            if (
+                _has_active_period_stats(s) and has_shutdown_metrics
+            ) or not s.model_metrics:
                 grand_output += cost_tokens
 
     table.add_section()
