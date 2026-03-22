@@ -2537,7 +2537,7 @@ class TestHistoricalSectionZeroPremiumWithMetrics:
 
 
 class TestBuildEventDetailsCatchAll:
-    """Issue #230 — _build_event_details catch-all branch for unrecognised event types."""
+    """Issue #230 — _build_event_details catch-all branch for event types without explicit details."""
 
     @pytest.mark.parametrize(
         "event_type",
