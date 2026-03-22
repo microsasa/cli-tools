@@ -2477,6 +2477,11 @@ class TestFilterSessionsNaiveStartTime:
         assert result == []
 
 
+# ---------------------------------------------------------------------------
+# Issue #208 — _render_model_table shows Cache Write column
+# ---------------------------------------------------------------------------
+
+
 class TestRenderModelTable:
     """Verify _render_model_table renders the Cache Write column."""
 
