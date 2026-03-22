@@ -2143,19 +2143,25 @@ class TestInferModelFromMetrics:
         assert _infer_model_from_metrics(metrics) == "claude-opus-4.6"
 
     def test_tie_returns_a_model_deterministically(self) -> None:
-        """When counts are equal, a specific model must always win.
+        """When counts are equal, tie-breaking must be stable and by insertion order.
 
-        This test documents (and locks in) the current tie-breaking behaviour.
+        This test documents (and locks in) the current tie-breaking behaviour:
+        the first key by insertion order wins when counts are equal.
         If the behaviour changes, the test should be updated intentionally.
         """
+        # First insertion order: model-a, then model-b
         metrics = {
             "model-a": ModelMetrics(requests=RequestMetrics(count=5)),
             "model-b": ModelMetrics(requests=RequestMetrics(count=5)),
         }
-        result = _infer_model_from_metrics(metrics)
-        assert result in ("model-a", "model-b")
-        # Run again to confirm stability within a single process
-        assert _infer_model_from_metrics(metrics) == result
+        assert _infer_model_from_metrics(metrics) == "model-a"
+
+        # Reversed insertion order: model-b, then model-a
+        metrics_reversed = {
+            "model-b": ModelMetrics(requests=RequestMetrics(count=5)),
+            "model-a": ModelMetrics(requests=RequestMetrics(count=5)),
+        }
+        assert _infer_model_from_metrics(metrics_reversed) == "model-b"
 
 
 # ---------------------------------------------------------------------------
@@ -2163,7 +2169,7 @@ class TestInferModelFromMetrics:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildSummaryInfersModelWhenCurrentModelAbsent:
+class TestBuildSessionSummaryInfersModelWhenCurrentModelAbsent:
     """Shutdown event with no currentModel → _infer_model_from_metrics is used."""
 
     def test_completed_session_infers_model_from_metrics(self, tmp_path: Path) -> None:
