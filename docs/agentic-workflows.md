@@ -567,6 +567,92 @@ gh run view <RUN_ID> --log-failed                    # View failed job logs
 ---
 
 <details>
+<summary>Branch Protection & Safe Admin Merge</summary>
+
+### Steady-state branch protection
+
+These are the correct settings for `main` on `microsasa/cli-tools`. They provide maximum protection while allowing the autonomous agent pipeline to function.
+
+To verify current settings match:
+```bash
+gh api repos/microsasa/cli-tools/branches/main/protection | python3 -m json.tool
+```
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `required_status_checks.strict` | `true` | PR must be up-to-date with main before merge. Prevents merging stale branches that haven't been tested against latest main. |
+| `required_status_checks.checks` | `["check"]` | The CI workflow (`ci.yml`) has a job named `check`. This is the **job name**, not the workflow name `CI`. GitHub matches against job names. Getting this wrong causes PRs to be permanently blocked (see incident below). |
+| `required_approving_review_count` | `0` | The agent pipeline needs to self-merge. The quality gate submits an APPROVE review which satisfies auto-merge. Setting this to 1+ would block the agent pipeline entirely since there's no human in the loop. |
+| `dismiss_stale_reviews` | `true` | New pushes invalidate old approvals. Forces the quality gate to re-approve after any code changes (e.g., responder fixes). Without this, a push after quality gate approval could merge unreviewed code. |
+| `require_code_owner_reviews` | `false` | No CODEOWNERS file. Enabling would block the agent since no code owner can approve. |
+| `require_last_push_approval` | `false` | Requires someone OTHER than the last pusher to approve. The implementer and quality gate are both `github-actions[bot]` (same identity, database ID `41898282`). Enabling would block the agent pipeline. |
+| `required_conversation_resolution` | `true` | All review threads must be resolved before merge. Ensures Copilot review comments and human feedback are addressed. |
+| `enforce_admins` | `true` | Branch protection rules apply to admins too. Prevents accidental direct pushes to main. Must be temporarily disabled for safe admin merge. |
+| `required_signatures` | `false` | The agent cannot GPG-sign commits. Enabling would block the pipeline. |
+| `required_linear_history` | `false` | Would force squash/rebase only. We want agents to use squash merge but humans should have the choice of merge commits. |
+| `allow_force_pushes` | `false` | Never allow force push to main. |
+| `allow_deletions` | `false` | Never allow deleting main. |
+| `block_creations` | `false` | No need to block branch creation. |
+| `lock_branch` | `false` | Main is not read-only. |
+| `allow_fork_syncing` | `false` | Not needed. |
+
+### Why `require_last_push_approval` cannot be enabled
+
+The implementer agent pushes code as `github-actions[bot]` (ID: `MDM6Qm90NDE4OTgyODI=`, database ID: `41898282`). The quality gate approves as `github-actions` (same ID: `MDM6Qm90NDE4OTgyODI=`, database ID: `41898282`). GitHub treats these as the same actor despite the display name difference (`[bot]` suffix). Enabling `require_last_push_approval` would mean the quality gate cannot approve PRs it also pushed to — which is every agent PR.
+
+### Why the status check is `check` not `CI`
+
+The CI workflow file is named `CI` (`name: CI` in `ci.yml`), but the job inside is named `check`. GitHub branch protection matches against **job names**, not workflow names. Setting the required check to `CI` causes every PR to be permanently BLOCKED because no check run with that name ever appears.
+
+This was the root cause of a 9-hour incident where the quality gate ran 100+ times on PR #246 without it ever merging.
+
+### Safe admin merge
+
+When you need to merge a PR to main bypassing the normal pipeline (e.g., hotfixes, reverts, PRs the agent can't handle):
+
+```bash
+# 1. Hold — disables enforce_admins, pauses auto-merge on open PRs
+scripts/hold-for-merge.sh microsasa/cli-tools
+
+# 2. Merge your PR
+gh pr merge <number> --squash   # or --merge, your choice
+
+# 3. Release — re-enables enforce_admins, restores auto-merge
+scripts/release-from-merge.sh microsasa/cli-tools
+```
+
+Both scripts:
+- Read all settings from the GitHub API before AND after making changes (never from memory)
+- Display a single table comparing Before → After for every protection setting
+- Color-coded: green = correct, red = something went wrong
+- Exit with error code 1 if any setting is wrong after the change
+- The only setting that changes is `enforce_admins` (`true` → `false` → `true`)
+
+The scripts exist because Copilot CLI repeatedly broke branch protection by manually reconstructing settings from memory during admin merges, causing:
+- `required_conversation_resolution` silently disabled (PRs #172, #189, #193 merged with unresolved threads)
+- Wrong status check name `CI` instead of `check` (PR #246 stuck for 9 hours, 100+ quality gate runs)
+- `dismiss_stale_reviews` and `required_approving_review_count` left wrong (PRs #252, #255, #256 merged without quality gate review)
+
+**Copilot CLI is not allowed to modify branch protection settings directly. Only through these scripts.**
+
+### Incident: 2026-03-22 — Branch protection broken, 3 PRs merged without review
+
+**Root cause**: During safe admin merge of PR #245, Copilot CLI disabled the entire branch protection config and reconstructed it with the wrong required status check name (`CI` instead of `check`). This caused:
+
+1. PR #246 permanently BLOCKED — the `CI` check never appeared, so auto-merge couldn't fire
+2. Orchestrator dispatched quality gate every 5 minutes — 100+ approval reviews accumulated
+3. When Copilot CLI fixed the check name, it didn't fix the review settings (`dismiss_stale_reviews: false`, `required_approving_review_count: 0`)
+4. Copilot CLI then tested hold/release scripts against live settings while the orchestrator was still running
+5. Three PRs (#252, #255, #256) auto-merged without any quality gate review
+6. All three had to be reverted
+
+**Resolution**: Reverted PRs #252, #255, #256. Reopened linked issues (#239, #242, #243). Created `scripts/hold-for-merge.sh` and `scripts/release-from-merge.sh` to make admin merge deterministic. Stripped Copilot CLI of permission to modify branch protection directly.
+
+</details>
+
+---
+
+<details>
 <summary>Our Agent Inventory</summary>
 
 | Agent | Trigger | Purpose | Safe outputs |
