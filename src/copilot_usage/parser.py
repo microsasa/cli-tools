@@ -355,7 +355,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         try:
             events = parse_events(events_path)
         except (FileNotFoundError, OSError) as exc:
-            logger.warning("Skipping vanished session %s: %s", events_path, exc)
+            logger.warning("Skipping vanished session {}: {}", events_path, exc)
             continue
         if not events:
             continue
