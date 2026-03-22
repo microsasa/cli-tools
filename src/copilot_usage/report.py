@@ -9,13 +9,13 @@ from __future__ import annotations
 import warnings
 from datetime import UTC, datetime, timedelta
 
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from copilot_usage.models import (
-    AssistantMessageData,
     CodeChanges,
     EventType,
     ModelMetrics,
@@ -23,7 +23,6 @@ from copilot_usage.models import (
     SessionShutdownData,
     SessionSummary,
     ToolExecutionData,
-    UserMessageData,
     merge_model_metrics,
 )
 from copilot_usage.pricing import lookup_model_pricing
@@ -297,40 +296,46 @@ def _build_event_details(ev: SessionEvent) -> str:
     """Build a one-line detail string for a timeline row."""
     match ev.type:
         case EventType.USER_MESSAGE:
-            data = ev.parse_data()
-            if isinstance(data, UserMessageData) and data.content:
+            try:
+                data = ev.as_user_message()
+            except (ValidationError, ValueError):
+                return ""
+            if data.content:
                 return _truncate(data.content)
             return ""
 
         case EventType.ASSISTANT_MESSAGE:
-            data = ev.parse_data()
-            if isinstance(data, AssistantMessageData):
-                parts: list[str] = []
-                if data.outputTokens:
-                    parts.append(f"tokens={data.outputTokens}")
-                if data.content:
-                    parts.append(_truncate(data.content, 60))
-                return "  ".join(parts)
-            return ""
+            try:
+                data = ev.as_assistant_message()
+            except (ValidationError, ValueError):
+                return ""
+            parts: list[str] = []
+            if data.outputTokens:
+                parts.append(f"tokens={data.outputTokens}")
+            if data.content:
+                parts.append(_truncate(data.content, 60))
+            return "  ".join(parts)
 
         case EventType.TOOL_EXECUTION_COMPLETE:
-            data = ev.parse_data()
-            if isinstance(data, ToolExecutionData):
-                parts_t: list[str] = []
-                tool_name = _extract_tool_name(data)
-                if tool_name:
-                    parts_t.append(tool_name)
-                parts_t.append("✓" if data.success else "✗")
-                if data.model:
-                    parts_t.append(f"model={data.model}")
-                return "  ".join(parts_t)
-            return ""
+            try:
+                data = ev.as_tool_execution()
+            except (ValidationError, ValueError):
+                return ""
+            parts_t: list[str] = []
+            tool_name = _extract_tool_name(data)
+            if tool_name:
+                parts_t.append(tool_name)
+            parts_t.append("✓" if data.success else "✗")
+            if data.model:
+                parts_t.append(f"model={data.model}")
+            return "  ".join(parts_t)
 
         case EventType.SESSION_SHUTDOWN:
-            data = ev.parse_data()
-            if isinstance(data, SessionShutdownData):
-                return f"type={data.shutdownType}" if data.shutdownType else ""
-            return ""
+            try:
+                data = ev.as_session_shutdown()
+            except (ValidationError, ValueError):
+                return ""
+            return f"type={data.shutdownType}" if data.shutdownType else ""
 
         case _:
             return ""
@@ -406,10 +411,12 @@ def _render_shutdown_cycles(
     shutdown_timestamps: list[datetime | None] = []
     for ev in events:
         if ev.type == EventType.SESSION_SHUTDOWN:
-            data = ev.parse_data()
-            if isinstance(data, SessionShutdownData):
-                shutdown_events.append(data)
-                shutdown_timestamps.append(ev.timestamp)
+            try:
+                data = ev.as_session_shutdown()
+            except (ValidationError, ValueError):
+                continue
+            shutdown_events.append(data)
+            shutdown_timestamps.append(ev.timestamp)
 
     if not shutdown_events:
         out.print("[dim]No shutdown cycles recorded.[/dim]")

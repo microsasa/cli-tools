@@ -226,6 +226,38 @@ class SessionEvent(BaseModel):
             case _:
                 return GenericEventData.model_validate(self.data)
 
+    def as_session_start(self) -> SessionStartData:
+        """Return typed data. Raises ValueError if event type is wrong."""
+        if self.type != EventType.SESSION_START:
+            raise ValueError(f"Expected {EventType.SESSION_START}, got {self.type}")
+        return SessionStartData.model_validate(self.data)
+
+    def as_session_shutdown(self) -> SessionShutdownData:
+        """Return typed data. Raises ValueError if event type is wrong."""
+        if self.type != EventType.SESSION_SHUTDOWN:
+            raise ValueError(f"Expected {EventType.SESSION_SHUTDOWN}, got {self.type}")
+        return SessionShutdownData.model_validate(self.data)
+
+    def as_assistant_message(self) -> AssistantMessageData:
+        """Return typed data. Raises ValueError if event type is wrong."""
+        if self.type != EventType.ASSISTANT_MESSAGE:
+            raise ValueError(f"Expected {EventType.ASSISTANT_MESSAGE}, got {self.type}")
+        return AssistantMessageData.model_validate(self.data)
+
+    def as_user_message(self) -> UserMessageData:
+        """Return typed data. Raises ValueError if event type is wrong."""
+        if self.type != EventType.USER_MESSAGE:
+            raise ValueError(f"Expected {EventType.USER_MESSAGE}, got {self.type}")
+        return UserMessageData.model_validate(self.data)
+
+    def as_tool_execution(self) -> ToolExecutionData:
+        """Return typed data. Raises ValueError if event type is wrong."""
+        if self.type != EventType.TOOL_EXECUTION_COMPLETE:
+            raise ValueError(
+                f"Expected {EventType.TOOL_EXECUTION_COMPLETE}, got {self.type}"
+            )
+        return ToolExecutionData.model_validate(self.data)
+
 
 # ---------------------------------------------------------------------------
 # Session summary (aggregated from all events in one session)
