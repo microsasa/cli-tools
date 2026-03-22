@@ -2,7 +2,7 @@
 
 import sys
 
-import loguru
+import loguru  # noqa: F401  — needed for pyright to resolve "loguru.Record" (stub-only type)
 from loguru import logger
 
 LEVEL_EMOJI: dict[str, str] = {
