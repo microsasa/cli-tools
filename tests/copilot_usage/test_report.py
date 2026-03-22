@@ -2966,3 +2966,65 @@ class TestFormatTimedelta:
             _format_timedelta(timedelta(hours=100, minutes=5, seconds=3))
             == "100h 5m 3s"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #250 — naive/aware datetime mixing regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestNaiveDatetimeMixing:
+    """Regression: naive start_time must not raise TypeError in any path."""
+
+    def test_render_summary_with_naive_start_times(self) -> None:
+        """render_summary with naive start_time sessions does not raise."""
+        s1 = _make_summary_session(
+            session_id="naive-1",
+            name="Naive Session 1",
+            start_time=datetime(2026, 3, 1),  # naive
+        )
+        s2 = _make_summary_session(
+            session_id="naive-2",
+            name="Naive Session 2",
+            start_time=datetime(2026, 6, 1),  # naive
+        )
+        output = _capture_summary([s1, s2])
+        assert "Copilot Usage Summary" in output
+        assert "2026-03-01" in output
+        assert "2026-06-01" in output
+
+    def test_render_summary_mixed_naive_and_aware(self) -> None:
+        """render_summary with a mix of naive and aware start_time does not raise."""
+        naive = _make_summary_session(
+            session_id="naive",
+            name="Naive",
+            start_time=datetime(2026, 3, 1),
+        )
+        aware = _make_summary_session(
+            session_id="aware",
+            name="Aware",
+            start_time=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        output = _capture_summary([naive, aware])
+        assert "Copilot Usage Summary" in output
+
+    def test_render_session_detail_naive_start_with_aware_events(self) -> None:
+        """render_session_detail with naive start_time and aware event timestamps."""
+        from copilot_usage.report import render_session_detail
+
+        naive_start = datetime(2026, 3, 8, 1, 11, 20)
+        summary = _make_session(start_time=naive_start, is_active=False)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "hello"},
+                timestamp=datetime(2026, 3, 8, 1, 12, 0, tzinfo=UTC),
+            ),
+            _make_event(
+                EventType.ASSISTANT_MESSAGE,
+                data={"content": "hi", "outputTokens": 10, "messageId": "m1"},
+                timestamp=datetime(2026, 3, 8, 1, 12, 30, tzinfo=UTC),
+            ),
+        ]
+        output = _capture_console(render_session_detail, events, summary)
+        assert "Recent Events" in output

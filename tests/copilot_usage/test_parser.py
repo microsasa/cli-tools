@@ -1609,6 +1609,34 @@ class TestGetAllSessionsEdgeCases:
         result = get_all_sessions(tmp_path / "does_not_exist")
         assert result == []
 
+    def test_naive_and_none_start_times_do_not_raise(self, tmp_path: Path) -> None:
+        """Regression: mixing naive start_time with None (→ aware EPOCH) must not raise."""
+        naive_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "naive-session",
+                    "version": 1,
+                    "startTime": "2026-03-08T01:11:20.932",
+                    "context": {},
+                },
+                "id": "e1",
+            }
+        )
+        no_time_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {"sessionId": "no-time", "version": 1, "context": {}},
+                "id": "e2",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", naive_start)
+        _write_events(tmp_path / "b" / "events.jsonl", no_time_start)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 2
+        assert result[0].session_id == "naive-session"
+        assert result[1].session_id == "no-time"
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — parser.py

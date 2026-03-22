@@ -602,8 +602,14 @@ def render_session_detail(
 
     _render_active_period(summary, target_console=out)
 
-    session_start = summary.start_time or (
-        events[0].timestamp if events and events[0].timestamp else datetime.now(tz=UTC)
+    session_start = (
+        ensure_aware(summary.start_time)
+        if summary.start_time
+        else (
+            events[0].timestamp
+            if events and events[0].timestamp
+            else datetime.now(tz=UTC)
+        )
     )
     _render_recent_events(events, session_start, target_console=out)
     out.print()
@@ -661,7 +667,9 @@ def _render_summary_header(
     sessions: list[SessionSummary],
 ) -> None:
     """Print the report header with date range."""
-    start_times = [s.start_time for s in sessions if s.start_time is not None]
+    start_times = [
+        ensure_aware(s.start_time) for s in sessions if s.start_time is not None
+    ]
     if start_times:
         earliest = min(start_times).strftime("%Y-%m-%d")
         latest = max(start_times).strftime("%Y-%m-%d")
