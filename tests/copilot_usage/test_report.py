@@ -2482,6 +2482,76 @@ class TestRenderModelTable:
 # ---------------------------------------------------------------------------
 
 
+class TestSessionDetailFallbackToNow:
+    """Issue #230 — render_session_detail fallback when start_time and first event timestamp are None."""
+
+    def test_session_detail_no_start_time_no_event_timestamp(self) -> None:
+        """Both summary.start_time and events[0].timestamp are None → falls back to datetime.now(UTC)."""
+        from copilot_usage.report import render_session_detail
+
+        now = datetime.now(tz=UTC)
+        summary = SessionSummary(session_id="no-anchor", start_time=None)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "first"},
+                timestamp=None,
+            ),
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "second"},
+                timestamp=now,
+            ),
+        ]
+        output = _capture_console(render_session_detail, events, summary)
+        assert "Recent Events" in output
+        # The second event's relative time should be approximately +0:00
+        # since session_start falls back to datetime.now(UTC)
+        assert "+0:00" in output
+
+
+class TestHistoricalSectionZeroPremiumWithMetrics:
+    """Issue #230 — completed session with 0 premium requests but non-empty model_metrics."""
+
+    def test_zero_premium_with_model_metrics_appears_in_historical(self) -> None:
+        """Completed session using only free/low-multiplier models should still appear in historical."""
+        session = SessionSummary(
+            session_id="free-model-sess-01",
+            name="FreeModelSession",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=0,
+            user_messages=3,
+            model_calls=4,
+            model_metrics={
+                "gpt-5-mini": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=0),
+                    usage=TokenUsage(outputTokens=800),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Historical Totals" in output
+        assert "FreeModelSession" in output
+
+
+class TestBuildEventDetailsCatchAll:
+    """Issue #230 — _build_event_details catch-all branch for event types without explicit details."""
+
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            EventType.SESSION_START,
+            EventType.SESSION_RESUME,
+            EventType.ABORT,
+        ],
+    )
+    def test_catch_all_returns_empty_string(self, event_type: str) -> None:
+        ev = _make_event(event_type, data={"sessionId": "s1"})
+        assert _build_event_details(ev) == ""
+
+
 class TestHasActivePeriodStats:
     """Tests for the _has_active_period_stats helper."""
 
