@@ -145,9 +145,7 @@ def _compute_session_totals(sessions: list[SessionSummary]) -> _SessionTotals:
         model_calls=sum(s.model_calls for s in sessions),
         user_messages=sum(s.user_messages for s in sessions),
         api_duration_ms=sum(s.total_api_duration_ms for s in sessions),
-        output_tokens=sum(
-            mm.usage.outputTokens for s in sessions for mm in s.model_metrics.values()
-        ),
+        output_tokens=sum(_estimated_output_tokens(s) for s in sessions),
         session_count=len(sessions),
     )
 
@@ -672,17 +670,17 @@ def _render_summary_header(
 
 def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     """Render the totals panel."""
-    t = _compute_session_totals(sessions)
+    totals = _compute_session_totals(sessions)
 
-    pr_label = "premium request" if t.premium == 1 else "premium requests"
-    session_label = "session" if t.session_count == 1 else "sessions"
+    pr_label = "premium request" if totals.premium == 1 else "premium requests"
+    session_label = "session" if totals.session_count == 1 else "sessions"
     lines = [
-        f"[green]{t.premium}[/green] {pr_label}   "
-        f"[green]{t.model_calls}[/green] model calls   "
-        f"[green]{t.user_messages}[/green] user messages   "
-        f"[green]{format_tokens(t.output_tokens)}[/green] output tokens",
-        f"[green]{format_duration(t.api_duration_ms)}[/green] API duration   "
-        f"[green]{t.session_count}[/green] {session_label}",
+        f"[green]{totals.premium}[/green] {pr_label}   "
+        f"[green]{totals.model_calls}[/green] model calls   "
+        f"[green]{totals.user_messages}[/green] user messages   "
+        f"[green]{format_tokens(totals.output_tokens)}[/green] output tokens",
+        f"[green]{format_duration(totals.api_duration_ms)}[/green] API duration   "
+        f"[green]{totals.session_count}[/green] {session_label}",
     ]
 
     console.print(Panel("\n".join(lines), title="Totals", border_style="cyan"))
@@ -827,14 +825,14 @@ def _render_historical_section(
         return
 
     # Totals panel
-    t = _compute_session_totals(historical)
+    totals = _compute_session_totals(historical)
 
     lines = [
-        f"[green]{t.premium}[/green] premium requests   "
-        f"[green]{t.model_calls}[/green] model calls   "
-        f"[green]{t.user_messages}[/green] user messages   "
-        f"[green]{format_tokens(t.output_tokens)}[/green] output tokens",
-        f"[green]{format_duration(t.api_duration_ms)}[/green] API duration",
+        f"[green]{totals.premium}[/green] premium requests   "
+        f"[green]{totals.model_calls}[/green] model calls   "
+        f"[green]{totals.user_messages}[/green] user messages   "
+        f"[green]{format_tokens(totals.output_tokens)}[/green] output tokens",
+        f"[green]{format_duration(totals.api_duration_ms)}[/green] API duration",
     ]
     console.print(
         Panel("\n".join(lines), title="📊 Historical Totals", border_style="cyan")
