@@ -328,6 +328,12 @@ class TestDiscoverSessions:
     def test_nonexistent_directory(self, tmp_path: Path) -> None:
         assert discover_sessions(tmp_path / "nope") == []
 
+    def test_regular_file_returns_empty(self, tmp_path: Path) -> None:
+        """Passing an existing file (not a directory) → returns []."""
+        some_file = tmp_path / "some_file.txt"
+        some_file.write_text("not a directory", encoding="utf-8")
+        assert discover_sessions(some_file) == []
+
     def test_stat_race_file_deleted_between_glob_and_sort(self, tmp_path: Path) -> None:
         """TOCTOU: session dir deleted after glob but before stat()."""
         s1 = tmp_path / "session-a" / "events.jsonl"
@@ -647,6 +653,33 @@ class TestBuildSessionSummaryResumed:
         events = parse_events(p)
         summary = build_session_summary(events)
         assert summary.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+
+    def test_resume_without_timestamp(self, tmp_path: Path) -> None:
+        """session.resume with no timestamp → is_active but last_resume_time is None."""
+        resume_no_ts = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume-no-ts",
+                "timestamp": None,
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            resume_no_ts,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.last_resume_time is None
 
     def test_resumed_session_no_current_model_infers_from_metrics(
         self, tmp_path: Path
@@ -1877,6 +1910,20 @@ class TestConfigModelReading:
         events = parse_events(p)
         summary = build_session_summary(events, config_path=config)
         assert summary.model is None
+
+    def test_unreadable_config_returns_none(self, tmp_path: Path) -> None:
+        """config.json exists but is unreadable (OSError) → model stays None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+        config.chmod(0o000)
+        try:
+            p = tmp_path / "s" / "events.jsonl"
+            _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+            events = parse_events(p)
+            summary = build_session_summary(events, config_path=config)
+            assert summary.model is None
+        finally:
+            config.chmod(0o644)
 
 
 # ---------------------------------------------------------------------------
