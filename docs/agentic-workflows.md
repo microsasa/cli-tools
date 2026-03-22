@@ -344,14 +344,19 @@ Settings required for the autonomous pipeline:
 
 ### Branch protection API
 
+> **⚠️ WARNING**: The `PUT` API replaces the ENTIRE branch protection config. Omitting a field silently sets it to false/0. **Never use PUT directly** — use the dedicated sub-resource endpoints (e.g., `/enforce_admins`, `/required_pull_request_reviews`) or the safe admin merge scripts below.
+
+> **📌 Canonical settings**: See the [Steady-State Branch Protection Settings](#steady-state-branch-protection-settings) table for the authoritative values. The snippet below is an example only and may be stale.
+
 ```bash
+# EXAMPLE ONLY — see canonical settings table for current values
 gh api repos/OWNER/REPO/branches/main/protection -X PUT --input - <<'EOF'
 {
   "required_status_checks": { "strict": true, "contexts": ["check"] },
   "enforce_admins": true,
   "required_pull_request_reviews": {
-    "dismiss_stale_reviews": false,
-    "required_approving_review_count": 1
+    "dismiss_stale_reviews": true,
+    "required_approving_review_count": 0
   },
   "restrictions": null,
   "required_conversation_resolution": true
@@ -361,28 +366,20 @@ EOF
 
 ### Admin merge workaround (solo repos)
 
-With `enforce_admins: true` and 1 required approval, you can't merge your own PRs without an external approver. Workaround:
+With `enforce_admins: true` and 0 required approvals, the agent pipeline can self-merge via quality gate approval + auto-merge. For human PRs that need admin merge, use the deterministic scripts:
 
 ```bash
-# 1. FIRST: Disable auto-merge on all other open PRs (CRITICAL — race condition, see #83)
-for pr in $(gh pr list --state open --json number,autoMergeRequest --jq '.[] | select(.autoMergeRequest != null) | .number'); do
-  gh pr merge --disable-auto "$pr"
-done
+# 1. Hold — disables enforce_admins, pauses auto-merge, shows verification table
+scripts/hold-for-merge.sh owner/repo
 
-# 2. Temporarily disable enforce_admins
-gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X DELETE
-
-# 3. Admin merge
+# 2. Merge your PR manually
 gh pr merge <PR> --merge --admin --delete-branch
 
-# 4. Re-enable enforce_admins
-gh api repos/OWNER/REPO/branches/main/protection/enforce_admins -X POST
-
-# 5. Re-enable auto-merge on those PRs
-for pr in <saved list>; do
-  gh pr merge --auto --merge "$pr"
-done
+# 3. Release — re-enables enforce_admins, restores auto-merge (preserving merge method), shows verification table
+scripts/release-from-merge.sh owner/repo
 ```
+
+> **🚫 Do NOT perform safe admin merges manually.** The scripts exist because manual API calls broke branch protection twice (see bug #261). Always use the scripts.
 
 > **Warning**: Skipping steps 1 and 5 allows any PR with auto-merge + green CI to merge without required approvals during the enforce_admins disable window. PR #69 merged with zero approvals due to this race condition (issue #83).
 
@@ -596,9 +593,9 @@ gh api repos/microsasa/cli-tools/branches/main/protection | python3 -m json.tool
 | `lock_branch` | `false` | Main is not read-only. |
 | `allow_fork_syncing` | `false` | Not needed. |
 
-### Why `require_last_push_approval` cannot be enabled
+### Why `require_last_push_approval` is disabled
 
-The implementer agent pushes code via the default `GITHUB_TOKEN`, which appears as `github-actions[bot]` (database ID: `41898282`). The quality gate submits approvals via `GH_AW_WRITE_TOKEN` (a PAT), which appears as the PAT owner (the repo owner). Despite being different display names, the key question is whether GitHub considers the last pusher and the approver to be the same actor. In our setup, the implementer pushes as `github-actions[bot]` and the quality gate approves as the PAT owner — they are different actors. However, if workflows ever change to use the same token for both push and approve, enabling this setting would block the pipeline. We leave it disabled as a safety margin.
+The implementer agent pushes code via the default `GITHUB_TOKEN`, which appears as `github-actions[bot]`. The quality gate submits approvals via `GH_AW_WRITE_TOKEN` (a PAT), which appears as the PAT owner (the repo owner). These are currently different actors, so `require_last_push_approval` would technically work today. However, we leave it disabled as a conservative choice — if the token setup ever changes (e.g., both steps use the same token), enabling this setting would silently block the entire agent pipeline with no obvious error.
 
 ### Why the status check is `check` not `CI`
 
