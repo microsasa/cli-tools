@@ -61,6 +61,21 @@ def format_tokens(n: int) -> str:
     return str(n)
 
 
+def _format_timedelta(td: timedelta) -> str:
+    """Format a timedelta to human-readable duration (e.g. '1h 5m 30s')."""
+    total_seconds = max(int(td.total_seconds()), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
 def format_duration(ms: int) -> str:
     """Format milliseconds to human-readable duration.
 
@@ -74,36 +89,12 @@ def format_duration(ms: int) -> str:
         >>> format_duration(3661000)
         '1h 1m 1s'
     """
-    if ms <= 0:
-        return "0s"
-    total_seconds = ms // 1000
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-
-    parts: list[str] = []
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}m")
-    if seconds or not parts:
-        parts.append(f"{seconds}s")
-    return " ".join(parts)
+    return _format_timedelta(timedelta(milliseconds=ms))
 
 
 def _format_elapsed_since(start: datetime) -> str:
-    """Return a human-readable elapsed time from *start* to now.
-
-    Formats as ``Xh Ym`` when >= 1 hour, otherwise ``Ym Zs``.
-    """
-    now = datetime.now(tz=UTC)
-    delta = now - ensure_aware(start)
-    total_seconds = max(int(delta.total_seconds()), 0)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours > 0:
-        return f"{hours}h {minutes}m"
-    return f"{minutes}m {seconds}s"
+    """Return a human-readable elapsed time from *start* to now."""
+    return _format_timedelta(datetime.now(tz=UTC) - ensure_aware(start))
 
 
 def _estimated_output_tokens(session: SessionSummary) -> int:
@@ -295,15 +286,7 @@ def _format_detail_duration(
     """Return a human-readable duration string between two timestamps."""
     if start is None or end is None:
         return "—"
-    delta = end - start
-    total_seconds = max(int(delta.total_seconds()), 0)
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    minutes, seconds = divmod(total_seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m {seconds}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes}m"
+    return _format_timedelta(end - start)
 
 
 def _event_type_label(event_type: str) -> Text:
