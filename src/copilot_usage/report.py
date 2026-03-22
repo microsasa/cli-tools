@@ -4,8 +4,6 @@ Uses Rich tables and panels to display session information in
 the terminal.
 """
 
-from __future__ import annotations
-
 import warnings
 from datetime import UTC, datetime, timedelta
 

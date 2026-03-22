@@ -6,8 +6,6 @@
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 
-from __future__ import annotations
-
 import sys
 
 from loguru import logger

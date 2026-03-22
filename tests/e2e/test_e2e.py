@@ -1,7 +1,5 @@
 """End-to-end tests running CLI commands against anonymized fixture data."""
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 

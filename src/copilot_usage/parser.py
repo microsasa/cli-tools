@@ -5,8 +5,6 @@ Discovers session directories, parses ``events.jsonl`` files into typed
 aggregates.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from pathlib import Path

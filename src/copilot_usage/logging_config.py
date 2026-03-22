@@ -1,14 +1,9 @@
 """Logging configuration — console-only for CLI tool."""
 
-from __future__ import annotations
-
 import sys
-from typing import TYPE_CHECKING
 
+import loguru  # noqa: F401  — needed for pyright to resolve "loguru.Record" (stub-only type)
 from loguru import logger
-
-if TYPE_CHECKING:
-    from loguru import Record
 
 LEVEL_EMOJI: dict[str, str] = {
     "TRACE": "🔍",
@@ -28,7 +23,7 @@ CONSOLE_FORMAT = (
 )
 
 
-def _emoji_patcher(record: Record) -> None:
+def _emoji_patcher(record: "loguru.Record") -> None:
     record["extra"]["emoji"] = LEVEL_EMOJI.get(record["level"].name, "  ")
 
 

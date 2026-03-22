@@ -2,8 +2,6 @@
 
 # pyright: reportPrivateUsage=false
 
-from __future__ import annotations
-
 import re
 import warnings
 from datetime import UTC, datetime, timedelta
