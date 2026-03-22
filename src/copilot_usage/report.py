@@ -5,6 +5,7 @@ the terminal.
 """
 
 import warnings
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from pydantic import ValidationError
@@ -122,6 +123,30 @@ def _has_active_period_stats(session: SessionSummary) -> bool:
         or session.active_user_messages > 0
         or session.active_output_tokens > 0
         or session.active_model_calls > 0
+    )
+
+
+@dataclass(frozen=True)
+class _SessionTotals:
+    """Aggregated totals across a list of sessions."""
+
+    premium: int
+    model_calls: int
+    user_messages: int
+    api_duration_ms: int
+    output_tokens: int
+    session_count: int
+
+
+def _compute_session_totals(sessions: list[SessionSummary]) -> _SessionTotals:
+    """Compute aggregated totals across *sessions*."""
+    return _SessionTotals(
+        premium=sum(s.total_premium_requests for s in sessions),
+        model_calls=sum(s.model_calls for s in sessions),
+        user_messages=sum(s.user_messages for s in sessions),
+        api_duration_ms=sum(s.total_api_duration_ms for s in sessions),
+        output_tokens=sum(_estimated_output_tokens(s) for s in sessions),
+        session_count=len(sessions),
     )
 
 
@@ -645,25 +670,17 @@ def _render_summary_header(
 
 def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     """Render the totals panel."""
-    total_premium = sum(s.total_premium_requests for s in sessions)
-    total_model_calls = sum(s.model_calls for s in sessions)
-    total_user_messages = sum(s.user_messages for s in sessions)
-    total_duration = sum(s.total_api_duration_ms for s in sessions)
-    total_sessions = len(sessions)
+    totals = _compute_session_totals(sessions)
 
-    total_output = sum(
-        mm.usage.outputTokens for s in sessions for mm in s.model_metrics.values()
-    )
-
-    pr_label = "premium request" if total_premium == 1 else "premium requests"
-    session_label = "session" if total_sessions == 1 else "sessions"
+    pr_label = "premium request" if totals.premium == 1 else "premium requests"
+    session_label = "session" if totals.session_count == 1 else "sessions"
     lines = [
-        f"[green]{total_premium}[/green] {pr_label}   "
-        f"[green]{total_model_calls}[/green] model calls   "
-        f"[green]{total_user_messages}[/green] user messages   "
-        f"[green]{format_tokens(total_output)}[/green] output tokens",
-        f"[green]{format_duration(total_duration)}[/green] API duration   "
-        f"[green]{total_sessions}[/green] {session_label}",
+        f"[green]{totals.premium}[/green] {pr_label}   "
+        f"[green]{totals.model_calls}[/green] model calls   "
+        f"[green]{totals.user_messages}[/green] user messages   "
+        f"[green]{format_tokens(totals.output_tokens)}[/green] output tokens",
+        f"[green]{format_duration(totals.api_duration_ms)}[/green] API duration   "
+        f"[green]{totals.session_count}[/green] {session_label}",
     ]
 
     console.print(Panel("\n".join(lines), title="Totals", border_style="cyan"))
@@ -808,20 +825,14 @@ def _render_historical_section(
         return
 
     # Totals panel
-    total_premium = sum(s.total_premium_requests for s in historical)
-    total_model_calls = sum(s.model_calls for s in historical)
-    total_user_messages = sum(s.user_messages for s in historical)
-    total_duration = sum(s.total_api_duration_ms for s in historical)
-    total_output = sum(
-        mm.usage.outputTokens for s in historical for mm in s.model_metrics.values()
-    )
+    totals = _compute_session_totals(historical)
 
     lines = [
-        f"[green]{total_premium}[/green] premium requests   "
-        f"[green]{total_model_calls}[/green] model calls   "
-        f"[green]{total_user_messages}[/green] user messages   "
-        f"[green]{format_tokens(total_output)}[/green] output tokens",
-        f"[green]{format_duration(total_duration)}[/green] API duration",
+        f"[green]{totals.premium}[/green] premium requests   "
+        f"[green]{totals.model_calls}[/green] model calls   "
+        f"[green]{totals.user_messages}[/green] user messages   "
+        f"[green]{format_tokens(totals.output_tokens)}[/green] output tokens",
+        f"[green]{format_duration(totals.api_duration_ms)}[/green] API duration",
     ]
     console.print(
         Panel("\n".join(lines), title="📊 Historical Totals", border_style="cyan")
