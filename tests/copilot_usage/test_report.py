@@ -28,11 +28,13 @@ from copilot_usage.report import (
     _event_type_label,
     _filter_sessions,
     _format_detail_duration,
+    _format_elapsed_since,
     _format_relative_time,
     _format_session_running_time,
     _has_active_period_stats,
     _render_model_table,
     _render_shutdown_cycles,
+    _truncate,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -2714,3 +2716,105 @@ class TestComputeSessionTotals:
         totals = _compute_session_totals([])
         with pytest.raises(AttributeError):
             totals.premium = 42  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Issue #237 — Direct unit tests for _truncate
+# ---------------------------------------------------------------------------
+
+
+class TestTruncate:
+    def test_exact_boundary_no_truncation(self) -> None:
+        """len(text) == max_len should return the original string unchanged."""
+        assert _truncate("hello", max_len=5) == "hello"
+
+    def test_shorter_than_max_no_truncation(self) -> None:
+        """len(text) < max_len should return the original string unchanged."""
+        assert _truncate("hello", max_len=6) == "hello"
+
+    def test_truncation_appends_ellipsis(self) -> None:
+        """When text exceeds max_len, result is max_len chars ending with '…'."""
+        result = _truncate("hello world", max_len=8)
+        assert result == "hello w…"
+        assert len(result) == 8
+
+    def test_unicode_slice_by_codepoint(self) -> None:
+        """Truncation slices by codepoint index, not byte offset."""
+        text = "👋" * 10  # 10 codepoints
+        result = _truncate(text, max_len=5)
+        assert len(result) == 5
+        assert result.endswith("…")
+
+    def test_max_len_zero_returns_empty(self) -> None:
+        """max_len=0 must return an empty string."""
+        assert _truncate("hello", max_len=0) == ""
+
+    def test_max_len_one_returns_ellipsis(self) -> None:
+        """max_len=1 with text longer than 1 returns just the ellipsis."""
+        assert _truncate("hello", max_len=1) == "…"
+
+    def test_max_len_one_single_char_no_truncation(self) -> None:
+        """max_len=1 with a single-char string returns it unchanged."""
+        assert _truncate("x", max_len=1) == "x"
+
+
+# ---------------------------------------------------------------------------
+# Issue #237 — Direct unit tests for _format_elapsed_since
+# ---------------------------------------------------------------------------
+
+
+class TestFormatElapsedSince:
+    def test_hours_branch(self) -> None:
+        """When elapsed >= 1 hour, format is 'Xh Ym'."""
+        now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
+        start = now - timedelta(hours=2, minutes=15)
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
+            mock_dt.now.return_value = now
+            result = _format_elapsed_since(start)
+        assert result == "2h 15m"
+
+    def test_minutes_seconds_branch(self) -> None:
+        """When elapsed < 1 hour, format is 'Ym Zs'."""
+        now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
+        start = now - timedelta(minutes=5, seconds=30)
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
+            mock_dt.now.return_value = now
+            result = _format_elapsed_since(start)
+        assert result == "5m 30s"
+
+    def test_zero_elapsed(self) -> None:
+        """When start == now, format is '0m 0s'."""
+        now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
+        with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
+            mock_dt.now.return_value = now
+            result = _format_elapsed_since(now)
+        assert result == "0m 0s"
+
+
+# ---------------------------------------------------------------------------
+# Issue #237 — Boundary tests for _format_detail_duration
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDetailDurationBoundaries:
+    def test_exactly_60_seconds(self) -> None:
+        """60s sits on the < 60 boundary — should produce '1m 0s'."""
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        assert _format_detail_duration(start, start + timedelta(seconds=60)) == "1m 0s"
+
+    def test_exactly_3600_seconds(self) -> None:
+        """3600s sits on the minutes < 60 boundary — should produce '1h 0m'."""
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        assert (
+            _format_detail_duration(start, start + timedelta(seconds=3600)) == "1h 0m"
+        )
+
+    def test_start_none(self) -> None:
+        """None start should return em-dash."""
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        assert _format_detail_duration(None, start) == "—"
+
+    def test_end_none(self) -> None:
+        """None end should return em-dash."""
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        assert _format_detail_duration(start, None) == "—"

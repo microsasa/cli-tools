@@ -263,8 +263,12 @@ def _format_relative_time(delta: timedelta) -> str:
 
 def _truncate(text: str, max_len: int = _MAX_CONTENT_LEN) -> str:
     """Truncate *text* to *max_len* characters, appending '…' if needed."""
+    if max_len <= 0:
+        return ""
     if len(text) <= max_len:
         return text
+    if max_len == 1:
+        return "…"
     return text[: max_len - 1] + "…"
 
 
