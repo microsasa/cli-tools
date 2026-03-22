@@ -9,8 +9,6 @@ AI model used.  This module provides:
 * A cost-estimation function that works with ``SessionSummary.model_metrics``.
 """
 
-from __future__ import annotations
-
 import warnings
 from enum import StrEnum
 from typing import Final

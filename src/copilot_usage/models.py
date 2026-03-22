@@ -5,16 +5,12 @@ These models provide typed parsing for all known event types plus a
 flexible fallback for unknown ones.
 """
 
-from __future__ import annotations
-
+import builtins
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TypeVar
 
 from pydantic import BaseModel, Field
-
-_T = TypeVar("_T", bound=BaseModel)
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -229,7 +225,9 @@ class SessionEvent(BaseModel):
             case _:
                 return GenericEventData.model_validate(self.data)
 
-    def _as(self, expected_type: EventType, model_cls: type[_T]) -> _T:
+    def _as[T: BaseModel](
+        self, expected_type: EventType, model_cls: builtins.type[T]
+    ) -> T:
         """Validate event type and return parsed data.
 
         Raises:

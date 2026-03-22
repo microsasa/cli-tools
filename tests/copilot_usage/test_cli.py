@@ -1,7 +1,5 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
-from __future__ import annotations
-
 import json
 import threading
 from datetime import UTC, datetime, timedelta, timezone

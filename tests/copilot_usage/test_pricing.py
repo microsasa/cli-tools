@@ -1,7 +1,5 @@
 """Tests for copilot_usage.pricing."""
 
-from __future__ import annotations
-
 import warnings
 
 import pytest

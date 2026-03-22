@@ -4,8 +4,6 @@ Provides ``summary``, ``session``, ``cost``, and ``live`` commands,
 plus an interactive Rich-based session when invoked without a subcommand.
 """
 
-from __future__ import annotations
-
 import select
 import sys
 import threading
