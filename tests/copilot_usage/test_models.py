@@ -140,7 +140,7 @@ def test_code_changes() -> None:
     c2 = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
     assert c2.linesAdded == 10
     assert c2.linesRemoved == 2
-    assert len(c2.filesModified) == 1
+    assert c2.filesModified == ["a.py"]
 
 
 # ---------------------------------------------------------------------------
