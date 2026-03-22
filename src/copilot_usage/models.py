@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 # Shared datetime utilities
 # ---------------------------------------------------------------------------
 
+# Aware datetime sentinel used as a sort-key fallback for sessions without a start_time.
 EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
-"""Aware datetime sentinel used as a sort-key fallback for sessions without a start_time."""
 
 
 def ensure_aware(dt: datetime) -> datetime:

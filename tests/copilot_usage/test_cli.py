@@ -638,7 +638,7 @@ class TestFileChangeHandler:
         ),
     ],
 )
-def test_ensure_aware(dt_in: datetime | None, expected: datetime | None) -> None:
+def test_ensure_aware_opt(dt_in: datetime | None, expected: datetime | None) -> None:
     """ensure_aware_opt handles None, aware, and naive datetimes correctly."""
     result = ensure_aware_opt(dt_in)
     assert result == expected
@@ -646,7 +646,7 @@ def test_ensure_aware(dt_in: datetime | None, expected: datetime | None) -> None
         assert result.tzinfo is not None
 
 
-def test_ensure_aware_preserves_non_utc_timezone() -> None:
+def test_ensure_aware_opt_preserves_non_utc_timezone() -> None:
     """An already-aware dt with a non-UTC tz is returned unchanged."""
     non_utc = timezone(offset=timedelta(hours=5))
     dt_in = datetime(2025, 1, 1, 12, 0, 0, tzinfo=non_utc)
