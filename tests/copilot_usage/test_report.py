@@ -33,6 +33,7 @@ from copilot_usage.report import (
     _format_session_running_time,
     _has_active_period_stats,
     _render_model_table,
+    _render_shutdown_cycles,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -2142,6 +2143,39 @@ class TestBuildEventDetails:
         details = _build_event_details(ev)
         assert "hello" in details
         assert "tokens=0" not in details
+
+    def test_user_message_malformed_data_returns_empty(self) -> None:
+        ev = _make_event(EventType.USER_MESSAGE, data={"attachments": 12345})
+        assert _build_event_details(ev) == ""
+
+    def test_assistant_message_malformed_data_returns_empty(self) -> None:
+        ev = _make_event(EventType.ASSISTANT_MESSAGE, data={"toolRequests": "bad"})
+        assert _build_event_details(ev) == ""
+
+    def test_tool_execution_malformed_data_returns_empty(self) -> None:
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE, data={"toolTelemetry": 12345}
+        )
+        assert _build_event_details(ev) == ""
+
+    def test_session_shutdown_malformed_data_returns_empty(self) -> None:
+        ev = _make_event(EventType.SESSION_SHUTDOWN, data={"modelMetrics": "bad"})
+        assert _build_event_details(ev) == ""
+
+
+class TestRenderShutdownCyclesMalformed:
+    """Test _render_shutdown_cycles skips events with malformed data."""
+
+    def test_malformed_shutdown_event_skipped(self) -> None:
+        events = [
+            _make_event(
+                EventType.SESSION_SHUTDOWN,
+                data={"modelMetrics": "invalid"},
+                timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            ),
+        ]
+        output = _capture_console(_render_shutdown_cycles, events)
+        assert "No shutdown cycles recorded" in output
 
 
 # ---------------------------------------------------------------------------
