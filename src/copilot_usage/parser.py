@@ -6,13 +6,14 @@ aggregates.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 from pydantic import ValidationError
 
 from copilot_usage.models import (
+    EPOCH,
     CodeChanges,
     EventType,
     ModelMetrics,
@@ -33,8 +34,6 @@ _RESUME_INDICATOR_TYPES: frozenset[str] = frozenset(
         EventType.ASSISTANT_MESSAGE,
     }
 )
-
-_EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
 
 
 def _infer_model_from_metrics(metrics: dict[str, ModelMetrics]) -> str | None:
@@ -365,7 +364,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         summaries.append(summary)
 
     def _sort_key(s: SessionSummary) -> datetime:
-        return s.start_time if s.start_time is not None else _EPOCH
+        return s.start_time if s.start_time is not None else EPOCH
 
     summaries.sort(key=_sort_key, reverse=True)
     return summaries

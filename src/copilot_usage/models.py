@@ -6,11 +6,29 @@ flexible fallback for unknown ones.
 """
 
 import builtins
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Shared datetime utilities
+# ---------------------------------------------------------------------------
+
+# Aware datetime sentinel used as a sort-key fallback for sessions without a start_time.
+EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
+
+
+def ensure_aware(dt: datetime) -> datetime:
+    """Attach UTC timezone to a naive datetime."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
+def ensure_aware_opt(dt: datetime | None) -> datetime | None:
+    """None-safe variant of :func:`ensure_aware`."""
+    return ensure_aware(dt) if dt is not None else None
+
 
 # ---------------------------------------------------------------------------
 # Enums
