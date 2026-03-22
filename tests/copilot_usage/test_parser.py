@@ -1915,15 +1915,23 @@ class TestConfigModelReading:
         """config.json exists but is unreadable (OSError) → model stays None."""
         config = tmp_path / "config.json"
         config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
-        config.chmod(0o000)
-        try:
-            p = tmp_path / "s" / "events.jsonl"
-            _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
-            events = parse_events(p)
+
+        # Simulate an unreadable config.json deterministically by patching Path.read_text
+        original_read_text = Path.read_text
+
+        def _raise_on_config(self_path: Path, *args: object, **kwargs: object) -> str:
+            if self_path == config:
+                raise OSError("Permission denied")
+            return original_read_text(self_path, *args, **kwargs)  # type: ignore[arg-type]
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+
+        with patch.object(Path, "read_text", new=_raise_on_config):
             summary = build_session_summary(events, config_path=config)
-            assert summary.model is None
-        finally:
-            config.chmod(0o644)
+
+        assert summary.model is None
 
 
 # ---------------------------------------------------------------------------
