@@ -634,9 +634,10 @@ def _filter_sessions(
     for s in sessions:
         if s.start_time is None:
             continue
-        if since is not None and s.start_time < since:
+        aware_start = ensure_aware(s.start_time)
+        if since is not None and aware_start < since:
             continue
-        if until is not None and s.start_time > until:
+        if until is not None and aware_start > until:
             continue
         filtered.append(s)
     return filtered
