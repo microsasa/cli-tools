@@ -12,8 +12,6 @@ import pytest
 
 from copilot_usage.models import (
     AssistantMessageData,
-    CodeChanges,
-    EventType,
     GenericEventData,
     ModelMetrics,
     RequestMetrics,
@@ -1163,54 +1161,6 @@ class TestRealData:
 # ---------------------------------------------------------------------------
 
 
-class TestTokenUsageModel:
-    def test_defaults(self) -> None:
-        t = TokenUsage()
-        assert t.inputTokens == 0
-        assert t.outputTokens == 0
-        assert t.cacheReadTokens == 0
-        assert t.cacheWriteTokens == 0
-
-    def test_custom_values(self) -> None:
-        t = TokenUsage(inputTokens=100, outputTokens=50)
-        assert t.inputTokens == 100
-        assert t.outputTokens == 50
-
-
-class TestRequestMetricsModel:
-    def test_defaults(self) -> None:
-        r = RequestMetrics()
-        assert r.count == 0
-        assert r.cost == 0
-
-
-class TestModelMetricsModel:
-    def test_defaults(self) -> None:
-        m = ModelMetrics()
-        assert m.requests.count == 0
-        assert m.usage.outputTokens == 0
-
-    def test_nested(self) -> None:
-        m = ModelMetrics(
-            requests=RequestMetrics(count=3, cost=10),
-            usage=TokenUsage(inputTokens=500, outputTokens=200),
-        )
-        assert m.requests.count == 3
-        assert m.usage.inputTokens == 500
-
-
-class TestCodeChangesModel:
-    def test_defaults(self) -> None:
-        c = CodeChanges()
-        assert c.linesAdded == 0
-        assert c.linesRemoved == 0
-        assert c.filesModified == []
-
-    def test_with_files(self) -> None:
-        c = CodeChanges(linesAdded=10, filesModified=["a.py"])
-        assert c.filesModified == ["a.py"]
-
-
 class TestSessionContextModel:
     def test_defaults(self) -> None:
         ctx = SessionContext()
@@ -1306,27 +1256,6 @@ class TestGenericEventDataModel:
         d = GenericEventData.model_validate({"foo": "bar", "num": 42})
         assert d.model_extra is not None
         assert d.model_extra["foo"] == "bar"
-
-
-class TestSessionSummaryModel:
-    def test_defaults(self) -> None:
-        s = SessionSummary(session_id="s1")
-        assert s.session_id == "s1"
-        assert s.is_active is False
-        assert s.user_messages == 0
-        assert s.model_calls == 0
-        assert s.model_metrics == {}
-        assert s.code_changes is None
-
-
-class TestEventTypeEnum:
-    def test_values(self) -> None:
-        assert EventType.SESSION_START == "session.start"
-        assert EventType.SESSION_SHUTDOWN == "session.shutdown"
-        assert EventType.ASSISTANT_MESSAGE == "assistant.message"
-        assert EventType.TOOL_EXECUTION_COMPLETE == "tool.execution_complete"
-        assert EventType.USER_MESSAGE == "user.message"
-        assert EventType.ABORT == "abort"
 
 
 # ---------------------------------------------------------------------------

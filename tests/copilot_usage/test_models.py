@@ -80,7 +80,10 @@ RAW_USER_MESSAGE = json.loads(
 def test_event_type_values() -> None:
     assert EventType.SESSION_START == "session.start"
     assert EventType.SESSION_SHUTDOWN == "session.shutdown"
+    assert EventType.ASSISTANT_MESSAGE == "assistant.message"
+    assert EventType.TOOL_EXECUTION_COMPLETE == "tool.execution_complete"
     assert EventType.USER_MESSAGE == "user.message"
+    assert EventType.ABORT == "abort"
 
 
 # ---------------------------------------------------------------------------
@@ -89,25 +92,55 @@ def test_event_type_values() -> None:
 
 
 def test_token_usage() -> None:
-    t = TokenUsage(inputTokens=100, outputTokens=50)
+    t = TokenUsage()
+    assert t.inputTokens == 0
+    assert t.outputTokens == 0
     assert t.cacheReadTokens == 0
     assert t.cacheWriteTokens == 0
 
+    t2 = TokenUsage(inputTokens=100, outputTokens=50)
+    assert t2.inputTokens == 100
+    assert t2.outputTokens == 50
+    assert t2.cacheReadTokens == 0
+    assert t2.cacheWriteTokens == 0
+
 
 def test_request_metrics() -> None:
-    r = RequestMetrics(count=10, cost=5)
-    assert r.count == 10
+    r = RequestMetrics()
+    assert r.count == 0
+    assert r.cost == 0
+
+    r2 = RequestMetrics(count=10, cost=5)
+    assert r2.count == 10
+    assert r2.cost == 5
 
 
 def test_model_metrics() -> None:
     m = ModelMetrics()
     assert m.requests.count == 0
     assert m.usage.inputTokens == 0
+    assert m.usage.outputTokens == 0
+
+    m2 = ModelMetrics(
+        requests=RequestMetrics(count=3, cost=10),
+        usage=TokenUsage(inputTokens=500, outputTokens=200),
+    )
+    assert m2.requests.count == 3
+    assert m2.requests.cost == 10
+    assert m2.usage.inputTokens == 500
+    assert m2.usage.outputTokens == 200
 
 
 def test_code_changes() -> None:
-    c = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
-    assert len(c.filesModified) == 1
+    c = CodeChanges()
+    assert c.linesAdded == 0
+    assert c.linesRemoved == 0
+    assert c.filesModified == []
+
+    c2 = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
+    assert c2.linesAdded == 10
+    assert c2.linesRemoved == 2
+    assert c2.filesModified == ["a.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +239,7 @@ def test_session_event_unknown_type() -> None:
 
 def test_session_summary_defaults() -> None:
     s = SessionSummary(session_id="abc")
+    assert s.session_id == "abc"
     assert s.is_active is False
     assert s.user_messages == 0
     assert s.model_calls == 0
