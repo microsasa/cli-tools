@@ -28,6 +28,7 @@ from copilot_usage.models import (
 from copilot_usage.parser import (
     _extract_session_name,
     _infer_model_from_metrics,
+    _safe_mtime,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -298,6 +299,45 @@ def _active_events(
 
 
 # ---------------------------------------------------------------------------
+# _safe_mtime
+# ---------------------------------------------------------------------------
+
+
+class TestSafeMtime:
+    def test_returns_mtime_for_existing_file(self, tmp_path: Path) -> None:
+        f = tmp_path / "events.jsonl"
+        f.write_text("")
+        assert _safe_mtime(f) > 0
+
+    def test_returns_zero_for_missing_file(self, tmp_path: Path) -> None:
+        assert _safe_mtime(tmp_path / "ghost.jsonl") == 0.0
+
+    def test_returns_zero_for_permission_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        f = tmp_path / "events.jsonl"
+        f.write_text("")
+
+        def _raise_perm(self: Path, **kwargs: object) -> object:
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(Path, "stat", _raise_perm)
+        assert _safe_mtime(f) == 0.0
+
+    def test_returns_zero_for_generic_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        f = tmp_path / "events.jsonl"
+        f.write_text("")
+
+        def _raise_os(self: Path, **kwargs: object) -> object:
+            raise OSError("I/O error")
+
+        monkeypatch.setattr(Path, "stat", _raise_os)
+        assert _safe_mtime(f) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # discover_sessions
 # ---------------------------------------------------------------------------
 
@@ -354,6 +394,24 @@ class TestDiscoverSessions:
         assert any(p == s2 for p in result)
         # The call must not raise
         assert isinstance(result, list)
+
+    def test_stat_race_permission_error(self, tmp_path: Path) -> None:
+        """discover_sessions should not crash when stat() raises PermissionError."""
+        s1 = tmp_path / "sess-a" / "events.jsonl"
+        _write_events(s1, _START_EVENT)
+
+        original_stat = Path.stat
+
+        def _flaky_stat(self: Path, **kwargs: object) -> object:
+            if self.name == "events.jsonl":
+                raise PermissionError("denied")
+            return original_stat(self)
+
+        with patch.object(Path, "stat", _flaky_stat):
+            result = discover_sessions(tmp_path)
+
+        # Should return the path (with mtime=0), not crash
+        assert result == [s1]
 
     def test_get_all_sessions_skips_vanished_session(self, tmp_path: Path) -> None:
         """TOCTOU: events.jsonl deleted after discover but before parse."""
