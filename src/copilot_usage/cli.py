@@ -359,7 +359,10 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
         if len(session_id) >= 4 and is_uuid_dir and not dir_name.startswith(session_id):
             available.append(dir_name[:8])
             continue
-        events = parse_events(events_path)
+        try:
+            events = parse_events(events_path)
+        except OSError:
+            continue
         if not events:
             continue
         s = build_session_summary(events, session_dir=events_path.parent)

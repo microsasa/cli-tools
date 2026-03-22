@@ -279,6 +279,7 @@ def test_summary_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["summary", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "disk on fire" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 def test_session_no_sessions(tmp_path: Path, monkeypatch: Any) -> None:
@@ -330,6 +331,7 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["session", "anything"])
     assert result.exit_code != 0
     assert "permission denied" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 def test_cost_no_model_metrics(tmp_path: Path) -> None:
@@ -397,6 +399,7 @@ def test_cost_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["cost", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "cost explosion" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 def test_live_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
@@ -411,6 +414,7 @@ def test_live_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["live", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "live explosion" in result.output
+    assert "Traceback" not in (result.output or "")
 
 
 # ---------------------------------------------------------------------------
