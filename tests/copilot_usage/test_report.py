@@ -2818,3 +2818,52 @@ class TestFormatDetailDurationBoundaries:
         """None end should return em-dash."""
         start = datetime(2025, 1, 1, tzinfo=UTC)
         assert _format_detail_duration(start, None) == "—"
+
+
+# ---------------------------------------------------------------------------
+# Issue #240 — _filter_sessions with naive start_time vs aware since/until
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsNaiveStartTime:
+    def test_naive_start_time_with_aware_since(self) -> None:
+        """Naive start_time must not raise TypeError when since is aware."""
+        naive_session = SessionSummary(
+            session_id="naive",
+            start_time=datetime(2026, 6, 15),  # naive — no tzinfo
+        )
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        result = _filter_sessions([naive_session], since=since, until=None)
+        assert len(result) == 1
+        assert result[0].session_id == "naive"
+
+    def test_naive_start_time_with_aware_until(self) -> None:
+        """Naive start_time must not raise TypeError when until is aware."""
+        naive_session = SessionSummary(
+            session_id="naive",
+            start_time=datetime(2026, 6, 15),  # naive — no tzinfo
+        )
+        until = datetime(2026, 12, 31, tzinfo=UTC)
+        result = _filter_sessions([naive_session], since=None, until=until)
+        assert len(result) == 1
+        assert result[0].session_id == "naive"
+
+    def test_naive_start_time_filtered_out_by_since(self) -> None:
+        """Naive start_time before since is correctly excluded."""
+        naive_session = SessionSummary(
+            session_id="old",
+            start_time=datetime(2025, 1, 1),  # naive
+        )
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        result = _filter_sessions([naive_session], since=since, until=None)
+        assert result == []
+
+    def test_naive_start_time_filtered_out_by_until(self) -> None:
+        """Naive start_time after until is correctly excluded."""
+        naive_session = SessionSummary(
+            session_id="future",
+            start_time=datetime(2027, 1, 1),  # naive
+        )
+        until = datetime(2026, 12, 31, tzinfo=UTC)
+        result = _filter_sessions([naive_session], since=None, until=until)
+        assert result == []
