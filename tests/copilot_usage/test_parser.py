@@ -1234,6 +1234,148 @@ class TestBuildSessionSummaryMultiShutdownResumed:
 
 
 # ---------------------------------------------------------------------------
+# build_session_summary — multi-shutdown code_changes preservation
+# ---------------------------------------------------------------------------
+
+
+class TestMultiShutdownCodeChangesPreservation:
+    """Verify the ``if sd.codeChanges is not None`` guard in build_session_summary
+    preserves earlier code-change data when a later shutdown omits it."""
+
+    def test_first_shutdown_code_changes_preserved_when_last_has_none(
+        self, tmp_path: Path
+    ) -> None:
+        """When shutdown_1 has codeChanges and shutdown_2 does not, summary.code_changes
+        must equal shutdown_1's data (not None). Verifies the `if sd.codeChanges is not None`
+        guard in build_session_summary."""
+        shutdown_with_cc = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 2000,
+                    "sessionStartTime": 0,
+                    "codeChanges": {
+                        "linesAdded": 42,
+                        "linesRemoved": 7,
+                        "filesModified": ["main.py"],
+                    },
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd1",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-r",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        shutdown_no_cc = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 2,
+                    "totalApiDurationMs": 1000,
+                    "sessionStartTime": 0,
+                    # codeChanges intentionally absent
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            shutdown_with_cc,
+            resume_ev,
+            _USER_MSG,
+            shutdown_no_cc,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is False
+        assert summary.code_changes is not None, (
+            "code_changes from first shutdown must not be reset to None"
+        )
+        assert summary.code_changes.linesAdded == 42
+        assert summary.code_changes.linesRemoved == 7
+        assert summary.code_changes.filesModified == ["main.py"]
+        assert summary.total_premium_requests == 5  # sum of both shutdowns
+
+    def test_last_shutdown_code_changes_wins_when_set(self, tmp_path: Path) -> None:
+        """When shutdown_1 has no codeChanges but shutdown_2 does, summary.code_changes
+        must equal shutdown_2's data."""
+        shutdown_no_cc = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 500,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd1",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-r",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        shutdown_with_cc = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 4,
+                    "totalApiDurationMs": 3000,
+                    "sessionStartTime": 0,
+                    "codeChanges": {
+                        "linesAdded": 20,
+                        "linesRemoved": 3,
+                        "filesModified": ["b.py"],
+                    },
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            shutdown_no_cc,
+            resume_ev,
+            _USER_MSG,
+            shutdown_with_cc,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is False
+        assert summary.code_changes is not None
+        assert summary.code_changes.linesAdded == 20
+        assert summary.code_changes.filesModified == ["b.py"]
+
+
+# ---------------------------------------------------------------------------
 # get_all_sessions
 # ---------------------------------------------------------------------------
 
