@@ -1196,6 +1196,22 @@ class TestReportCoverageGaps:
         # Code Changes section should NOT appear
         assert "Code Changes" not in output
 
+    def test_code_changes_files_only_no_line_counts(self) -> None:
+        """Files modified but zero line counts → Code Changes section IS shown."""
+        from copilot_usage.report import render_session_detail
+
+        summary = SessionSummary(
+            session_id="files-only",
+            code_changes=CodeChanges(
+                filesModified=["main.py", "utils.py"],
+                linesAdded=0,
+                linesRemoved=0,
+            ),
+        )
+        output = _capture_console(render_session_detail, [], summary)
+        assert "Code Changes" in output
+        assert "2" in output
+
     def test_summary_header_shows_date_range(self) -> None:
         """_render_summary_header date range: earliest date → latest date."""
         s1 = _make_summary_session(
@@ -2250,6 +2266,10 @@ class TestEventTypeLabel:
     @pytest.mark.parametrize(
         "event_type,expected_text",
         [
+            (EventType.USER_MESSAGE, "user message"),
+            (EventType.ASSISTANT_MESSAGE, "assistant"),
+            (EventType.TOOL_EXECUTION_COMPLETE, "tool"),
+            (EventType.ASSISTANT_TURN_START, "turn start"),
             (EventType.TOOL_EXECUTION_START, "tool start"),
             (EventType.ASSISTANT_TURN_END, "turn end"),
             (EventType.SESSION_START, "session start"),
