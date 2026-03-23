@@ -131,11 +131,6 @@ class SessionStartData(BaseModel):
     context: SessionContext = Field(default_factory=SessionContext)
 
 
-def empty_tool_requests() -> list[dict[str, object]]:
-    """Factory for an empty list of tool request dicts."""
-    return []
-
-
 class AssistantMessageData(BaseModel):
     """Payload for ``assistant.message`` events."""
 
@@ -145,7 +140,9 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[dict[str, object]] = Field(default_factory=empty_tool_requests)
+    toolRequests: list[dict[str, object]] = Field(
+        default_factory=lambda: list[dict[str, object]]()
+    )
 
 
 class SessionShutdownData(BaseModel):

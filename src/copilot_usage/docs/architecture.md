@@ -78,11 +78,11 @@ tests/
 │   ├── test_report.py          Rich output formatting, rendering functions
 │   └── test_cli.py             Click command invocation via CliRunner
 └── e2e/                        E2e tests — real CLI commands against fixture data
-    ├── fixtures/               Anonymized events from real Copilot sessions (8 fixtures)
+    ├── fixtures/               Anonymized events from real Copilot sessions (9 fixtures)
     └── test_e2e.py             Full pipeline: CLI → parser → models → report → output
 ```
 
-- **327 total tests**: 272 unit tests + 55 e2e tests
 - **Unit tests**: 96% coverage, test individual functions with synthetic data
-- **E2e tests**: Run actual CLI commands against 8 anonymized fixture sessions, assert on output content
+- **E2e tests**: Run actual CLI commands against 9 anonymized fixture sessions, assert on output content
+- Test counts grow regularly — run `make test` to see the current numbers
 - Coverage is measured on unit tests only (e2e coverage would be misleading)
