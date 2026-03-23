@@ -1,5 +1,7 @@
 # Implementation Details
 
+> **Maintainers:** do not add file:line-number citations to this document — they go stale. Reference symbols by name only.
+
 Deep-dive into how `copilot-usage` works under the hood. For the high-level architecture and data flow diagram, see [architecture.md](architecture.md). This document is for developers maintaining the code.
 
 ---
@@ -20,7 +22,7 @@ The `{uuid}` is a full UUID assigned by the Copilot CLI at session creation.
 
 ### Event envelope
 
-Every line in `events.jsonl` is a JSON object conforming to the `SessionEvent` model (`models.py:177–207`):
+Every line in `events.jsonl` is a JSON object conforming to the `SessionEvent` model (in `models.py`):
 
 | Field          | Type               | Description                                                  |
 |----------------|--------------------|--------------------------------------------------------------|
@@ -33,7 +35,7 @@ Every line in `events.jsonl` is a JSON object conforming to the `SessionEvent` m
 
 ### Known event types
 
-Defined in `EventType` enum (`models.py:22–37`):
+Defined in `EventType` enum (in `models.py`):
 
 | Event type                        | Data class              | Key fields                                                         |
 |-----------------------------------|-------------------------|--------------------------------------------------------------------|
@@ -51,11 +53,11 @@ Defined in `EventType` enum (`models.py:22–37`):
 | `user.message`                    | `UserMessageData`       | `content`, `attachments`                                           |
 | `abort`                           | `GenericEventData`      | Catch-all                                                          |
 
-Typed dispatch happens in `SessionEvent.parse_data()` (`models.py:193–207`) via `match`/`case`. Unknown types fall through to `GenericEventData(extra="allow")`, which accepts any JSON fields without validation errors.
+Typed dispatch happens in `SessionEvent.parse_data()` (in `models.py`) via `match`/`case`. Unknown types fall through to `GenericEventData(extra="allow")`, which accepts any JSON fields without validation errors.
 
 ### SessionSummary fields
 
-`SessionSummary` (`models.py:229–256`) is a computed aggregate — never parsed directly from JSON. Built by `build_session_summary()`.
+`SessionSummary` (in `models.py`) is a computed aggregate — never parsed directly from JSON. Built by `build_session_summary()`.
 
 | Field                    | Type                        | How it's populated                                                                  |
 |--------------------------|-----------------------------|-------------------------------------------------------------------------------------|
@@ -90,9 +92,9 @@ Each `session.shutdown` event represents the metrics for **one lifecycle** (star
 
 ### The code path
 
-In `build_session_summary()` (`parser.py:151–361`):
+In `build_session_summary()` (in `parser.py`):
 
-**Phase 1 — Collect all shutdowns** (`parser.py:207–218`):
+**Phase 1 — Collect all shutdowns** (in `parser.py`):
 ```python
 all_shutdowns: list[tuple[int, SessionShutdownData, str | None]] = []
 # ...
@@ -102,7 +104,7 @@ elif ev.type == EventType.SESSION_SHUTDOWN:
 ```
 Each tuple stores `(event_index, shutdown_data, resolved_model)`.
 
-**Phase 2 — Sum across all shutdowns** (`parser.py:268–301`):
+**Phase 2 — Sum across all shutdowns** (in `parser.py`):
 ```python
 for _idx, sd, _m in all_shutdowns:
     total_premium += sd.totalPremiumRequests
@@ -112,7 +114,7 @@ for _idx, sd, _m in all_shutdowns:
 
 ### Model metrics merging
 
-When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field (`parser.py:281–298`):
+When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field (in `parser.py`):
 
 ```python
 if model_name in merged_metrics:
@@ -135,10 +137,10 @@ When they reference **different models**, separate entries are kept in the `merg
 
 ### Model resolution for shutdowns
 
-The model name for a shutdown is resolved in priority order (`parser.py:213–216`):
+The model name for a shutdown is resolved in priority order (in `parser.py`):
 1. `currentModel` from the event envelope (top-level field)
 2. `currentModel` from the shutdown data payload
-3. Inferred from `modelMetrics` keys — if one key, use it; if multiple, pick the one with highest `requests.count` (`_infer_model_from_metrics()`, `parser.py:33–43`)
+3. Inferred from `modelMetrics` keys — if one key, use it; if multiple, pick the one with highest `requests.count` (`_infer_model_from_metrics()` in `parser.py`)
 
 ---
 
@@ -154,7 +156,7 @@ The model name for a shutdown is resolved in priority order (`parser.py:213–21
 
 ### Detection logic
 
-After collecting all shutdowns, `build_session_summary()` scans events after the last shutdown index (`parser.py:238–265`):
+After collecting all shutdowns, `build_session_summary()` scans events after the last shutdown index (in `parser.py`):
 
 ```python
 _RESUME_INDICATOR_TYPES: set[str] = {
@@ -176,11 +178,11 @@ The presence of **any** `session.resume`, `user.message`, or `assistant.message`
 
 ### `last_resume_time`
 
-Populated from the `timestamp` of the `session.resume` event after the last shutdown (`parser.py:256–257`). Used by the report layer to calculate "Running Time" — showing duration since resume, not since original start.
+Populated from the `timestamp` of the `session.resume` event after the last shutdown (in `parser.py`). Used by the report layer to calculate "Running Time" — showing duration since resume, not since original start.
 
 ### Resumed session summary construction
 
-For resumed sessions (`parser.py:302–320`):
+For resumed sessions (in `parser.py`):
 - `end_time` is set to `None` (not the last shutdown timestamp)
 - `model_metrics` contain the **merged shutdown data** (historical baseline)
 - `active_model_calls`, `active_user_messages`, `active_output_tokens` contain **only** post-shutdown counts
@@ -192,13 +194,13 @@ For resumed sessions (`parser.py:302–320`):
 
 ### Where premium requests come from
 
-The **only** source of premium request counts is `SessionShutdownData.totalPremiumRequests` (`models.py:115`). This is a pre-computed value from the Copilot CLI — not something we calculate.
+The **only** source of premium request counts is `SessionShutdownData.totalPremiumRequests` (in `models.py`). This is a pre-computed value from the Copilot CLI — not something we calculate.
 
-For sessions with multiple shutdowns, the total is summed: `total_premium += sd.totalPremiumRequests` (`parser.py:276`).
+For sessions with multiple shutdowns, the total is summed: `total_premium += sd.totalPremiumRequests` (in `parser.py`).
 
 ### Active sessions show "—"
 
-If a session has no shutdown data (pure active), `total_premium_requests` is `0`, and the report displays "—" (`report.py:677–680`):
+If a session has no shutdown data (pure active), `total_premium_requests` is `0`, and the report displays "—" (in `report.py`):
 
 ```python
 if s.total_premium_requests > 0:
@@ -223,11 +225,11 @@ The grand total premium requests across all sessions includes resumed sessions t
 
 ## Interactive Loop Architecture
 
-Defined in `_interactive_loop()` (`cli.py:155–250`).
+Defined in `_interactive_loop()` (in `cli.py`).
 
 ### Non-blocking input with `select()`
 
-The loop uses `select.select()` on stdin (`cli.py:103–108`) with a 500ms timeout:
+The loop uses `select.select()` on stdin (in `cli.py`) with a 500ms timeout:
 
 ```python
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
@@ -241,7 +243,7 @@ This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms
 
 ### Fallback to blocking `input()`
 
-If `select()` raises `ValueError` or `OSError` (e.g. stdin is piped, not a real TTY, or during testing), the loop falls back to blocking `input()` (`cli.py:193–199`):
+If `select()` raises `ValueError` or `OSError` (e.g. stdin is piped, not a real TTY, or during testing), the loop falls back to blocking `input()` (in `cli.py`):
 
 ```python
 except (ValueError, OSError):
@@ -253,7 +255,7 @@ except (ValueError, OSError):
 
 ### Watchdog file observer
 
-A `watchdog.Observer` watches `~/.copilot/session-state/` recursively for **any** filesystem change — new session directories, lockfile creation/deletion, `events.jsonl` writes, etc. (`cli.py:129–141`):
+A `watchdog.Observer` watches `~/.copilot/session-state/` recursively for **any** filesystem change — new session directories, lockfile creation/deletion, `events.jsonl` writes, etc. (in `cli.py`):
 
 ```python
 observer = Observer()
@@ -266,7 +268,7 @@ The observer watches the session-state directory; if the directory doesn't exist
 
 ### `_FileChangeHandler` with 2-second debounce
 
-`_FileChangeHandler` (`cli.py:111–123`) triggers on any filesystem event in the session-state tree and enforces a 2-second debounce using `time.monotonic()`:
+`_FileChangeHandler` (in `cli.py`) triggers on any filesystem event in the session-state tree and enforces a 2-second debounce using `time.monotonic()`:
 
 ```python
 def dispatch(self, event):
@@ -280,7 +282,7 @@ Each trigger causes a full `get_all_sessions()` re-read, picking up new sessions
 
 ### View state machine
 
-The interactive loop maintains a simple view state (`cli.py:166–168`):
+The interactive loop maintains a simple view state (in `cli.py`):
 
 ```
 view: str = "home" | "detail" | "cost"
@@ -299,11 +301,11 @@ On any view transition, `get_all_sessions()` is re-called to pick up new data. A
 
 ## Cost View Rendering
 
-Defined in `render_cost_view()` (`report.py:898–982`).
+Defined in `render_cost_view()` (in `report.py`).
 
 ### Per-model rows within sessions
 
-Each session's `model_metrics` dict is iterated to produce one table row per model (`report.py:931–947`):
+Each session's `model_metrics` dict is iterated to produce one table row per model (in `report.py`):
 
 ```python
 for model_name in sorted(s.model_metrics):
@@ -317,7 +319,7 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active (resumed) sessions, an extra row is appended (`report.py:960–970`):
+For active (resumed) sessions, an extra row is appended (in `report.py`):
 
 ```python
 if s.is_active:
@@ -335,16 +337,16 @@ Premium columns show `N/A` because there's no shutdown data for the active perio
 
 ### Historical vs active sections in full summary
 
-`render_full_summary()` (`report.py:871–891`) renders two distinct sections:
+`render_full_summary()` (in `report.py`) renders two distinct sections:
 
-1. **Historical Data** (`_render_historical_section`, `report.py:725–822`): Sessions with shutdown data. Includes sessions where `total_premium_requests > 0` OR sessions that have `model_metrics` and are **not** active.
-2. **Active Sessions** (`_render_active_section`, `report.py:825–868`): Sessions where `is_active == True`. Shows `active_model_calls`, `active_user_messages`, `active_output_tokens`, and running time.
+1. **Historical Data** (`_render_historical_section` in `report.py`): Sessions with shutdown data. Includes sessions where `total_premium_requests > 0` OR sessions that have `model_metrics` and are **not** active.
+2. **Active Sessions** (`_render_active_section` in `report.py`): Sessions where `is_active == True`. Shows `active_model_calls`, `active_user_messages`, `active_output_tokens`, and running time.
 
 Resumed sessions appear in **both** sections — historical section for their shutdown data, active section for their post-shutdown activity.
 
 ### Grand total row
 
-After all session rows, a section divider and grand total row is added (`report.py:972–980`). Grand totals accumulate `requests.count`, `requests.cost`, `model_calls`, and `output_tokens` from both shutdown metrics and active periods.
+After all session rows, a section divider and grand total row is added (in `report.py`). Grand totals accumulate `requests.count`, `requests.cost`, `model_calls`, and `output_tokens` from both shutdown metrics and active periods.
 
 ---
 
@@ -352,7 +354,7 @@ After all session rows, a section divider and grand total row is added (`report.
 
 ### Corrupt/malformed JSON lines
 
-`parse_events()` (`parser.py:98–124`) handles two failure modes per line:
+`parse_events()` (in `parser.py`) handles two failure modes per line:
 
 1. **JSON decode failure**: `json.JSONDecodeError` → logged via `loguru.warning`, line skipped
 2. **Pydantic validation failure**: `ValidationError` → logged with error count, line skipped
@@ -363,14 +365,14 @@ Valid lines in the same file are still processed. A file with 99 valid lines and
 
 A session directory with just a `session.start` event (and nothing else) produces a valid `SessionSummary` with `is_active=True`, `model_calls=0`, `user_messages=0`, `total_premium_requests=0`.
 
-Sessions where `parse_events()` returns an empty list (no valid events at all) are skipped entirely by `get_all_sessions()` (`parser.py:384`).
+Sessions where `parse_events()` returns an empty list (no valid events at all) are skipped entirely by `get_all_sessions()` (in `parser.py`).
 
 ### TOCTOU races
 
 Two levels of protection against files disappearing between discovery and read:
 
-1. **Discovery**: `_safe_mtime()` (`parser.py:64–69`) returns `0.0` instead of crashing when a file vanishes between `glob()` and `stat()`.
-2. **Parsing**: `get_all_sessions()` (`parser.py:377–385`) catches `FileNotFoundError` and `OSError` during `parse_events()` and skips the session with a warning.
+1. **Discovery**: `_safe_mtime()` (in `parser.py`) returns `0.0` instead of crashing when a file vanishes between `glob()` and `stat()`.
+2. **Parsing**: `get_all_sessions()` (in `parser.py`) catches `FileNotFoundError` and `OSError` during `parse_events()` and skips the session with a warning.
 
 ### Unknown event types
 
@@ -380,7 +382,7 @@ In `build_session_summary()`, unknown types are simply ignored — the `for idx,
 
 ### Unknown models in pricing
 
-`lookup_model_pricing()` (`pricing.py:106–146`) has a three-tier resolution:
+`lookup_model_pricing()` (in `pricing.py`) has a three-tier resolution:
 1. **Exact match** in `KNOWN_PRICING`
 2. **Partial match** — `model_name.startswith(key)` or `key.startswith(model_name)`, longest match wins
 3. **Fallback** — returns 1× standard multiplier, emits `UserWarning`
@@ -389,7 +391,7 @@ In `build_session_summary()`, unknown types are simply ignored — the `for idx,
 
 ## Session Name Resolution
 
-Implemented in `_extract_session_name()` (`parser.py:132–143`).
+Implemented in `_extract_session_name()` (in `parser.py`).
 
 ### Resolution order
 
@@ -398,13 +400,13 @@ Implemented in `_extract_session_name()` (`parser.py:132–143`).
 
 ### How it's called
 
-`build_session_summary()` calls `_extract_session_name(session_dir)` when `session_dir` is provided (`parser.py:235`). The `session_dir` parameter is passed by `get_all_sessions()` as `events_path.parent` (`parser.py:385`).
+`build_session_summary()` calls `_extract_session_name(session_dir)` when `session_dir` is provided (in `parser.py`). The `session_dir` parameter is passed by `get_all_sessions()` as `events_path.parent` (in `parser.py`).
 
 ---
 
 ## Model Multiplier Reference
 
-From `pricing.py:68–90` — `_RAW_MULTIPLIERS` dict:
+From `pricing.py` — `_RAW_MULTIPLIERS` dict:
 
 | Model                  | Multiplier | Tier     |
 |------------------------|------------|----------|
@@ -427,13 +429,13 @@ From `pricing.py:68–90` — `_RAW_MULTIPLIERS` dict:
 | `gpt-4.1`              | 0×         | Light    |
 | `gemini-3-pro-preview` | 1×         | Standard |
 
-Tier is derived from the multiplier (`pricing.py:60–65`): ≥3.0 → Premium, <1.0 → Light, otherwise Standard.
+Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, <1.0 → Light, otherwise Standard.
 
 **Important:** `pricing.py` is **reference data only**. The multipliers are not used in any runtime calculations — premium request counts come exclusively from `session.shutdown` events. The pricing module exists for `categorize_model()` (tier lookup) and potential future use.
 
 ### Model resolution for active sessions
 
-When no shutdown data exists, the model is resolved in `build_session_summary()` (`parser.py:322–339`):
+When no shutdown data exists, the model is resolved in `build_session_summary()` (in `parser.py`):
 
-1. Scan `tool.execution_complete` events for a `model` field (`parser.py:324–330`)
-2. Fall back to `~/.copilot/config.json` → `data.model` field (`_read_config_model()`, `parser.py:46–56`)
+1. Scan `tool.execution_complete` events for a `model` field (in `parser.py`)
+2. Fall back to `~/.copilot/config.json` → `data.model` field (`_read_config_model()` in `parser.py`)
