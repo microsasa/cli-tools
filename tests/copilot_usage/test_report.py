@@ -38,6 +38,7 @@ from copilot_usage.report import (
     _render_model_table,
     _render_shutdown_cycles,
     _safe_event_data,
+    _shutdown_output_tokens,
     _total_output_tokens,
     _truncate,
     format_duration,
@@ -3384,3 +3385,77 @@ class TestRenderCostViewResumed:
         # Should show 400, NOT 800 (no double-counting)
         assert "800" not in output
         assert "400" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #276 — _shutdown_output_tokens and render_full_summary split-view
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownOutputTokens:
+    """Tests for the _shutdown_output_tokens helper."""
+
+    def test_returns_baseline_only(self) -> None:
+        """Shutdown helper returns model_metrics total without active tokens."""
+        session = SessionSummary(
+            session_id="shutdown-only-1234",
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        assert _shutdown_output_tokens(session) == 350
+        # Contrast with _total_output_tokens which includes active
+        assert _total_output_tokens(session) == 600
+
+    def test_empty_metrics(self) -> None:
+        """Empty model_metrics returns 0."""
+        session = SessionSummary(session_id="empty-shut", model_metrics={})
+        assert _shutdown_output_tokens(session) == 0
+
+
+class TestRenderFullSummaryResumedSplitView:
+    """Regression: render_full_summary historical section excludes active tokens."""
+
+    def test_historical_section_excludes_active_tokens(self) -> None:
+        """Historical Totals / Sessions (Shutdown Data) must use shutdown-only tokens."""
+        resumed = SessionSummary(
+            session_id="resumed-split-1234",
+            name="Resumed Split",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            total_premium_requests=10,
+            model_calls=8,
+            user_messages=4,
+            total_api_duration_ms=3000,
+            active_output_tokens=250,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_full_summary([resumed])
+
+        # The historical section should show 350 (shutdown-only),
+        # NOT 600 (350 + 250 active).
+        # "Historical Totals" panel should contain shutdown-only tokens.
+        assert "Historical Totals" in output
+        assert "Sessions (Shutdown Data)" in output
+
+        # Active section should show the active-period tokens (250).
+        assert "Active Sessions" in output
+        assert "250" in output
+
+        # The shutdown-only baseline (350) should appear in the historical table.
+        assert "350" in output

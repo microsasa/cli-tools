@@ -103,6 +103,15 @@ def _format_elapsed_since(start: datetime) -> str:
     return _format_timedelta(delta)
 
 
+def _shutdown_output_tokens(session: SessionSummary) -> int:
+    """Return shutdown-derived output tokens only (model_metrics baseline).
+
+    This deliberately excludes ``active_output_tokens`` so that historical /
+    shutdown-only views never include post-resume activity.
+    """
+    return sum(m.usage.outputTokens for m in session.model_metrics.values())
+
+
 def _total_output_tokens(session: SessionSummary) -> int:
     """Return total output tokens including post-resume active tokens.
 
@@ -118,7 +127,7 @@ def _total_output_tokens(session: SessionSummary) -> int:
     ``active_output_tokens`` inside ``model_metrics``, so adding them again
     would double-count.
     """
-    baseline = sum(m.usage.outputTokens for m in session.model_metrics.values())
+    baseline = _shutdown_output_tokens(session)
     has_shutdown_metrics = any(
         mm.requests.count > 0 for mm in session.model_metrics.values()
     )
@@ -180,14 +189,23 @@ class _SessionTotals:
     session_count: int
 
 
-def _compute_session_totals(sessions: list[SessionSummary]) -> _SessionTotals:
-    """Compute aggregated totals across *sessions*."""
+def _compute_session_totals(
+    sessions: list[SessionSummary],
+    *,
+    token_fn: Callable[[SessionSummary], int] = _total_output_tokens,
+) -> _SessionTotals:
+    """Compute aggregated totals across *sessions*.
+
+    *token_fn* controls how output tokens are counted per session.  Defaults
+    to :func:`_total_output_tokens` (includes active tokens for resumed
+    sessions).  Pass :func:`_shutdown_output_tokens` for shutdown-only views.
+    """
     return _SessionTotals(
         premium=sum(s.total_premium_requests for s in sessions),
         model_calls=sum(s.model_calls for s in sessions),
         user_messages=sum(s.user_messages for s in sessions),
         api_duration_ms=sum(s.total_api_duration_ms for s in sessions),
-        output_tokens=sum(_total_output_tokens(s) for s in sessions),
+        output_tokens=sum(token_fn(s) for s in sessions),
         session_count=len(sessions),
     )
 
@@ -771,8 +789,14 @@ def _render_session_table(
     sessions: list[SessionSummary],
     *,
     title: str = "Sessions",
+    include_active_tokens: bool = True,
 ) -> None:
-    """Render the per-session table sorted by start time (newest first)."""
+    """Render the per-session table sorted by start time (newest first).
+
+    When *include_active_tokens* is ``False`` the table uses
+    :func:`_shutdown_output_tokens` so that only shutdown-derived metrics
+    appear (appropriate for historical / "Shutdown Data" views).
+    """
     if not sessions:
         return
 
@@ -795,7 +819,10 @@ def _render_session_table(
         name = s.name or s.session_id[:12]
         model = s.model or "—"
 
-        output_tokens = _total_output_tokens(s)
+        token_fn = (
+            _total_output_tokens if include_active_tokens else _shutdown_output_tokens
+        )
+        output_tokens = token_fn(s)
 
         if s.is_active:
             status = Text("Active 🟢", style="yellow")
@@ -869,8 +896,8 @@ def _render_historical_section(
         console.print("[dim]No historical shutdown data.[/dim]")
         return
 
-    # Totals panel
-    totals = _compute_session_totals(historical)
+    # Totals panel — shutdown-only tokens for the historical view
+    totals = _compute_session_totals(historical, token_fn=_shutdown_output_tokens)
 
     lines = [
         f"[green]{totals.premium}[/green] premium requests   "
@@ -886,8 +913,13 @@ def _render_historical_section(
     # Per-model table
     _render_model_table(console, historical)
 
-    # Per-session table
-    _render_session_table(console, historical, title="Sessions (Shutdown Data)")
+    # Per-session table — shutdown-only tokens
+    _render_session_table(
+        console,
+        historical,
+        title="Sessions (Shutdown Data)",
+        include_active_tokens=False,
+    )
 
 
 def _render_active_section(
