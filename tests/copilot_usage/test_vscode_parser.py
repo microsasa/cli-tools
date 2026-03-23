@@ -187,13 +187,7 @@ class TestDiscoverVscodeLogs:
         assert discover_vscode_logs(tmp_path) == []
 
     def test_finds_log_files(self, tmp_path: Path) -> None:
-        log_dir = (
-            tmp_path
-            / "20260313"
-            / "window1"
-            / "exthost"
-            / "GitHub.copilot-chat"
-        )
+        log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
         log_file.write_text(_LOG_OPUS, encoding="utf-8")
@@ -230,13 +224,7 @@ class TestDiscoverVscodeLogs:
 
 class TestGetVscodeSummary:
     def test_end_to_end(self, tmp_path: Path) -> None:
-        log_dir = (
-            tmp_path
-            / "20260313"
-            / "window1"
-            / "exthost"
-            / "GitHub.copilot-chat"
-        )
+        log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         (log_dir / "GitHub Copilot Chat.log").write_text(
             "\n".join([_LOG_OPUS, _LOG_REDIRECT, _LOG_NOISE, _LOG_GPT4O]),
@@ -269,13 +257,7 @@ class TestVscodeCliCommand:
         assert "No VS Code Copilot Chat requests found" in result.output
 
     def test_vscode_logs_option_passed(self, tmp_path: Path) -> None:
-        log_dir = (
-            tmp_path
-            / "20260313"
-            / "window1"
-            / "exthost"
-            / "GitHub.copilot-chat"
-        )
+        log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         (log_dir / "GitHub Copilot Chat.log").write_text(
             "\n".join([_LOG_OPUS, _LOG_GPT4O]),
