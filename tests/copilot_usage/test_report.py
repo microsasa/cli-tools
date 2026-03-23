@@ -3106,3 +3106,42 @@ class TestSafeEventData:
         assert any(
             "Could not parse" in msg and "user.message" in msg for msg in log_messages
         )
+
+
+# ---------------------------------------------------------------------------
+# render_cost_view — active session with model=None (Gap 2 — issue #275)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewActiveModelNone:
+    """Verify the '↳ Since last shutdown' row renders cleanly when model is None."""
+
+    def test_since_last_shutdown_row_with_model_none(self) -> None:
+        session = SessionSummary(
+            session_id="no-model-active-1234",
+            model=None,
+            is_active=True,
+            model_calls=2,
+            active_model_calls=2,
+            active_output_tokens=300,
+        )
+        output = _capture_cost_view([session])
+        assert "Since last shutdown" in output
+        # model column and premium cost column both show "—"
+        assert output.count("—") >= 2
+        # must not render Python's None literal
+        assert "None" not in output
+
+    def test_no_crash_with_model_none_active_session(self) -> None:
+        """render_cost_view must not raise for an active session with model=None."""
+        session = SessionSummary(
+            session_id="safe-active-5678",
+            model=None,
+            is_active=True,
+            model_calls=0,
+            active_model_calls=0,
+            active_output_tokens=0,
+        )
+        # Should complete without any exception
+        output = _capture_cost_view([session])
+        assert "None" not in output
