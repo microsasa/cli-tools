@@ -52,6 +52,12 @@ def _write_session(
     session_dir = base / (session_id if use_full_uuid_dir else session_id[:8])
     session_dir.mkdir(parents=True, exist_ok=True)
 
+    # Derive realistic timestamps from the base start_time.
+    base_dt = datetime.fromisoformat(start_time)
+    user_msg_time = (base_dt + timedelta(minutes=1)).isoformat()
+    turn_start_time = (base_dt + timedelta(minutes=1, seconds=1)).isoformat()
+    shutdown_time = (base_dt + timedelta(hours=1)).isoformat()
+
     events: list[dict[str, Any]] = [
         {
             "type": "session.start",
@@ -64,12 +70,12 @@ def _write_session(
         },
         {
             "type": "user.message",
-            "timestamp": start_time,
+            "timestamp": user_msg_time,
             "data": {"content": "hello"},
         },
         {
             "type": "assistant.turn_start",
-            "timestamp": start_time,
+            "timestamp": turn_start_time,
             "data": {"turnId": "0", "interactionId": "int-1"},
         },
     ]
@@ -78,7 +84,7 @@ def _write_session(
         events.append(
             {
                 "type": "session.shutdown",
-                "timestamp": start_time,
+                "timestamp": shutdown_time,
                 "currentModel": model,
                 "data": {
                     "shutdownType": "normal",
