@@ -61,8 +61,12 @@ class VSCodeLogSummary:
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     """Find all VS Code Copilot Chat log files.
 
-    Default base is ``%APPDATA%/Code/logs`` on Windows, falling back to
-    ``~/.config/Code/logs`` on other platforms.
+    By default, the base logs directory is:
+
+    * On Windows: ``%APPDATA%/Code/logs`` (or ``~/AppData/Roaming/Code/logs`` if
+      ``%APPDATA%`` is not set).
+    * On macOS: ``~/Library/Application Support/Code/logs``.
+    * On other platforms (e.g. Linux): ``~/.config/Code/logs``.
     """
     if base_path is None:
         if sys.platform == "win32":
