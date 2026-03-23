@@ -37,6 +37,7 @@ from copilot_usage.report import (
     _has_active_period_stats,
     _render_model_table,
     _render_shutdown_cycles,
+    _safe_event_data,
     _truncate,
     format_duration,
     format_tokens,
@@ -3062,3 +3063,46 @@ class TestNaiveDatetimeMixing:
         ]
         output = _capture_console(render_session_detail, events, summary)
         assert "Recent Events" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #259 — _safe_event_data helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestSafeEventData:
+    """Tests for _safe_event_data: returns parsed data or None with debug log."""
+
+    def test_returns_parsed_data_on_success(self) -> None:
+        ev = _make_event(
+            EventType.USER_MESSAGE,
+            data={"content": "hello"},
+        )
+        result = _safe_event_data(ev, ev.as_user_message)
+        assert result is not None
+        assert result.content == "hello"
+
+    def test_returns_none_on_validation_error(self) -> None:
+        ev = _make_event(EventType.USER_MESSAGE, data={"attachments": 12345})
+        result = _safe_event_data(ev, ev.as_user_message)
+        assert result is None
+
+    def test_returns_none_on_value_error(self) -> None:
+        # Parser for wrong event type raises ValueError
+        ev = _make_event(EventType.USER_MESSAGE, data={"content": "hi"})
+        result = _safe_event_data(ev, ev.as_session_start)
+        assert result is None
+
+    def test_logs_debug_on_failure(self) -> None:
+        from loguru import logger
+
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+        try:
+            ev = _make_event(EventType.USER_MESSAGE, data={"attachments": 12345})
+            _safe_event_data(ev, ev.as_user_message)
+        finally:
+            logger.remove(handler_id)
+        assert any(
+            "Could not parse" in msg and "user.message" in msg for msg in log_messages
+        )

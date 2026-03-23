@@ -5,9 +5,11 @@ the terminal.
 """
 
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from loguru import logger
 from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
@@ -316,22 +318,34 @@ def _event_type_label(event_type: str) -> Text:
             return Text(event_type, style="dim")
 
 
+def _safe_event_data[T](
+    ev: SessionEvent,
+    parser: Callable[[], T],
+) -> T | None:
+    """Parse event data, returning *None* on validation/type errors.
+
+    Centralises the try/except used throughout the rendering layer so
+    that every failure is observable via a ``debug``-level log line.
+    """
+    try:
+        return parser()
+    except (ValidationError, ValueError):
+        logger.debug("Could not parse {} event data, skipping detail", ev.type)
+        return None
+
+
 def _build_event_details(ev: SessionEvent) -> str:
     """Build a one-line detail string for a timeline row."""
     match ev.type:
         case EventType.USER_MESSAGE:
-            try:
-                data = ev.as_user_message()
-            except (ValidationError, ValueError):
+            if (data := _safe_event_data(ev, ev.as_user_message)) is None:
                 return ""
             if data.content:
                 return _truncate(data.content)
             return ""
 
         case EventType.ASSISTANT_MESSAGE:
-            try:
-                data = ev.as_assistant_message()
-            except (ValidationError, ValueError):
+            if (data := _safe_event_data(ev, ev.as_assistant_message)) is None:
                 return ""
             parts: list[str] = []
             if data.outputTokens:
@@ -341,9 +355,7 @@ def _build_event_details(ev: SessionEvent) -> str:
             return "  ".join(parts)
 
         case EventType.TOOL_EXECUTION_COMPLETE:
-            try:
-                data = ev.as_tool_execution()
-            except (ValidationError, ValueError):
+            if (data := _safe_event_data(ev, ev.as_tool_execution)) is None:
                 return ""
             parts_t: list[str] = []
             tool_name = _extract_tool_name(data)
@@ -355,9 +367,7 @@ def _build_event_details(ev: SessionEvent) -> str:
             return "  ".join(parts_t)
 
         case EventType.SESSION_SHUTDOWN:
-            try:
-                data = ev.as_session_shutdown()
-            except (ValidationError, ValueError):
+            if (data := _safe_event_data(ev, ev.as_session_shutdown)) is None:
                 return ""
             return f"type={data.shutdownType}" if data.shutdownType else ""
 
@@ -435,9 +445,7 @@ def _render_shutdown_cycles(
     shutdown_timestamps: list[datetime | None] = []
     for ev in events:
         if ev.type == EventType.SESSION_SHUTDOWN:
-            try:
-                data = ev.as_session_shutdown()
-            except (ValidationError, ValueError):
+            if (data := _safe_event_data(ev, ev.as_session_shutdown)) is None:
                 continue
             shutdown_events.append(data)
             shutdown_timestamps.append(ev.timestamp)

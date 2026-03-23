@@ -202,7 +202,13 @@ def build_session_summary(
         if ev.type == EventType.SESSION_START:
             try:
                 data = ev.as_session_start()
-            except ValidationError:
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx,
+                    ev.type,
+                    exc.error_count(),
+                )
                 continue
             session_id = data.sessionId
             start_time = data.startTime
@@ -212,7 +218,13 @@ def build_session_summary(
         elif ev.type == EventType.SESSION_SHUTDOWN:
             try:
                 data = ev.as_session_shutdown()
-            except ValidationError:
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx,
+                    ev.type,
+                    exc.error_count(),
+                )
                 continue
             current_model = ev.currentModel or data.currentModel
             if not current_model and data.modelMetrics:
@@ -299,11 +311,17 @@ def build_session_summary(
 
     # --- active session (no shutdown) ------------------------------------
     # Try to determine model from tool.execution_complete events
-    for ev in events:
+    for idx_tool, ev in enumerate(events):
         if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
             try:
                 parsed = ev.as_tool_execution()
-            except ValidationError:
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx_tool,
+                    ev.type,
+                    exc.error_count(),
+                )
                 continue
             if parsed.model:
                 model = parsed.model
