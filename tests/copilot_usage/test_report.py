@@ -1210,7 +1210,8 @@ class TestReportCoverageGaps:
         )
         output = _capture_console(render_session_detail, [], summary)
         assert "Code Changes" in output
-        assert "2" in output
+        # Ensure the files-modified metric specifically shows a count of 2.
+        assert re.search(r"Files?\s+modified[^\n]*\b2\b", output)
 
     def test_summary_header_shows_date_range(self) -> None:
         """_render_summary_header date range: earliest date → latest date."""
