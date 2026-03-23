@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +27,13 @@ from copilot_usage.models import ensure_aware_opt
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so assertions match visible text only."""
+    return _ANSI_RE.sub("", text)
 
 
 def _write_session(
@@ -1385,19 +1393,21 @@ class TestPrintVersionHeader:
         """The max(1, ...) guard ensures at least 1 space between title and version."""
         from copilot_usage import __version__
 
-        # Use a width exactly equal to title + version length, so max(1, 0) → 1
         title = "Copilot Usage"
         version_text = f"v{__version__}"
-        exact_width = len(title) + len(version_text)
+        # Width = title + 1 space + version so padding = max(1, 1) = 1
+        # and the rendered line fits without wrapping.
+        fit_width = len(title) + 1 + len(version_text)
 
-        c = Console(file=None, force_terminal=True, width=exact_width)
+        c = Console(file=None, force_terminal=True, width=fit_width)
         with c.capture() as capture:
             _print_version_header(target=c)
-        output = capture.get()
+        output = _strip_ansi(capture.get())
 
-        # Title and version are still both present
         assert title in output
         assert version_text in output
+        # Verify at least one space separates title from version
+        assert f"{title} {version_text}" in output
 
 
 # ---------------------------------------------------------------------------
@@ -1419,10 +1429,11 @@ class TestRenderSessionList:
         c = Console(file=None, force_terminal=True, width=120)
         with c.capture() as capture:
             _render_session_list(c, sessions)
-        output = capture.get()
+        output = _strip_ansi(capture.get())
 
-        assert "1" in output
-        assert "2" in output
+        # Match row numbers as first-column cell values between │ delimiters
+        assert re.search(r"│\s*1\s*│", output), "Row number 1 not found in # column"
+        assert re.search(r"│\s*2\s*│", output), "Row number 2 not found in # column"
 
     def test_active_status_label(self) -> None:
         """Active sessions display '🟢 Active'."""
@@ -1506,9 +1517,11 @@ class TestRenderSessionList:
         c = Console(file=None, force_terminal=True, width=120)
         with c.capture() as capture:
             _render_session_list(c, sessions)
-        output = capture.get()
+        output = _strip_ansi(capture.get())
 
-        assert "1" in output and "2" in output  # 1-based numbering
+        # Match row numbers as first-column cell values between │ delimiters
+        assert re.search(r"│\s*1\s*│", output), "Row number 1 not found in # column"
+        assert re.search(r"│\s*2\s*│", output), "Row number 2 not found in # column"
         assert "🟢 Active" in output  # active label
         assert "Completed" in output  # completed label
         assert "—" in output  # missing model fallback
