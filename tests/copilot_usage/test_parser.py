@@ -1826,6 +1826,74 @@ class TestParserCoverageGaps:
 
 
 # ---------------------------------------------------------------------------
+# Issue #259 — debug logging on ValidationError in build_session_summary
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryDebugLogging:
+    """Verify build_session_summary emits debug logs on malformed events."""
+
+    def test_session_start_validation_error_logs_debug(self, tmp_path: Path) -> None:
+        from loguru import logger
+
+        bad_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {"sessionId": 12345},  # sessionId should be str
+                "id": "ev-bad",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, bad_start, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+        events = parse_events(p)
+
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+        try:
+            summary = build_session_summary(events)
+        finally:
+            logger.remove(handler_id)
+
+        assert summary.session_id == ""
+        assert any(
+            "could not parse" in msg and "session.start" in msg for msg in log_messages
+        )
+
+    def test_session_shutdown_validation_error_logs_debug(self, tmp_path: Path) -> None:
+        from loguru import logger
+
+        bad_shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": "not-a-number",
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+                "currentModel": "gpt-4",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, bad_shutdown)
+        events = parse_events(p)
+
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+        try:
+            summary = build_session_summary(events)
+        finally:
+            logger.remove(handler_id)
+
+        assert summary.is_active is True
+        assert any(
+            "could not parse" in msg and "session.shutdown" in msg
+            for msg in log_messages
+        )
+
+
+# ---------------------------------------------------------------------------
 # model_calls and user_messages
 # ---------------------------------------------------------------------------
 
