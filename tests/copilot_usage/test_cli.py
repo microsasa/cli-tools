@@ -1,16 +1,19 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
 import json
+import os
 import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
@@ -1054,3 +1057,111 @@ def test_session_prefilter_non_uuid_dirs_always_parsed(
     result = runner.invoke(main, ["session", "corrupt0"])
     assert result.exit_code == 0
     assert "corrupt0" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — _read_line_nonblocking unit tests (issue #258)
+# ---------------------------------------------------------------------------
+
+
+class TestReadLineNonblocking:
+    def test_timeout_returns_none(self) -> None:
+        """When stdin has no data, _read_line_nonblocking returns None."""
+        r_fd, w_fd = os.pipe()
+        r_file = os.fdopen(r_fd, "r")
+        try:
+            with patch("copilot_usage.cli.sys.stdin", r_file):
+                result = _read_line_nonblocking(timeout=0.05)
+            assert result is None
+        finally:
+            r_file.close()
+            os.close(w_fd)
+
+    def test_returns_stripped_line(self) -> None:
+        """When stdin has data, _read_line_nonblocking returns stripped line."""
+        r_fd, w_fd = os.pipe()
+        r_file = os.fdopen(r_fd, "r")
+        try:
+            os.write(w_fd, b"  hello world  \n")
+            with patch("copilot_usage.cli.sys.stdin", r_file):
+                result = _read_line_nonblocking(timeout=1.0)
+            assert result == "hello world"
+        finally:
+            r_file.close()
+            os.close(w_fd)
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — _interactive_loop stdin fallback (issue #258)
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_loop_select_value_error_falls_back_to_input(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _read_line_nonblocking raises ValueError, the loop falls back to
+    blocking input(); providing 'q' via mocked input exits cleanly."""
+    _write_session(tmp_path, "fb_val00-0000-0000-0000-000000000000", name="ValErr")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("underlying buffer has been detached")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        return "q"
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+
+def test_interactive_loop_select_os_error_falls_back_to_input(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _read_line_nonblocking raises OSError, the loop falls back to
+    blocking input(); providing 'q' via mocked input exits cleanly."""
+    _write_session(tmp_path, "fb_oser0-0000-0000-0000-000000000000", name="OsErr")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_os_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise OSError("Bad file descriptor")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_os_error)
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        return "q"
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+
+def test_interactive_loop_fallback_eof_exits_cleanly(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _read_line_nonblocking raises ValueError and the fallback input()
+    raises EOFError, the loop terminates without exception."""
+    _write_session(tmp_path, "fb_eof00-0000-0000-0000-000000000000", name="EofFb")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("stdin not selectable")
+
+    def _raise_eof(*_args: Any, **_kwargs: Any) -> str:
+        raise EOFError
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+    monkeypatch.setattr("builtins.input", _raise_eof)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0

@@ -128,3 +128,61 @@ class TestCategorizeModel:
 
     def test_free_gpt_4_1(self) -> None:
         assert categorize_model("gpt-4.1") == PricingTier.FREE
+
+
+# ---------------------------------------------------------------------------
+# Partial-match tie-breaking (Gap 1 — issue #258)
+# ---------------------------------------------------------------------------
+
+
+class TestPartialMatchTieBreaking:
+    def test_multiple_partial_candidates_same_length_deterministic(self) -> None:
+        """When several keys share the same overlap length, the first-inserted
+        matching key in KNOWN_PRICING wins (because the loop uses strict ``>``).
+
+        ``"gpt-5.1-cod"`` (11 chars) matches:
+          - ``"gpt-5.1-codex"``      → match_len = min(13, 11) = 11
+          - ``"gpt-5.1-codex-max"``  → match_len = min(17, 11) = 11
+          - ``"gpt-5.1-codex-mini"`` → match_len = min(18, 11) = 11
+
+        All three share the same overlap; the first one in iteration order
+        (``gpt-5.1-codex``, multiplier 1.0) is selected.
+        """
+        p = lookup_model_pricing("gpt-5.1-cod")
+        # Collect all candidates with the maximum overlap length
+        candidates = [
+            (k, v)
+            for k, v in KNOWN_PRICING.items()
+            if "gpt-5.1-cod".startswith(k) or k.startswith("gpt-5.1-cod")
+        ]
+        max_overlap = max(min(len(k), len("gpt-5.1-cod")) for k, _ in candidates)
+        tied = [
+            (k, v)
+            for k, v in candidates
+            if min(len(k), len("gpt-5.1-cod")) == max_overlap
+        ]
+        assert len(tied) > 1, "need multiple tied candidates to test tiebreak"
+        # First-inserted key with max overlap wins (strict > comparison)
+        expected = tied[0][1]
+        assert p.multiplier == expected.multiplier
+        assert p.tier == expected.tier
+
+    def test_partial_match_does_not_confuse_gpt5_mini_with_gpt5_standard(
+        self,
+    ) -> None:
+        """``"gpt-5"`` partially matches many ``gpt-5.*`` keys, all with
+        ``match_len=5``.  Verify the resolved tier is deterministic and
+        matches the first-inserted candidate in ``KNOWN_PRICING``
+        (strict ``>`` tiebreak).
+        """
+        p = lookup_model_pricing("gpt-5")
+        candidates = [
+            v
+            for k, v in KNOWN_PRICING.items()
+            if "gpt-5".startswith(k) or k.startswith("gpt-5")
+        ]
+        assert len(candidates) > 1, "expected multiple partial matches"
+        # First match in iteration order wins
+        expected = candidates[0]
+        assert p.multiplier == expected.multiplier
+        assert p.tier == expected.tier
