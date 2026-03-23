@@ -2204,8 +2204,8 @@ class TestBuildEventDetails:
         assert _build_event_details(ev) == ""
 
 
-class TestRenderShutdownCyclesMalformed:
-    """Test _render_shutdown_cycles skips events with malformed data."""
+class TestRenderShutdownCyclesEdgeCases:
+    """Test _render_shutdown_cycles with malformed data and missing fields."""
 
     def test_malformed_shutdown_event_skipped(self) -> None:
         events = [
@@ -2217,6 +2217,25 @@ class TestRenderShutdownCyclesMalformed:
         ]
         output = _capture_console(_render_shutdown_cycles, events)
         assert "No shutdown cycles recorded" in output
+
+    def test_shutdown_with_no_timestamp_shows_dash(self) -> None:
+        """Session shutdown event with timestamp=None → date column shows '—'."""
+        events = [
+            SessionEvent(
+                type=EventType.SESSION_SHUTDOWN,
+                data={
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 5000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                timestamp=None,
+            ),
+        ]
+        output = _capture_console(_render_shutdown_cycles, events)
+        assert "Shutdown Cycles" in output
+        assert "—" in output
 
 
 # ---------------------------------------------------------------------------
