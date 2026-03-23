@@ -146,7 +146,10 @@ class TestPartialMatchTieBreaking:
           - ``"gpt-5.1-codex-mini"`` → match_len = min(18, 11) = 11
 
         All three share the same overlap; the first one in iteration order
-        (``gpt-5.1-codex``, multiplier 1.0) is selected.
+        (``gpt-5.1-codex``, multiplier 1.0) is selected.  Because
+        ``gpt-5.1-codex-mini`` has a *different* multiplier/tier, we can
+        verify the tiebreak did not pick a later candidate with divergent
+        pricing.
         """
         p = lookup_model_pricing("gpt-5.1-cod")
         # Collect all candidates with the maximum overlap length
@@ -163,9 +166,14 @@ class TestPartialMatchTieBreaking:
         ]
         assert len(tied) > 1, "need multiple tied candidates to test tiebreak"
         # First-inserted key with max overlap wins (strict > comparison)
-        expected = tied[0][1]
-        assert p.multiplier == expected.multiplier
-        assert p.tier == expected.tier
+        first = tied[0][1]
+        # At least one tied candidate must differ so the assertion is meaningful
+        assert any(
+            v.multiplier != first.multiplier or v.tier != first.tier
+            for _, v in tied[1:]
+        ), "tied candidates must have divergent pricing to make tiebreak observable"
+        assert p.multiplier == first.multiplier
+        assert p.tier == first.tier
 
     def test_partial_match_does_not_confuse_gpt5_mini_with_gpt5_standard(
         self,
