@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import click
 from rich.console import Console
@@ -144,6 +144,7 @@ class _Stoppable(Protocol):
 
     def stop(self) -> None: ...
     def join(self, timeout: float) -> None: ...
+    def is_alive(self) -> bool: ...
 
 
 def _start_observer(session_path: Path, change_event: threading.Event) -> _Stoppable:
@@ -153,7 +154,7 @@ def _start_observer(session_path: Path, change_event: threading.Event) -> _Stopp
     observer.schedule(handler, str(session_path), recursive=True)
     observer.daemon = True
     observer.start()
-    return observer  # type: ignore[return-value]
+    return cast(_Stoppable, observer)
 
 
 def _stop_observer(observer: _Stoppable | None) -> None:

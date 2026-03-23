@@ -3551,6 +3551,8 @@ class TestHms:
 class TestFilterSessionsStacklevel:
     def test_warning_frame_points_at_caller(self) -> None:
         """stacklevel=2 should attribute the warning to _filter_sessions' caller."""
+        import inspect
+
         session = SessionSummary(
             session_id="s1",
             start_time=datetime(2026, 6, 15, tzinfo=UTC),
@@ -3558,11 +3560,20 @@ class TestFilterSessionsStacklevel:
         since = datetime(2026, 12, 31, tzinfo=UTC)
         until = datetime(2026, 1, 1, tzinfo=UTC)
 
+        # Derive the expected file and line of the _filter_sessions call
+        # inside render_summary so the test actually verifies stacklevel=2.
+        src_lines, start_lineno = inspect.getsourcelines(render_summary)
+        call_offset = next(
+            i for i, line in enumerate(src_lines) if "_filter_sessions(" in line
+        )
+        expected_lineno = start_lineno + call_offset
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             render_summary([session], since=since, until=until)
 
         assert len(caught) == 1
         # With stacklevel=2 the warning should be attributed to the
-        # immediate caller of _filter_sessions — render_summary.
-        assert "render_summary" in caught[0].filename or "report" in caught[0].filename
+        # _filter_sessions(...) call site inside render_summary.
+        assert caught[0].lineno == expected_lineno
+        assert "report" in caught[0].filename

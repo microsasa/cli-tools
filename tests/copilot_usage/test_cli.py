@@ -531,7 +531,7 @@ def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
     observer = _start_observer(tmp_path, change_event)
     try:
         assert observer is not None
-        assert observer.is_alive()  # type: ignore[union-attr]
+        assert observer.is_alive()
     finally:
         _stop_observer(observer)
 
