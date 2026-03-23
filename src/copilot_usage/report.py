@@ -458,7 +458,7 @@ def _render_aggregate_stats(
     """Print aggregate stats panel (model calls, user msgs, tokens, premium)."""
     out = target_console or Console()
 
-    total_output = sum(mm.usage.outputTokens for mm in summary.model_metrics.values())
+    total_output = _total_output_tokens(summary)
 
     lines = [
         f"[green]{summary.model_calls}[/green] model calls   "
