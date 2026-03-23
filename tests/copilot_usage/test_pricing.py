@@ -173,9 +173,7 @@ class TestPartialMatchTieBreaking:
                 tier=PricingTier.LIGHT,
             ),
         }
-        monkeypatch.setattr(
-            "copilot_usage.pricing.KNOWN_PRICING", local_pricing, raising=False
-        )
+        monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
 
         p = lookup_model_pricing("gpt-5.1-cod")
         expected = local_pricing["gpt-5.1-codex"]
@@ -204,9 +202,7 @@ class TestPartialMatchTieBreaking:
                 tier=PricingTier.STANDARD,
             ),
         }
-        monkeypatch.setattr(
-            "copilot_usage.pricing.KNOWN_PRICING", local_pricing, raising=False
-        )
+        monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
 
         p = lookup_model_pricing("gpt-5")
         expected = local_pricing["gpt-5-mini"]
