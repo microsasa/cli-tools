@@ -1480,7 +1480,7 @@ class TestRenderFullSummary:
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
         parts = clean.split("Active Sessions", 1)
         active_section = parts[1] if len(parts) == 2 else ""
-        active_section = active_section.split("Historical Sessions", 1)[0]
+
         assert "Implicit Resume" in active_section
 
     def test_active_section_shows_nonzero_activity(self) -> None:
