@@ -738,11 +738,11 @@ class TestBuildSessionSummaryResumed:
         assert summary.is_active is True
         assert summary.last_resume_time is None
 
-    def test_resume_without_timestamp_is_active_but_last_resume_time_is_none(
+    def test_resume_with_missing_timestamp_field_is_active_but_last_resume_time_is_none(
         self, tmp_path: Path
     ) -> None:
-        """session.resume with timestamp=None marks session active but leaves
-        last_resume_time=None so display falls back to start_time."""
+        """session.resume with the timestamp key omitted entirely marks session active
+        but leaves last_resume_time=None so display falls back to start_time."""
         resume_no_ts = json.dumps(
             {
                 "type": "session.resume",

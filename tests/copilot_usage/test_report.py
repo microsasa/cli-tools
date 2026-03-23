@@ -133,22 +133,6 @@ class TestFormatSessionRunningTime:
         mock_fmt.assert_called_once_with(start)
         assert result == sentinel
 
-    def test_format_session_running_time_falls_back_to_start_time_when_no_resume_time(
-        self,
-    ) -> None:
-        """Session that was resumed but has last_resume_time=None falls back to start_time
-        for running-time display (not crash)."""
-        now = datetime.now(tz=UTC)
-        session = SessionSummary(
-            session_id="resumed-no-ts",
-            is_active=True,
-            start_time=now - timedelta(minutes=30),
-            last_resume_time=None,
-        )
-        result = _format_session_running_time(session)
-        assert result != "—"
-        assert "m" in result or "h" in result
-
 
 class TestRenderLiveSessions:
     """Tests for render_live_sessions."""
@@ -2249,10 +2233,7 @@ class TestRenderShutdownCyclesMalformed:
                 timestamp=None,
             ),
         ]
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
-        _render_shutdown_cycles(events, target_console=console)
-        output = buf.getvalue()
+        output = _capture_console(_render_shutdown_cycles, events)
         assert "Shutdown Cycles" in output
         assert "—" in output
 
