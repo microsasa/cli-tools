@@ -319,8 +319,6 @@ def _truncate(text: str, max_len: int = _MAX_CONTENT_LEN) -> str:
         return ""
     if len(text) <= max_len:
         return text
-    if max_len == 1:
-        return "…"
     return text[: max_len - 1] + "…"
 
 
@@ -396,14 +394,14 @@ def _build_event_details(ev: SessionEvent) -> str:
         case EventType.TOOL_EXECUTION_COMPLETE:
             if (data := _safe_event_data(ev, ev.as_tool_execution)) is None:
                 return ""
-            parts_t: list[str] = []
+            parts: list[str] = []
             tool_name = _extract_tool_name(data)
             if tool_name:
-                parts_t.append(tool_name)
-            parts_t.append("✓" if data.success else "✗")
+                parts.append(tool_name)
+            parts.append("✓" if data.success else "✗")
             if data.model:
-                parts_t.append(f"model={data.model}")
-            return "  ".join(parts_t)
+                parts.append(f"model={data.model}")
+            return "  ".join(parts)
 
         case EventType.SESSION_SHUTDOWN:
             if (data := _safe_event_data(ev, ev.as_session_shutdown)) is None:
