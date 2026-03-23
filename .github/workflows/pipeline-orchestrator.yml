@@ -123,7 +123,7 @@ jobs:
                   nodes {
                     number
                     title
-                    labels(first: 10) { nodes { name } }
+                    labels(first: 15) { nodes { name } }
                   }
                 }
               }
@@ -131,6 +131,7 @@ jobs:
             --jq '[.data.repository.issues.nodes[] | select(
               ([.labels.nodes[].name] | any(. == "aw-dispatched") | not)
               and ([.labels.nodes[].name] | any(startswith("aw-pr-stuck:")) | not)
+              and ([.labels.nodes[].name] | any(. == "agentic-workflows") | not)
             )] | .[0]')
 
           if [[ "$ISSUE" == "null" || -z "$ISSUE" ]]; then
