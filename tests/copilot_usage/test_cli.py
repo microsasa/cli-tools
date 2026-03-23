@@ -1025,6 +1025,37 @@ def test_session_prefilter_short_prefix_parses_all(
     parsed_dirs = {p.parent.name for p in parse_calls}
     assert "cd333333-cccc-cccc-cccc-cccccccccccc" in parsed_dirs
 
+    # First match (reverse-alpha discovery: ab222222 before ab111111) is shown.
+    assert "ab222222" in result.output
+    assert "ab111111" not in result.output
+
+
+def test_session_exact_uuid_wins_over_partial(tmp_path: Path, monkeypatch: Any) -> None:
+    """An exact full-UUID match is found regardless of discovery order."""
+    uuids = [
+        "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "ab222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    ]
+    for uid in uuids:
+        _write_session(tmp_path, uid, use_full_uuid_dir=True)
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        # ab222222 is discovered before ab111111
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.parent.name,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+
+    runner = CliRunner()
+    # Exact UUID targets ab111111 even though ab222222 is discovered first
+    result = runner.invoke(main, ["session", "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"])
+    assert result.exit_code == 0
+    assert "ab111111" in result.output
+    assert "ab222222" not in result.output
+
 
 def test_session_prefilter_non_uuid_dirs_always_parsed(
     tmp_path: Path, monkeypatch: Any
