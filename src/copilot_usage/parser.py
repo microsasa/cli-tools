@@ -259,7 +259,7 @@ def build_session_summary(
 
     last_shutdown_idx = all_shutdowns[-1][0] if all_shutdowns else -1
 
-    if all_shutdowns and last_shutdown_idx >= 0:
+    if all_shutdowns:
         for ev in events[last_shutdown_idx + 1 :]:
             if ev.type in _RESUME_INDICATOR_TYPES:
                 session_resumed = True

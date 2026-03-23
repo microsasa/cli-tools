@@ -528,12 +528,12 @@ def test_show_session_by_index_missing_file(tmp_path: Path) -> None:
 def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
     """_start_observer returns a non-None, alive observer for an existing dir."""
     change_event = threading.Event()
-    observer = _start_observer(tmp_path, change_event)  # pyright: ignore[reportUnknownVariableType]
+    observer = _start_observer(tmp_path, change_event)
     try:
         assert observer is not None
         assert observer.is_alive()  # type: ignore[union-attr]
     finally:
-        _stop_observer(observer)  # pyright: ignore[reportUnknownArgumentType]
+        _stop_observer(observer)
 
 
 # ---------------------------------------------------------------------------
