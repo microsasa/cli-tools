@@ -103,9 +103,30 @@ def _format_elapsed_since(start: datetime) -> str:
     return _format_timedelta(delta)
 
 
-def _estimated_output_tokens(session: SessionSummary) -> int:
-    """Sum outputTokens across all models in *session.model_metrics*."""
-    return sum(m.usage.outputTokens for m in session.model_metrics.values())
+def _total_output_tokens(session: SessionSummary) -> int:
+    """Return total output tokens including post-resume active tokens.
+
+    For resumed sessions whose ``model_metrics`` contain real shutdown data
+    (at least one model with ``requests.count > 0``), the
+    ``active_output_tokens`` field represents *additional* tokens produced
+    after the last shutdown and must be added to the historical baseline.
+
+    When ``model_metrics`` is empty the baseline is zero, so the active
+    tokens are the only source and are included unconditionally.
+
+    Pure-active sessions (no shutdown data) already mirror
+    ``active_output_tokens`` inside ``model_metrics``, so adding them again
+    would double-count.
+    """
+    baseline = sum(m.usage.outputTokens for m in session.model_metrics.values())
+    has_shutdown_metrics = any(
+        mm.requests.count > 0 for mm in session.model_metrics.values()
+    )
+    if (
+        _has_active_period_stats(session) and has_shutdown_metrics
+    ) or not session.model_metrics:
+        return baseline + session.active_output_tokens
+    return baseline
 
 
 def _has_active_period_stats(session: SessionSummary) -> bool:
@@ -143,7 +164,7 @@ def _effective_stats(session: SessionSummary) -> _EffectiveStats:
     return _EffectiveStats(
         model_calls=session.model_calls,
         user_messages=session.user_messages,
-        output_tokens=_estimated_output_tokens(session),
+        output_tokens=_total_output_tokens(session),
     )
 
 
@@ -166,7 +187,7 @@ def _compute_session_totals(sessions: list[SessionSummary]) -> _SessionTotals:
         model_calls=sum(s.model_calls for s in sessions),
         user_messages=sum(s.user_messages for s in sessions),
         api_duration_ms=sum(s.total_api_duration_ms for s in sessions),
-        output_tokens=sum(_estimated_output_tokens(s) for s in sessions),
+        output_tokens=sum(_total_output_tokens(s) for s in sessions),
         session_count=len(sessions),
     )
 
@@ -774,7 +795,7 @@ def _render_session_table(
         name = s.name or s.session_id[:12]
         model = s.model or "—"
 
-        output_tokens = sum(mm.usage.outputTokens for mm in s.model_metrics.values())
+        output_tokens = _total_output_tokens(s)
 
         if s.is_active:
             status = Text("Active 🟢", style="yellow")
@@ -993,7 +1014,6 @@ def render_cost_view(
                 )
                 grand_requests += mm.requests.count
                 grand_premium += mm.requests.cost
-                grand_output += mm.usage.outputTokens
                 # Only show session-level info once
                 name = ""
                 model_calls_display = ""
@@ -1008,6 +1028,7 @@ def render_cost_view(
             )
 
         grand_model_calls += s.model_calls
+        grand_output += _total_output_tokens(s)
 
         if s.is_active:
             cost_stats = _effective_stats(s)
@@ -1022,18 +1043,6 @@ def render_cost_view(
                 str(cost_calls),
                 format_tokens(cost_tokens),
             )
-            # Only add active tokens when they represent a post-shutdown
-            # increment (shutdown-derived metrics have requests.count > 0)
-            # or when there are no model_metrics at all.  Pure-active
-            # synthetic metrics already mirror active_output_tokens so
-            # adding them again would double-count.
-            has_shutdown_metrics = any(
-                mm.requests.count > 0 for mm in s.model_metrics.values()
-            )
-            if (
-                _has_active_period_stats(s) and has_shutdown_metrics
-            ) or not s.model_metrics:
-                grand_output += cost_tokens
 
     table.add_section()
     table.add_row(
