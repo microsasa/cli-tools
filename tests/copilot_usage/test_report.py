@@ -38,6 +38,8 @@ from copilot_usage.report import (
     _render_model_table,
     _render_shutdown_cycles,
     _safe_event_data,
+    _shutdown_output_tokens,
+    _total_output_tokens,
     _truncate,
     format_duration,
     format_tokens,
@@ -2755,7 +2757,7 @@ class TestEffectiveStats:
         assert isinstance(stats, _EffectiveStats)
         assert stats.model_calls == 12
         assert stats.user_messages == 8
-        # Falls back to _estimated_output_tokens which sums model_metrics
+        # Falls back to _total_output_tokens which sums model_metrics
         assert stats.output_tokens == 4200
 
     def test_frozen_dataclass(self) -> None:
@@ -3145,3 +3147,315 @@ class TestRenderCostViewActiveModelNone:
         # Should complete without any exception
         output = _capture_cost_view([session])
         assert "None" not in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #276 — _total_output_tokens and resumed-session token accounting
+# ---------------------------------------------------------------------------
+
+
+class TestTotalOutputTokens:
+    """Tests for the _total_output_tokens helper (issue #276)."""
+
+    def test_non_resumed_session(self) -> None:
+        """A normal session returns model_metrics output tokens only."""
+        session = SessionSummary(
+            session_id="normal-1234",
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        assert _total_output_tokens(session) == 500
+
+    def test_resumed_session_includes_active_tokens(self) -> None:
+        """Resumed session with shutdown data adds active_output_tokens."""
+        session = SessionSummary(
+            session_id="resumed-1234",
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        assert _total_output_tokens(session) == 600  # 350 + 250
+
+    def test_pure_active_session_no_double_count(self) -> None:
+        """Pure-active session (no shutdown data) does not double-count."""
+        session = SessionSummary(
+            session_id="pure-active-1234",
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=400,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        # requests.count == 0 → synthetic metrics; should NOT add active tokens
+        assert _total_output_tokens(session) == 400
+
+    def test_empty_model_metrics(self) -> None:
+        """Session with no model_metrics and no active tokens returns 0."""
+        session = SessionSummary(
+            session_id="empty-1234",
+            model_metrics={},
+        )
+        assert _total_output_tokens(session) == 0
+
+    def test_empty_model_metrics_with_active_tokens(self) -> None:
+        """Active session with no model_metrics uses active_output_tokens."""
+        session = SessionSummary(
+            session_id="no-metrics-active",
+            is_active=True,
+            active_model_calls=3,
+            active_output_tokens=500,
+            model_metrics={},
+        )
+        assert _total_output_tokens(session) == 500
+
+    def test_multiple_models_resumed(self) -> None:
+        """Resumed session sums across models and adds active tokens."""
+        session = SessionSummary(
+            session_id="multi-model-resumed",
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=100,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=6),
+                    usage=TokenUsage(outputTokens=200),
+                ),
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=4),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        assert _total_output_tokens(session) == 600  # 200 + 300 + 100
+
+
+class TestComputeSessionTotalsResumed:
+    """Issue #276 — _compute_session_totals includes active tokens for resumed sessions."""
+
+    def test_resumed_session_totals_include_active_tokens(self) -> None:
+        """Totals for a resumed session include both historical and active output tokens."""
+        session = SessionSummary(
+            session_id="resumed-totals",
+            total_premium_requests=10,
+            model_calls=8,
+            user_messages=4,
+            total_api_duration_ms=3000,
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        totals = _compute_session_totals([session])
+        assert totals.output_tokens == 600  # 350 + 250
+
+    def test_mixed_sessions_totals(self) -> None:
+        """Totals across normal and resumed sessions are correct."""
+        normal = SessionSummary(
+            session_id="normal-mix",
+            total_premium_requests=5,
+            model_calls=3,
+            user_messages=2,
+            total_api_duration_ms=1000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=6),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        resumed = SessionSummary(
+            session_id="resumed-mix",
+            total_premium_requests=8,
+            model_calls=6,
+            user_messages=3,
+            total_api_duration_ms=2000,
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=200,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=8),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        totals = _compute_session_totals([normal, resumed])
+        # normal: 400, resumed: 300 + 200 = 500, total: 900
+        assert totals.output_tokens == 900
+
+
+class TestRenderSessionTableResumed:
+    """Issue #276 — per-row Output Tokens in render_summary includes post-resume tokens."""
+
+    def test_session_table_includes_active_tokens(self) -> None:
+        """render_summary per-row Output Tokens includes post-resume active tokens."""
+        session = SessionSummary(
+            session_id="resumed-table-1234",
+            name="Resumed Session",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_output_tokens=250,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_summary([session])
+        # Total should be 600 (350 + 250), displayed as "600"
+        assert "600" in output
+
+
+class TestRenderCostViewResumed:
+    """Issue #276 — render_cost_view grand total matches after refactor."""
+
+    def test_cost_view_resumed_session_grand_total(self) -> None:
+        """Grand total output tokens in cost view includes active tokens for resumed sessions."""
+        session = SessionSummary(
+            session_id="cost-resumed-1234",
+            name="Cost Resumed",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_output_tokens=250,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        # Grand total should include 350 (historical) + 250 (active) = 600
+        assert "600" in output
+
+    def test_cost_view_pure_active_no_double_count(self) -> None:
+        """Pure-active session does not double-count output tokens in cost view."""
+        session = SessionSummary(
+            session_id="cost-pure-active",
+            name="Pure Active Cost",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=5,
+            user_messages=3,
+            active_output_tokens=400,
+            active_model_calls=5,
+            active_user_messages=3,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        # Should show 400, NOT 800 (no double-counting)
+        assert "800" not in output
+        assert "400" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #276 — _shutdown_output_tokens and render_full_summary split-view
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownOutputTokens:
+    """Tests for the _shutdown_output_tokens helper."""
+
+    def test_returns_baseline_only(self) -> None:
+        """Shutdown helper returns model_metrics total without active tokens."""
+        session = SessionSummary(
+            session_id="shutdown-only-1234",
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        assert _shutdown_output_tokens(session) == 350
+        # Contrast with _total_output_tokens which includes active
+        assert _total_output_tokens(session) == 600
+
+    def test_empty_metrics(self) -> None:
+        """Empty model_metrics returns 0."""
+        session = SessionSummary(session_id="empty-shut", model_metrics={})
+        assert _shutdown_output_tokens(session) == 0
+
+
+class TestRenderFullSummaryResumedSplitView:
+    """Regression: render_full_summary historical section excludes active tokens."""
+
+    def test_historical_section_excludes_active_tokens(self) -> None:
+        """Historical Totals / Sessions (Shutdown Data) must use shutdown-only tokens."""
+        resumed = SessionSummary(
+            session_id="resumed-split-1234",
+            name="Resumed Split",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            total_premium_requests=10,
+            model_calls=8,
+            user_messages=4,
+            total_api_duration_ms=3000,
+            active_output_tokens=250,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_full_summary([resumed])
+
+        # The historical section should show 350 (shutdown-only),
+        # NOT 600 (350 + 250 active).
+        # "Historical Totals" panel should contain shutdown-only tokens.
+        assert "Historical Totals" in output
+        assert "Sessions (Shutdown Data)" in output
+
+        # Active section should show the active-period tokens (250).
+        assert "Active Sessions" in output
+        assert "250" in output
+
+        # The shutdown-only baseline (350) should appear in the historical table.
+        assert "350" in output
