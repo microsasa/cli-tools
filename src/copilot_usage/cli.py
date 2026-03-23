@@ -226,6 +226,7 @@ def _interactive_loop(path: Path | None) -> None:
             if line in ("c", "C"):
                 view = "cost"
                 console.clear()
+                _print_version_header(console)
                 render_cost_view(sessions, target_console=console)
                 _write_prompt(_BACK_PROMPT)
                 continue
@@ -246,6 +247,7 @@ def _interactive_loop(path: Path | None) -> None:
             view = "detail"
             detail_idx = num
             console.clear()
+            _print_version_header(console)
             _show_session_by_index(console, sessions, num)
             _write_prompt(_BACK_PROMPT)
 
