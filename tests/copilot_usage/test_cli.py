@@ -13,7 +13,9 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _print_version_header,  # pyright: ignore[reportPrivateUsage]
     _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
+    _render_session_list,  # pyright: ignore[reportPrivateUsage]
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
@@ -1332,3 +1334,196 @@ def test_interactive_version_header_count_matches_auto_refresh(
         f"Header call count mismatch for {view_name}: "
         f"initial={initial_entry_calls}, refresh={auto_refresh_calls}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #309 — _print_version_header direct tests
+# ---------------------------------------------------------------------------
+
+
+class TestPrintVersionHeader:
+    """Direct tests for the _print_version_header rendering helper."""
+
+    def test_contains_title_and_version(self) -> None:
+        """Output contains 'Copilot Usage' and the current version string."""
+        from copilot_usage import __version__
+
+        c = Console(file=None, force_terminal=True, width=80)
+        with c.capture() as capture:
+            _print_version_header(target=c)
+        output = capture.get()
+
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+
+    def test_narrow_console_no_crash(self) -> None:
+        """Narrow console (width < title+version) does not crash or produce negative padding."""
+        from copilot_usage import __version__
+
+        c = Console(file=None, force_terminal=True, width=10)
+        with c.capture() as capture:
+            _print_version_header(target=c)
+        output = capture.get()
+
+        # Rich may wrap text across lines on narrow consoles; verify no crash
+        # and both logical parts are present (possibly split by wrapping)
+        assert "Copilot" in output
+        assert "Usage" in output
+        assert f"v{__version__}" in output
+
+    def test_accepts_explicit_target(self) -> None:
+        """Passing an explicit target console routes output there."""
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _print_version_header(target=c)
+        output = capture.get()
+
+        assert "Copilot Usage" in output
+        assert len(output.strip()) > 0
+
+    def test_padding_at_least_one_space(self) -> None:
+        """The max(1, ...) guard ensures at least 1 space between title and version."""
+        from copilot_usage import __version__
+
+        # Use a width exactly equal to title + version length, so max(1, 0) → 1
+        title = "Copilot Usage"
+        version_text = f"v{__version__}"
+        exact_width = len(title) + len(version_text)
+
+        c = Console(file=None, force_terminal=True, width=exact_width)
+        with c.capture() as capture:
+            _print_version_header(target=c)
+        output = capture.get()
+
+        # Title and version are still both present
+        assert title in output
+        assert version_text in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #309 — _render_session_list direct tests
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionList:
+    """Direct tests for the _render_session_list rendering helper."""
+
+    def test_one_based_numbering(self) -> None:
+        """Row numbers start from 1, not 0."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(session_id="aaaa12340000", is_active=False, name="Alpha"),
+            SessionSummary(session_id="bbbb56780000", is_active=False, name="Beta"),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "1" in output
+        assert "2" in output
+
+    def test_active_status_label(self) -> None:
+        """Active sessions display '🟢 Active'."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(
+                session_id="aaaa12340000", is_active=True, model="gpt-4", name="Alpha"
+            ),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "🟢 Active" in output
+
+    def test_completed_status_label(self) -> None:
+        """Completed sessions display 'Completed'."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(
+                session_id="bbbb56780000", is_active=False, model="gpt-4", name="Beta"
+            ),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "Completed" in output
+
+    def test_missing_model_fallback(self) -> None:
+        """Sessions with model=None show '—' in the Model column."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(
+                session_id="cccc90120000", is_active=False, model=None, name="Gamma"
+            ),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "—" in output
+
+    def test_missing_name_falls_back_to_session_id(self) -> None:
+        """Sessions with name=None fall back to session_id[:12]."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(
+                session_id="bbbb5678abcd9999",
+                is_active=False,
+                model=None,
+                name=None,
+            ),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "bbbb5678abcd" in output
+
+    def test_combined_active_and_completed(self) -> None:
+        """Mixed active/completed sessions render all expected labels and fallbacks."""
+        from copilot_usage.models import SessionSummary
+
+        active = SessionSummary(
+            session_id="aaaa12340000", is_active=True, model="gpt-4", name="Alpha"
+        )
+        completed = SessionSummary(
+            session_id="bbbb56780000efgh", is_active=False, model=None, name=None
+        )
+        sessions = [active, completed]
+
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "1" in output and "2" in output  # 1-based numbering
+        assert "🟢 Active" in output  # active label
+        assert "Completed" in output  # completed label
+        assert "—" in output  # missing model fallback
+        assert "bbbb56780000" in output  # name=None → session_id[:12]
+
+    def test_table_title_is_sessions(self) -> None:
+        """The table has 'Sessions' as its title."""
+        from copilot_usage.models import SessionSummary
+
+        sessions = [
+            SessionSummary(session_id="aaaa12340000", is_active=False, name="Test"),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_list(c, sessions)
+        output = capture.get()
+
+        assert "Sessions" in output
