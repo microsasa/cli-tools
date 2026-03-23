@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
-    _CCREQ_RE,
+    CCREQ_RE,
     VSCodeRequest,
     build_vscode_summary,
     discover_vscode_logs,
@@ -42,13 +42,13 @@ _LOG_NOISE = (
 
 
 # ---------------------------------------------------------------------------
-# _CCREQ_RE regex
+# CCREQ_RE regex
 # ---------------------------------------------------------------------------
 
 
 class TestCcreqRegex:
     def test_normal_line(self) -> None:
-        m = _CCREQ_RE.match(_LOG_OPUS)
+        m = CCREQ_RE.match(_LOG_OPUS)
         assert m is not None
         ts, req_id, model, dur, cat = m.groups()
         assert ts == "2026-03-13 22:10:24.523"
@@ -58,7 +58,7 @@ class TestCcreqRegex:
         assert cat == "panel/editAgent"
 
     def test_redirect_line(self) -> None:
-        m = _CCREQ_RE.match(_LOG_REDIRECT)
+        m = CCREQ_RE.match(_LOG_REDIRECT)
         assert m is not None
         _, _, model, dur, cat = m.groups()
         assert model == "gpt-4o-mini"
@@ -66,7 +66,7 @@ class TestCcreqRegex:
         assert cat == "copilotLanguageModelWrapper"
 
     def test_plain_model_line(self) -> None:
-        m = _CCREQ_RE.match(_LOG_GPT4O)
+        m = CCREQ_RE.match(_LOG_GPT4O)
         assert m is not None
         _, _, model, dur, cat = m.groups()
         assert model == "gpt-4o-mini-2024-07-18"
@@ -74,10 +74,10 @@ class TestCcreqRegex:
         assert cat == "title"
 
     def test_noise_line_does_not_match(self) -> None:
-        assert _CCREQ_RE.match(_LOG_NOISE) is None
+        assert CCREQ_RE.match(_LOG_NOISE) is None
 
     def test_empty_line_does_not_match(self) -> None:
-        assert _CCREQ_RE.match("") is None
+        assert CCREQ_RE.match("") is None
 
 
 # ---------------------------------------------------------------------------

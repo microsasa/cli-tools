@@ -12,6 +12,7 @@ from pathlib import Path
 from loguru import logger
 
 __all__ = [
+    "CCREQ_RE",
     "VSCodeLogSummary",
     "VSCodeRequest",
     "build_vscode_summary",
@@ -20,7 +21,7 @@ __all__ = [
     "parse_vscode_log",
 ]
 
-_CCREQ_RE = re.compile(
+CCREQ_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \[info\] "
     r"ccreq:(\w+)\.copilotmd \| success \| "
     r"(\S+?)(?:\s*->\s*\S+)? \| "
@@ -93,7 +94,7 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     try:
         with log_path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
-                m = _CCREQ_RE.match(line)
+                m = CCREQ_RE.match(line)
                 if m is None:
                     continue
                 ts_str, req_id, model, duration_str, category = m.groups()
