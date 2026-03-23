@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -61,9 +62,16 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     ``~/.config/Code/logs`` on other platforms.
     """
     if base_path is None:
-        appdata = os.environ.get("APPDATA", "")
-        if appdata:
-            base_path = Path(appdata) / "Code" / "logs"
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA", "")
+            if appdata:
+                base_path = Path(appdata) / "Code" / "logs"
+            else:
+                base_path = Path.home() / "AppData" / "Roaming" / "Code" / "logs"
+        elif sys.platform == "darwin":
+            base_path = (
+                Path.home() / "Library" / "Application Support" / "Code" / "logs"
+            )
         else:
             base_path = Path.home() / ".config" / "Code" / "logs"
 
@@ -81,29 +89,28 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     """Parse a single VS Code Copilot Chat log file into request objects."""
     requests: list[VSCodeRequest] = []
     try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
+        with log_path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = _CCREQ_RE.match(line)
+                if m is None:
+                    continue
+                ts_str, req_id, model, duration_str, category = m.groups()
+                try:
+                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
+                except ValueError:
+                    continue
+                requests.append(
+                    VSCodeRequest(
+                        timestamp=ts,
+                        request_id=req_id,
+                        model=model,
+                        duration_ms=int(duration_str),
+                        category=category,
+                    )
+                )
     except OSError:
         logger.warning("Could not read log file: {}", log_path)
         return requests
-
-    for line in text.splitlines():
-        m = _CCREQ_RE.match(line)
-        if m is None:
-            continue
-        ts_str, req_id, model, duration_str, category = m.groups()
-        try:
-            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
-        except ValueError:
-            continue
-        requests.append(
-            VSCodeRequest(
-                timestamp=ts,
-                request_id=req_id,
-                model=model,
-                duration_ms=int(duration_str),
-                category=category,
-            )
-        )
     logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
     return requests
 

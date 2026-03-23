@@ -569,19 +569,19 @@ def live(ctx: click.Context, path: Path | None) -> None:
 
 @main.command()
 @click.option(
-    "--path",
+    "--vscode-logs",
     type=click.Path(exists=True, path_type=Path),
     default=None,
     help="Custom VS Code logs directory.",
 )
-def vscode(path: Path | None) -> None:
+def vscode(vscode_logs: Path | None) -> None:
     """Show usage from VS Code Copilot Chat logs."""
     _print_version_header()
     from copilot_usage.vscode_parser import get_vscode_summary
     from copilot_usage.vscode_report import render_vscode_summary
 
     try:
-        summary = get_vscode_summary(path)
+        summary = get_vscode_summary(vscode_logs)
     except OSError as exc:
         click.echo(f"Error reading VS Code logs: {exc}", err=True)
         sys.exit(1)
