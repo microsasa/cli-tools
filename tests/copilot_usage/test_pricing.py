@@ -136,9 +136,14 @@ class TestCategorizeModel:
 
 
 class TestPartialMatchTieBreaking:
-    def test_multiple_partial_candidates_same_length_deterministic(self) -> None:
+    def test_multiple_partial_candidates_same_length_deterministic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When several keys share the same overlap length, the first-inserted
         matching key in KNOWN_PRICING wins (because the loop uses strict ``>``).
+
+        This test uses a small, purpose-built KNOWN_PRICING mapping so it does
+        not depend on the production registry's contents or insertion order.
 
         ``"gpt-5.1-cod"`` (11 chars) matches:
           - ``"gpt-5.1-codex"``      → match_len = min(13, 11) = 11
@@ -146,51 +151,65 @@ class TestPartialMatchTieBreaking:
           - ``"gpt-5.1-codex-mini"`` → match_len = min(18, 11) = 11
 
         All three share the same overlap; the first one in iteration order
-        (``gpt-5.1-codex``, multiplier 1.0) is selected.  Because
+        (``gpt-5.1-codex``, multiplier 1.0) is selected. Because
         ``gpt-5.1-codex-mini`` has a *different* multiplier/tier, we can
         verify the tiebreak did not pick a later candidate with divergent
         pricing.
         """
-        p = lookup_model_pricing("gpt-5.1-cod")
-        # Collect all candidates with the maximum overlap length
-        candidates = [
-            (k, v)
-            for k, v in KNOWN_PRICING.items()
-            if "gpt-5.1-cod".startswith(k) or k.startswith("gpt-5.1-cod")
-        ]
-        max_overlap = max(min(len(k), len("gpt-5.1-cod")) for k, _ in candidates)
-        tied = [
-            (k, v)
-            for k, v in candidates
-            if min(len(k), len("gpt-5.1-cod")) == max_overlap
-        ]
-        assert len(tied) > 1, "need multiple tied candidates to test tiebreak"
-        # First-inserted key with max overlap wins (strict > comparison)
-        first = tied[0][1]
-        # At least one tied candidate must differ so the assertion is meaningful
-        assert any(
-            v.multiplier != first.multiplier or v.tier != first.tier
-            for _, v in tied[1:]
-        ), "tied candidates must have divergent pricing to make tiebreak observable"
-        assert p.multiplier == first.multiplier
-        assert p.tier == first.tier
+        local_pricing = {
+            "gpt-5.1-codex": ModelPricing(
+                model_name="gpt-5.1-codex",
+                multiplier=1.0,
+                tier=PricingTier.STANDARD,
+            ),
+            "gpt-5.1-codex-max": ModelPricing(
+                model_name="gpt-5.1-codex-max",
+                multiplier=2.0,
+                tier=PricingTier.PREMIUM,
+            ),
+            "gpt-5.1-codex-mini": ModelPricing(
+                model_name="gpt-5.1-codex-mini",
+                multiplier=0.5,
+                tier=PricingTier.LIGHT,
+            ),
+        }
+        monkeypatch.setattr(
+            "copilot_usage.pricing.KNOWN_PRICING", local_pricing, raising=False
+        )
 
-    def test_partial_match_does_not_confuse_gpt5_mini_with_gpt5_standard(
-        self,
-    ) -> None:
-        """``"gpt-5"`` partially matches many ``gpt-5.*`` keys, all with
-        ``match_len=5``.  Verify the resolved tier is deterministic and
-        matches the first-inserted candidate in ``KNOWN_PRICING``
-        (strict ``>`` tiebreak).
-        """
-        p = lookup_model_pricing("gpt-5")
-        candidates = [
-            v
-            for k, v in KNOWN_PRICING.items()
-            if "gpt-5".startswith(k) or k.startswith("gpt-5")
-        ]
-        assert len(candidates) > 1, "expected multiple partial matches"
-        # First match in iteration order wins
-        expected = candidates[0]
+        p = lookup_model_pricing("gpt-5.1-cod")
+        expected = local_pricing["gpt-5.1-codex"]
+        # lookup_model_pricing returns the *queried* name, not the matched key
+        assert p.model_name == "gpt-5.1-cod"
         assert p.multiplier == expected.multiplier
         assert p.tier == expected.tier
+
+    def test_partial_match_does_not_confuse_gpt5_mini_with_gpt5_standard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``"gpt-5"`` partially matches multiple ``gpt-5.*`` keys with the
+        same overlap length. Verify the resolved tier is deterministic and
+        matches the first-inserted candidate in ``KNOWN_PRICING`` (strict
+        ``>`` tiebreak) using a small, purpose-built pricing registry.
+        """
+        local_pricing = {
+            "gpt-5-mini": ModelPricing(
+                model_name="gpt-5-mini",
+                multiplier=0.0,
+                tier=PricingTier.FREE,
+            ),
+            "gpt-5-pro": ModelPricing(
+                model_name="gpt-5-pro",
+                multiplier=1.0,
+                tier=PricingTier.STANDARD,
+            ),
+        }
+        monkeypatch.setattr(
+            "copilot_usage.pricing.KNOWN_PRICING", local_pricing, raising=False
+        )
+
+        p = lookup_model_pricing("gpt-5")
+        expected = local_pricing["gpt-5-mini"]
+        # lookup_model_pricing returns the *queried* name, not the matched key
+        assert p.model_name == "gpt-5"
+        assert p.multiplier == expected.multiplier
