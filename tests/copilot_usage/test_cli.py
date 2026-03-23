@@ -1165,3 +1165,158 @@ def test_interactive_loop_fallback_eof_exits_cleanly(
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #307 — version header on initial entry to cost / detail views
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_cost_view_prints_version_header(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Pressing 'c' calls _print_version_header on initial entry to cost view."""
+    _write_session(tmp_path, "vh_cost0-0000-0000-0000-000000000000", name="VHCost")
+
+    import copilot_usage.cli as cli_mod
+
+    header_calls: list[str] = []
+    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+
+    def _patched_header(target: Console | None = None) -> None:
+        header_calls.append("called")
+        orig_header(target)
+
+    monkeypatch.setattr(cli_mod, "_print_version_header", _patched_header)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "c"
+        if call_count == 2:
+            return ""  # go back
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # header called at least twice: once for _draw_home, once for cost initial entry
+    assert len(header_calls) >= 2
+
+
+def test_interactive_detail_view_prints_version_header(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Entering a session number calls _print_version_header on initial entry."""
+    _write_session(tmp_path, "vh_det00-0000-0000-0000-000000000000", name="VHDetail")
+
+    import copilot_usage.cli as cli_mod
+
+    header_calls: list[str] = []
+    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+
+    def _patched_header(target: Console | None = None) -> None:
+        header_calls.append("called")
+        orig_header(target)
+
+    monkeypatch.setattr(cli_mod, "_print_version_header", _patched_header)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "1"
+        if call_count == 2:
+            return ""  # go back
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # header called at least twice: once for _draw_home, once for detail initial entry
+    assert len(header_calls) >= 2
+
+
+@pytest.mark.parametrize(
+    ("user_input", "view_name"),
+    [("c", "cost"), ("1", "detail")],
+    ids=["cost-view", "detail-view"],
+)
+def test_interactive_version_header_count_matches_auto_refresh(
+    tmp_path: Path,
+    monkeypatch: Any,
+    user_input: str,
+    view_name: str,
+) -> None:
+    """Initial entry and auto-refresh both call _print_version_header exactly once each."""
+    _write_session(tmp_path, "vh_cnt00-0000-0000-0000-000000000000", name="VHCount")
+
+    import copilot_usage.cli as cli_mod
+
+    header_calls: list[str] = []
+    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+
+    def _patched_header(target: Console | None = None) -> None:
+        header_calls.append("called")
+        orig_header(target)
+
+    monkeypatch.setattr(cli_mod, "_print_version_header", _patched_header)
+
+    captured_event: list[threading.Event] = []
+
+    def _null_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        captured_event.append(change_event)
+        return  # type: ignore[return-value]
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _null_start)
+
+    snapshots: dict[str, int] = {}
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            snapshots["before_entry"] = len(header_calls)
+            return user_input  # navigate to cost or detail view
+        if call_count == 2:
+            snapshots["after_entry"] = len(header_calls)
+            # Trigger auto-refresh
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if call_count == 3:
+            snapshots["after_refresh"] = len(header_calls)
+            return ""  # go back
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    initial_entry_calls = snapshots["after_entry"] - snapshots["before_entry"]
+    auto_refresh_calls = snapshots["after_refresh"] - snapshots["after_entry"]
+
+    assert initial_entry_calls == 1, (
+        f"Expected 1 header call on initial {view_name} entry, "
+        f"got {initial_entry_calls}"
+    )
+    assert auto_refresh_calls == 1, (
+        f"Expected 1 header call on auto-refresh of {view_name}, "
+        f"got {auto_refresh_calls}"
+    )
+    assert initial_entry_calls == auto_refresh_calls, (
+        f"Header call count mismatch for {view_name}: "
+        f"initial={initial_entry_calls}, refresh={auto_refresh_calls}"
+    )
