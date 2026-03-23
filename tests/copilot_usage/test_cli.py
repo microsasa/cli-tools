@@ -46,29 +46,36 @@ def _write_session(
     output_tokens: int = 1500,
     active: bool = False,
     use_full_uuid_dir: bool = False,
+    start_time: str = "2025-01-15T10:00:00Z",
 ) -> Path:
     """Create a minimal events.jsonl file inside *base*/<dir>/."""
     session_dir = base / (session_id if use_full_uuid_dir else session_id[:8])
     session_dir.mkdir(parents=True, exist_ok=True)
 
+    # Derive realistic timestamps from the base start_time.
+    base_dt = datetime.fromisoformat(start_time)
+    user_msg_time = (base_dt + timedelta(minutes=1)).isoformat()
+    turn_start_time = (base_dt + timedelta(minutes=1, seconds=1)).isoformat()
+    shutdown_time = (base_dt + timedelta(hours=1)).isoformat()
+
     events: list[dict[str, Any]] = [
         {
             "type": "session.start",
-            "timestamp": "2025-01-15T10:00:00Z",
+            "timestamp": start_time,
             "data": {
                 "sessionId": session_id,
-                "startTime": "2025-01-15T10:00:00Z",
+                "startTime": start_time,
                 "context": {"cwd": "/home/user/project"},
             },
         },
         {
             "type": "user.message",
-            "timestamp": "2025-01-15T10:01:00Z",
+            "timestamp": user_msg_time,
             "data": {"content": "hello"},
         },
         {
             "type": "assistant.turn_start",
-            "timestamp": "2025-01-15T10:01:01Z",
+            "timestamp": turn_start_time,
             "data": {"turnId": "0", "interactionId": "int-1"},
         },
     ]
@@ -77,7 +84,7 @@ def _write_session(
         events.append(
             {
                 "type": "session.shutdown",
-                "timestamp": "2025-01-15T11:00:00Z",
+                "timestamp": shutdown_time,
                 "currentModel": model,
                 "data": {
                     "shutdownType": "normal",
@@ -208,6 +215,108 @@ def test_cost_with_date_filter(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #315 — cost --since/--until actually filters output
+# ---------------------------------------------------------------------------
+
+
+class TestCostDateFilter:
+    """Verify that cost --since/--until excludes sessions and changes Grand Total."""
+
+    def test_cost_since_excludes_earlier_session(self, tmp_path: Path) -> None:
+        """--since excludes an earlier session; only the later one appears."""
+        _write_session(
+            tmp_path,
+            "aaaa1111-0000-0000-0000-111111111111",
+            name="EarlySess",
+            premium=5,
+            output_tokens=1000,
+            start_time="2025-01-10T08:00:00Z",
+        )
+        _write_session(
+            tmp_path,
+            "bbbb2222-0000-0000-0000-222222222222",
+            name="LateSess",
+            premium=3,
+            output_tokens=500,
+            start_time="2025-06-15T12:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["cost", "--path", str(tmp_path), "--since", "2025-03-01"],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "LateSess" in output
+        assert "EarlySess" not in output
+        # Grand Total premium = 3 (only the late session)
+        grand_match = re.search(r"Grand Total\s*│[^│]*│\s*\d+\s*│\s*(\d+)\s*│", output)
+        assert grand_match is not None, "Grand Total row not found"
+        assert grand_match.group(1) == "3"
+
+    def test_cost_until_excludes_later_session(self, tmp_path: Path) -> None:
+        """--until excludes a later session; only the earlier one appears."""
+        _write_session(
+            tmp_path,
+            "cccc3333-0000-0000-0000-333333333333",
+            name="EarlyOnly",
+            premium=7,
+            output_tokens=2000,
+            start_time="2025-02-01T09:00:00Z",
+        )
+        _write_session(
+            tmp_path,
+            "dddd4444-0000-0000-0000-444444444444",
+            name="LaterExcl",
+            premium=10,
+            output_tokens=3000,
+            start_time="2025-09-20T14:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["cost", "--path", str(tmp_path), "--until", "2025-06-01"],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "EarlyOnly" in output
+        assert "LaterExcl" not in output
+
+    def test_cost_since_iso_datetime_precision(self, tmp_path: Path) -> None:
+        """--since with ISO datetime format filters with time-of-day precision."""
+        _write_session(
+            tmp_path,
+            "eeee5555-0000-0000-0000-555555555555",
+            name="Morning",
+            premium=2,
+            start_time="2026-03-07T08:00:00Z",
+        )
+        _write_session(
+            tmp_path,
+            "ffff6666-0000-0000-0000-666666666666",
+            name="Afternoon",
+            premium=4,
+            start_time="2026-03-07T16:00:00Z",
+        )
+        runner = CliRunner()
+        # Use ISO datetime to exclude the morning session
+        result = runner.invoke(
+            main,
+            [
+                "cost",
+                "--path",
+                str(tmp_path),
+                "--since",
+                "2026-03-07T12:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Afternoon" in output
+        assert "Morning" not in output
 
 
 def test_live_command(tmp_path: Path) -> None:
