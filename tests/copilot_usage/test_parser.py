@@ -738,6 +738,37 @@ class TestBuildSessionSummaryResumed:
         assert summary.is_active is True
         assert summary.last_resume_time is None
 
+    def test_resume_without_timestamp_is_active_but_last_resume_time_is_none(
+        self, tmp_path: Path
+    ) -> None:
+        """session.resume with timestamp=None marks session active but leaves
+        last_resume_time=None so display falls back to start_time."""
+        resume_no_ts = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+            }
+        )
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "back", "attachments": []},
+                "id": "ev-u2",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, resume_no_ts, post_user
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is True
+        assert summary.last_resume_time is None
+        assert summary.active_user_messages == 1
+
     def test_resumed_session_no_current_model_infers_from_metrics(
         self, tmp_path: Path
     ) -> None:
