@@ -2425,3 +2425,140 @@ class TestBuildSessionSummaryInfersModelWhenCurrentModelAbsent:
         assert summary.model == "claude-opus-4.6"
         assert summary.is_active is False
         assert summary.total_premium_requests == 8
+
+
+# ---------------------------------------------------------------------------
+# get_all_sessions / session CLI with no session.start (Gap 3 — issue #275)
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessionsNoStartEvent:
+    """Events file with no ``session.start`` → summary has session_id='' and
+    start_time=None but is still included in results and does not cause errors.
+    """
+
+    def test_summary_included_with_empty_session_id(self, tmp_path: Path) -> None:
+        """get_all_sessions returns a summary for the file, not silently dropped."""
+        only_user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "hello", "attachments": []},
+                "id": "ev-u1",
+                "timestamp": "2026-03-08T12:00:00.000Z",
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-08T12:10:00.000Z",
+            }
+        )
+        _write_events(
+            tmp_path / "no-start" / "events.jsonl",
+            only_user_msg,
+            shutdown,
+        )
+        results = get_all_sessions(tmp_path)
+        assert len(results) == 1
+        assert results[0].session_id == ""
+        assert results[0].start_time is None
+
+    def test_session_cli_does_not_match_empty_id(self, tmp_path: Path) -> None:
+        """The ``session`` CLI command must not match the empty-ID session for
+        any 4+ char query, and must not include a blank entry in 'Available:'.
+        """
+        from click.testing import CliRunner
+
+        from copilot_usage.cli import main
+
+        # Session without session.start (empty session_id)
+        only_user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "hello", "attachments": []},
+                "id": "ev-u1",
+                "timestamp": "2026-03-08T12:00:00.000Z",
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-08T12:10:00.000Z",
+            }
+        )
+        _write_events(
+            tmp_path / "no-start-sess" / "events.jsonl",
+            only_user_msg,
+            shutdown,
+        )
+
+        # Also add a valid session so "Available:" list is populated
+        _write_events(
+            tmp_path / "valid-sess" / "events.jsonl",
+            _START_EVENT,
+            _SHUTDOWN_EVENT,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["session", "nonexistent", "--path", str(tmp_path)]
+        )
+        assert result.exit_code != 0
+
+        # "Available:" should contain the valid session but not a blank entry
+        assert "test-ses" in result.output  # from _START_EVENT's sessionId
+        # Blank entries would appear as ", ," or leading/trailing ", "
+        if "Available:" in result.output:
+            available_line = [
+                line for line in result.output.splitlines() if "Available:" in line
+            ][0]
+            entries = [
+                e.strip() for e in available_line.split("Available:")[1].split(",")
+            ]
+            assert "" not in entries, (
+                f"Blank entry in Available list: {available_line!r}"
+            )
+
+    def test_no_crash_with_only_non_start_events(self, tmp_path: Path) -> None:
+        """Corrupt session (shutdown without start) must not cause a traceback."""
+        shutdown_only = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "crash",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-08T12:10:00.000Z",
+            }
+        )
+        _write_events(
+            tmp_path / "corrupt" / "events.jsonl",
+            shutdown_only,
+        )
+        # Must not raise
+        results = get_all_sessions(tmp_path)
+        assert len(results) == 1
+        assert results[0].session_id == ""
+        assert results[0].start_time is None
+        # Completed (has shutdown), not active
+        assert results[0].is_active is False

@@ -209,3 +209,46 @@ class TestPartialMatchTieBreaking:
         # lookup_model_pricing returns the *queried* name, not the matched key
         assert p.model_name == "gpt-5"
         assert p.multiplier == expected.multiplier
+
+
+# ---------------------------------------------------------------------------
+# Tie-breaking against the production registry (Gap 1 — issue #275)
+# ---------------------------------------------------------------------------
+
+
+class TestLookupModelPricingTieBreaking:
+    """Tests for equal-length partial match resolution against the real registry.
+
+    ``lookup_model_pricing`` resolves ties via strict ``>``, so the first
+    matching key in ``_RAW_MULTIPLIERS`` insertion order wins.  These tests
+    document that deterministic behaviour using the production registry.
+    """
+
+    def test_claude_opus_4_resolves_deterministically(self) -> None:
+        """``"claude-opus-4"`` (13 chars) matches ``claude-opus-4.5``,
+        ``claude-opus-4.6``, and ``claude-opus-4.6-1m`` all at
+        ``min_len=13``.  The first match in registry order wins.
+        """
+        p = lookup_model_pricing("claude-opus-4")
+        # model_name must be the query, not the matched key
+        assert p.model_name == "claude-opus-4"
+        # First entry among claude-opus-4.* in _RAW_MULTIPLIERS is
+        # claude-opus-4.6 (mult=3.0, tier=PREMIUM)
+        first_key = "claude-opus-4.6"
+        expected = KNOWN_PRICING[first_key]
+        assert p.multiplier == expected.multiplier
+        assert p.tier == expected.tier
+
+    def test_gpt_5_resolves_deterministically(self) -> None:
+        """``"gpt-5"`` (5 chars) matches ``gpt-5.4``, ``gpt-5.2``,
+        ``gpt-5.1``, ``gpt-5-mini``, etc. all at ``min_len=5``.
+        The first match in registry order wins.
+        """
+        p = lookup_model_pricing("gpt-5")
+        # model_name must be the query
+        assert p.model_name == "gpt-5"
+        # First gpt-5* key in _RAW_MULTIPLIERS is "gpt-5.4" (mult=1.0)
+        first_key = "gpt-5.4"
+        expected = KNOWN_PRICING[first_key]
+        assert p.multiplier == expected.multiplier
+        assert p.tier == expected.tier
