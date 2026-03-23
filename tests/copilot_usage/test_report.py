@@ -2204,8 +2204,8 @@ class TestBuildEventDetails:
         assert _build_event_details(ev) == ""
 
 
-class TestRenderShutdownCyclesMalformed:
-    """Test _render_shutdown_cycles skips events with malformed data."""
+class TestRenderShutdownCyclesEdgeCases:
+    """Test _render_shutdown_cycles with malformed data and missing fields."""
 
     def test_malformed_shutdown_event_skipped(self) -> None:
         events = [
