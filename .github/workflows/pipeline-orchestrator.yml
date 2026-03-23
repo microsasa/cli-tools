@@ -123,7 +123,7 @@ jobs:
                   nodes {
                     number
                     title
-                    labels(first: 10) { nodes { name } }
+                    labels(first: 15) { nodes { name } }
                   }
                 }
               }
