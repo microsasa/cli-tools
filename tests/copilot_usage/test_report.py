@@ -1449,6 +1449,40 @@ class TestRenderFullSummary:
         # Should show minutes (from last_resume_time), NOT days (from start_time)
         assert "3d" not in output and "72h" not in output
 
+    def test_render_full_summary_implicit_resume_shows_active_section(self) -> None:
+        """Implicit resume (is_active=True, last_resume_time=None) appears in active section."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="impl-resume-abcdef",
+            name="Implicit Resume",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=15),
+            last_resume_time=None,
+            is_active=True,
+            user_messages=2,
+            model_calls=1,
+            active_user_messages=1,
+            active_output_tokens=0,
+            active_model_calls=0,
+            total_premium_requests=5,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(outputTokens=500),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        # Ensure the Active Sessions panel is present and not the "empty" variant.
+        assert "Active Sessions" in output
+        assert "No active sessions" not in output
+        # Strip ANSI codes and isolate the Active Sessions section only.
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        parts = clean.split("Active Sessions", 1)
+        active_section = parts[1] if len(parts) == 2 else ""
+
+        assert "Implicit Resume" in active_section
+
     def test_active_section_shows_nonzero_activity(self) -> None:
         """Active section renders the actual active_* field values, not zero."""
         now = datetime.now(tz=UTC)
