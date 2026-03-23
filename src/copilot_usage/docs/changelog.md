@@ -36,16 +36,17 @@ Append-only history of what was planned and delivered, PR by PR. Newest entries 
 
 ---
 
-## refactor: remove multiplier estimation, report raw event counts — 2026-03-13
+## refactor: remove multiplier estimation from summary/cost, report raw event counts — 2026-03-13
 
-**Plan**: Strip out all multiplier-based premium request estimation. Report raw facts: model calls (assistant.turn_start count), user messages, output tokens, and exact premium requests from shutdown data only.
+**Plan**: Strip out multiplier-based premium request estimation from `SessionSummary` and the `cost`/`summary` commands. Report raw facts: model calls (assistant.turn_start count), user messages, output tokens, and exact premium requests from shutdown data only.
 
 **Done**:
 - Removed estimated_premium_requests from SessionSummary
 - Added model_calls and user_messages fields
 - Simplified cost command to raw data only
-- Removed ~ prefix estimation display
 - Updated all tests and fixtures
+
+**Note**: Active/live sessions still show estimated costs with a `~` prefix via `_estimate_premium_cost` in the `live` command's "Est. Cost" column. This estimation was intentionally kept for live sessions where exact premium data is not yet available from a shutdown event.
 
 ---
 

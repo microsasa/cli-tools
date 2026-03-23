@@ -23,9 +23,6 @@ Standards: follows `microsasa/project-standards`
   - `session.shutdown` — `totalPremiumRequests`, `totalApiDurationMs`, `modelMetrics` (per-model `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, request count & cost), `codeChanges`, `currentModel`
   - `tool.execution_complete` — model used per tool call
   - `user.message` — user prompts
-- **`workspace.yaml`** — session workspace/cwd info
-- **`~/.copilot/logs/process-*.log`** — CompactionProcessor lines show real-time token utilization
-
 **Commands**:
 - `copilot-usage` — launches Rich interactive mode with numbered session list, cost view, and watchdog-based auto-refresh (2-second debounce)
 - `copilot-usage session <id>` — per-turn token breakdown, tools used, API call timeline, code changes (static CLI output)
