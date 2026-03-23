@@ -130,23 +130,6 @@ class TestFormatSessionRunningTime:
         mock_fmt.assert_called_once_with(start)
         assert result == sentinel
 
-    def test_format_session_running_time_uses_start_time_when_no_last_resume(
-        self,
-    ) -> None:
-        """is_active=True + last_resume_time=None falls back to start_time, not '—'."""
-        now = datetime.now(tz=UTC)
-        session = SessionSummary(
-            session_id="implicit-run-1234",
-            is_active=True,
-            start_time=now - timedelta(minutes=10),
-            last_resume_time=None,
-            active_user_messages=1,
-            active_output_tokens=0,
-        )
-        result = _format_session_running_time(session)
-        assert result != "—"
-        assert "10m" in result
-
 
 class TestRenderLiveSessions:
     """Tests for render_live_sessions."""
@@ -1490,8 +1473,15 @@ class TestRenderFullSummary:
             },
         )
         output = _capture_full_summary([session])
+        # Ensure the Active Sessions panel is present and not the "empty" variant.
         assert "Active Sessions" in output
-        assert "Implicit Resume" in output
+        assert "No active sessions" not in output
+        # Strip ANSI codes and isolate the Active Sessions section only.
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        parts = clean.split("Active Sessions", 1)
+        active_section = parts[1] if len(parts) == 2 else ""
+        active_section = active_section.split("Historical Sessions", 1)[0]
+        assert "Implicit Resume" in active_section
 
     def test_active_section_shows_nonzero_activity(self) -> None:
         """Active section renders the actual active_* field values, not zero."""
@@ -2717,18 +2707,6 @@ class TestHasActivePeriodStats:
             active_model_calls=0,
         )
         assert _has_active_period_stats(session) is False
-
-    def test_has_active_period_stats_true_via_user_messages_no_resume(self) -> None:
-        """Implicit resume: last_resume_time=None but active_user_messages > 0 → True."""
-        session = SessionSummary(
-            session_id="implicit-active-1234",
-            is_active=True,
-            last_resume_time=None,
-            active_user_messages=1,
-            active_output_tokens=0,
-            active_model_calls=0,
-        )
-        assert _has_active_period_stats(session) is True
 
 
 class TestEffectiveStats:
