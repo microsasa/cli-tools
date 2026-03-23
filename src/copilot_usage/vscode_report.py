@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -53,7 +55,9 @@ def render_vscode_summary(summary: VSCodeLogSummary) -> None:
             count = summary.requests_by_model[model]
             total_ms = summary.duration_by_model.get(model, 0)
             avg_ms = total_ms // count if count else 0
-            pricing = lookup_model_pricing(model)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                pricing = lookup_model_pricing(model)
             table.add_row(
                 model,
                 pricing.tier.value,
