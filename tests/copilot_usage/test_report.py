@@ -1739,6 +1739,54 @@ class TestRenderCostView:
         assert "claude-haiku-4.5" in output
         assert "Grand Total" in output
 
+    def test_multi_model_active_session_shows_since_last_shutdown_row(self) -> None:
+        """Active session with 2+ models in model_metrics renders both model rows
+        and the '↳ Since last shutdown' row with correct estimated cost."""
+        session = SessionSummary(
+            session_id="multi-model-actv-01",
+            name="Multi + Active",
+            model="claude-opus-4.6",
+            start_time=datetime(2025, 1, 10, tzinfo=UTC),
+            is_active=True,
+            model_calls=12,
+            user_messages=6,
+            active_model_calls=4,
+            active_output_tokens=800,
+            last_resume_time=datetime(2025, 1, 11, tzinfo=UTC),
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=7),
+                    usage=TokenUsage(outputTokens=1400),
+                ),
+                "claude-opus-4.6": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=15),
+                    usage=TokenUsage(outputTokens=600),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+
+        # Both historical model rows must appear
+        assert "claude-sonnet-4" in output
+        assert "claude-opus-4.6" in output
+
+        # The active row must appear
+        assert "Since last shutdown" in output
+
+        # claude-opus-4.6 multiplier = 3.0, active_model_calls = 4 → ~12
+        assert "~12" in output
+
+        # Grand Total model calls = 12 (s.model_calls), NOT 12+4 = 16
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        grand_match = re.search(
+            r"Grand Total\s*│[^│]*│\s*\d+\s*│\s*\d+\s*│\s*(\d+)\s*│", clean
+        )
+        assert grand_match is not None, "Grand Total row not found"
+        assert grand_match.group(1) == "12"
+
+        # Grand Total output tokens = 1400 + 600 (shutdown) + 800 (active) = 2800 → "2.8K"
+        assert "2.8K" in output
+
     def test_resumed_session_no_double_count(self) -> None:
         """Regression: active_model_calls must not be added to grand_model_calls."""
         import re
