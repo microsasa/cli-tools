@@ -944,6 +944,111 @@ class TestBuildSessionSummaryResumed:
 
 
 # ---------------------------------------------------------------------------
+# build_session_summary — implicit resume (post-shutdown activity, no session.resume)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryImplicitResume:
+    """Post-shutdown user/assistant messages without explicit session.resume event."""
+
+    def test_user_message_after_shutdown_triggers_implicit_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown → user.message (no session.resume) → full implicit resume state."""
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "continue", "attachments": []},
+                "id": "ev-u-implicit",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_user,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is True
+        assert summary.last_resume_time is None
+        assert summary.active_user_messages == 1
+        assert summary.active_output_tokens == 0
+
+    def test_assistant_message_after_shutdown_triggers_implicit_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown → assistant.message (no session.resume) → full implicit resume state."""
+        post_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-implicit",
+                    "content": "continuing",
+                    "toolRequests": [],
+                    "interactionId": "int-implicit",
+                    "outputTokens": 175,
+                },
+                "id": "ev-a-implicit",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_asst,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is True
+        assert summary.last_resume_time is None
+        assert summary.active_output_tokens == 175
+        assert summary.active_user_messages == 0
+
+    def test_implicit_resume_premium_requests_still_aggregated(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown-cycle premium requests are included even with implicit resume."""
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "more work", "attachments": []},
+                "id": "ev-u-prem",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_user,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        # _SHUTDOWN_EVENT has totalPremiumRequests=5
+        assert summary.total_premium_requests == 5
+        assert summary.is_active is True
+        assert summary.last_resume_time is None
+
+
+# ---------------------------------------------------------------------------
 # build_session_summary — multi-shutdown resumed (2+ shutdowns then still active)
 # ---------------------------------------------------------------------------
 
