@@ -3243,6 +3243,43 @@ class TestTotalOutputTokens:
         assert _total_output_tokens(session) == 600  # 200 + 300 + 100
 
 
+class TestRenderAggregateStatsResumedTokens:
+    """Issue #290 — _render_aggregate_stats includes active tokens for resumed sessions."""
+
+    def test_aggregate_stats_shows_total_output_tokens_for_resumed_session(
+        self,
+    ) -> None:
+        """Output tokens in Aggregate Stats panel include active_output_tokens for resumed sessions."""
+        from copilot_usage.report import _render_aggregate_stats
+
+        session = SessionSummary(
+            session_id="agg-resumed-1234",
+            model_calls=5,
+            user_messages=3,
+            total_premium_requests=2,
+            total_api_duration_ms=1500,
+            is_active=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+
+        expected_total = _total_output_tokens(session)  # 350 + 250 = 600
+        assert expected_total == 600
+
+        output = _capture_console(_render_aggregate_stats, session)
+        assert format_tokens(expected_total) in output
+        # Ensure the shutdown-only baseline is NOT shown
+        shutdown_only = format_tokens(350)
+        if shutdown_only != format_tokens(expected_total):
+            assert shutdown_only not in output
+
+
 class TestComputeSessionTotalsResumed:
     """Issue #276 — _compute_session_totals includes active tokens for resumed sessions."""
 
