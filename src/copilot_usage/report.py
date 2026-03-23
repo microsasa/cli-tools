@@ -63,11 +63,17 @@ def format_tokens(n: int) -> str:
     return str(n)
 
 
+def _hms(total_seconds: int) -> tuple[int, int, int]:
+    """Decompose *total_seconds* into ``(hours, minutes, seconds)``."""
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return hours, minutes, seconds
+
+
 def _format_timedelta(td: timedelta) -> str:
     """Format a timedelta to human-readable duration (e.g. '1h 5m 30s')."""
     total_seconds = max(int(td.total_seconds()), 0)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
+    hours, minutes, seconds = _hms(total_seconds)
     parts: list[str] = []
     if hours:
         parts.append(f"{hours}h")
@@ -306,8 +312,7 @@ def render_live_sessions(
 def _format_relative_time(delta: timedelta) -> str:
     """Format a timedelta as ``+M:SS`` or ``+H:MM:SS``."""
     total_seconds = max(int(delta.total_seconds()), 0)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
+    hours, minutes, seconds = _hms(total_seconds)
     if hours:
         return f"+{hours}:{minutes:02d}:{seconds:02d}"
     return f"+{minutes}:{seconds:02d}"
@@ -678,7 +683,7 @@ def _filter_sessions(
             f"--since ({since.date()}) is after --until ({until.date()}); "
             "no sessions will match.",
             UserWarning,
-            stacklevel=3,
+            stacklevel=2,
         )
 
     if since is None and until is None:

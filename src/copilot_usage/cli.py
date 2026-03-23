@@ -10,6 +10,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol, cast
 
 import click
 from rich.console import Console
@@ -138,21 +139,29 @@ class _FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
             self._change_event.set()
 
 
-def _start_observer(session_path: Path, change_event: threading.Event) -> object:
+class _Stoppable(Protocol):
+    """Minimal interface for a watchdog-style observer."""
+
+    def stop(self) -> None: ...
+    def join(self, timeout: float | None = None) -> None: ...
+    def is_alive(self) -> bool: ...
+
+
+def _start_observer(session_path: Path, change_event: threading.Event) -> _Stoppable:
     """Start a watchdog observer monitoring *session_path* for changes."""
     handler = _FileChangeHandler(change_event)
     observer = Observer()
     observer.schedule(handler, str(session_path), recursive=True)
     observer.daemon = True
     observer.start()
-    return observer
+    return cast(_Stoppable, observer)
 
 
-def _stop_observer(observer: object | None) -> None:
+def _stop_observer(observer: _Stoppable | None) -> None:
     """Stop a watchdog observer if running."""
     if observer is not None:
-        observer.stop()  # type: ignore[union-attr]
-        observer.join(timeout=2)  # type: ignore[union-attr]
+        observer.stop()
+        observer.join(timeout=2)
 
 
 def _interactive_loop(path: Path | None) -> None:

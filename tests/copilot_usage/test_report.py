@@ -35,6 +35,7 @@ from copilot_usage.report import (
     _format_session_running_time,
     _format_timedelta,
     _has_active_period_stats,
+    _hms,
     _render_model_table,
     _render_shutdown_cycles,
     _safe_event_data,
@@ -3515,3 +3516,64 @@ class TestRenderFullSummaryResumedSplitView:
 
         # The shutdown-only baseline (350) should appear in the historical table.
         assert "350" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #308 — _hms decomposition helper
+# ---------------------------------------------------------------------------
+
+
+class TestHms:
+    def test_zero(self) -> None:
+        assert _hms(0) == (0, 0, 0)
+
+    def test_seconds_only(self) -> None:
+        assert _hms(45) == (0, 0, 45)
+
+    def test_minutes_and_seconds(self) -> None:
+        assert _hms(125) == (0, 2, 5)
+
+    def test_exact_hour(self) -> None:
+        assert _hms(3600) == (1, 0, 0)
+
+    def test_hours_minutes_seconds(self) -> None:
+        assert _hms(3661) == (1, 1, 1)
+
+    def test_large_value(self) -> None:
+        assert _hms(360303) == (100, 5, 3)
+
+
+# ---------------------------------------------------------------------------
+# Issue #308 — _filter_sessions stacklevel points at caller
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsStacklevel:
+    def test_warning_frame_points_at_caller(self) -> None:
+        """stacklevel=2 should attribute the warning to _filter_sessions' caller."""
+        import inspect
+
+        session = SessionSummary(
+            session_id="s1",
+            start_time=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+        since = datetime(2026, 12, 31, tzinfo=UTC)
+        until = datetime(2026, 1, 1, tzinfo=UTC)
+
+        # Derive the expected file and line of the _filter_sessions call
+        # inside render_summary so the test actually verifies stacklevel=2.
+        src_lines, start_lineno = inspect.getsourcelines(render_summary)
+        call_offset = next(
+            i for i, line in enumerate(src_lines) if "_filter_sessions(" in line
+        )
+        expected_lineno = start_lineno + call_offset
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            render_summary([session], since=since, until=until)
+
+        assert len(caught) == 1
+        # With stacklevel=2 the warning should be attributed to the
+        # _filter_sessions(...) call site inside render_summary.
+        assert caught[0].lineno == expected_lineno
+        assert "report" in caught[0].filename
