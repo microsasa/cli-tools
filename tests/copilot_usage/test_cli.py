@@ -1189,14 +1189,17 @@ def test_interactive_cost_view_prints_version_header(
 
     monkeypatch.setattr(cli_mod, "_print_version_header", _patched_header)
 
+    snapshots: dict[str, int] = {}
     call_count = 0
 
     def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
         nonlocal call_count
         call_count += 1
         if call_count == 1:
+            snapshots["before_entry"] = len(header_calls)
             return "c"
         if call_count == 2:
+            snapshots["after_entry"] = len(header_calls)
             return ""  # go back
         return "q"
 
@@ -1205,8 +1208,11 @@ def test_interactive_cost_view_prints_version_header(
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
-    # header called at least twice: once for _draw_home, once for cost initial entry
-    assert len(header_calls) >= 2
+    # Exactly one header call attributed to cost-view initial entry
+    cost_entry_calls = snapshots["after_entry"] - snapshots["before_entry"]
+    assert cost_entry_calls == 1, (
+        f"Expected 1 header call on cost-view initial entry, got {cost_entry_calls}"
+    )
 
 
 def test_interactive_detail_view_prints_version_header(
@@ -1226,14 +1232,17 @@ def test_interactive_detail_view_prints_version_header(
 
     monkeypatch.setattr(cli_mod, "_print_version_header", _patched_header)
 
+    snapshots: dict[str, int] = {}
     call_count = 0
 
     def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
         nonlocal call_count
         call_count += 1
         if call_count == 1:
+            snapshots["before_entry"] = len(header_calls)
             return "1"
         if call_count == 2:
+            snapshots["after_entry"] = len(header_calls)
             return ""  # go back
         return "q"
 
@@ -1242,8 +1251,11 @@ def test_interactive_detail_view_prints_version_header(
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
-    # header called at least twice: once for _draw_home, once for detail initial entry
-    assert len(header_calls) >= 2
+    # Exactly one header call attributed to detail-view initial entry
+    detail_entry_calls = snapshots["after_entry"] - snapshots["before_entry"]
+    assert detail_entry_calls == 1, (
+        f"Expected 1 header call on detail-view initial entry, got {detail_entry_calls}"
+    )
 
 
 @pytest.mark.parametrize(
