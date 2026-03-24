@@ -3646,3 +3646,95 @@ class TestFilterSessionsStacklevel:
         # _filter_sessions(...) call site inside render_summary.
         assert caught[0].lineno == expected_lineno
         assert "report" in caught[0].filename
+
+
+# ---------------------------------------------------------------------------
+# Issue #320 — render_cost_view and _render_model_table sort order assertions
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewModelSortOrder:
+    """Assert render_cost_view lists models in alphabetical order."""
+
+    def test_cost_view_models_sorted_alphabetically(self) -> None:
+        session = SessionSummary(
+            session_id="sort-test-1234",
+            name="Sort Test",
+            start_time=datetime(2025, 1, 1, tzinfo=UTC),
+            model_metrics={
+                "z-model": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=1),
+                    usage=TokenUsage(outputTokens=100),
+                ),
+                "a-model": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=2),
+                    usage=TokenUsage(outputTokens=200),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        a_pos = output.index("a-model")
+        z_pos = output.index("z-model")
+        assert a_pos < z_pos, "a-model should appear before z-model in sorted output"
+
+    def test_cost_view_single_model(self) -> None:
+        """Edge case — single model in metrics dict appears once and correct."""
+        session = SessionSummary(
+            session_id="single-model-cost",
+            name="Single Model",
+            start_time=datetime(2025, 2, 1, tzinfo=UTC),
+            model_metrics={
+                "only-model": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=4),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        assert output.count("only-model") == 1
+
+
+class TestRenderModelTableSortOrder:
+    """Assert _render_model_table lists models in alphabetical order."""
+
+    def test_model_table_sorted_alphabetically(self) -> None:
+        """Two models via _render_model_table — rows appear in alphabetical order."""
+        session = SessionSummary(
+            session_id="sort-mt-1234",
+            name="Model Table Sort",
+            start_time=datetime(2025, 3, 1, tzinfo=UTC),
+            model_metrics={
+                "z-model": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=1),
+                    usage=TokenUsage(outputTokens=50),
+                ),
+                "a-model": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=3),
+                    usage=TokenUsage(outputTokens=150),
+                ),
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        a_pos = output.index("a-model")
+        z_pos = output.index("z-model")
+        assert a_pos < z_pos, "a-model should appear before z-model in sorted output"
+
+    def test_model_table_single_model(self) -> None:
+        """Edge case — single model appears exactly once."""
+        session = SessionSummary(
+            session_id="single-mt",
+            model_metrics={
+                "only-model": ModelMetrics(
+                    requests=RequestMetrics(count=1, cost=1),
+                    usage=TokenUsage(outputTokens=10),
+                ),
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        assert output.count("only-model") == 1
