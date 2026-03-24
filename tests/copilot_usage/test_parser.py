@@ -2320,12 +2320,9 @@ class TestConfigModelReading:
         summary = build_session_summary(events, config_path=config)
         assert summary.model is None
 
-    def test_unreadable_config_returns_none(self, tmp_path: Path) -> None:
-        """config.json exists but is unreadable (OSError) → model stays None."""
-        config = tmp_path / "config.json"
-        config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
-
-        # Simulate an unreadable config.json deterministically by patching Path.read_text
+    @staticmethod
+    def _patch_unreadable_config(config: Path):
+        """Context manager that makes ``Path.read_text`` raise for *config*."""
         original_read_text = Path.read_text
 
         def _raise_on_config(self_path: Path, *args: object, **kwargs: object) -> str:
@@ -2333,11 +2330,18 @@ class TestConfigModelReading:
                 raise OSError("Permission denied")
             return original_read_text(self_path, *args, **kwargs)  # type: ignore[arg-type]
 
+        return patch.object(Path, "read_text", new=_raise_on_config)
+
+    def test_unreadable_config_returns_none(self, tmp_path: Path) -> None:
+        """config.json exists but is unreadable (OSError) → model stays None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
         p = tmp_path / "s" / "events.jsonl"
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
         events = parse_events(p)
 
-        with patch.object(Path, "read_text", new=_raise_on_config):
+        with self._patch_unreadable_config(config):
             summary = build_session_summary(events, config_path=config)
 
         assert summary.model is None
@@ -2349,13 +2353,6 @@ class TestConfigModelReading:
         config = tmp_path / "config.json"
         config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
 
-        original_read_text = Path.read_text
-
-        def _raise_on_config(self_path: Path, *args: object, **kwargs: object) -> str:
-            if self_path == config:
-                raise OSError("Permission denied")
-            return original_read_text(self_path, *args, **kwargs)  # type: ignore[arg-type]
-
         log_messages: list[str] = []
         handler_id = logger.add(
             lambda msg: log_messages.append(str(msg)),
@@ -2363,7 +2360,7 @@ class TestConfigModelReading:
             format="{message}",
         )
         try:
-            with patch.object(Path, "read_text", new=_raise_on_config):
+            with self._patch_unreadable_config(config):
                 result = _read_config_model(config)
         finally:
             logger.remove(handler_id)
