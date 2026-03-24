@@ -23,6 +23,7 @@ from copilot_usage.cli import (
     main,
 )
 from copilot_usage.models import ensure_aware_opt
+from copilot_usage.parser import parse_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -453,6 +454,72 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     result = runner.invoke(main, ["session", "anything"])
     assert result.exit_code != 0
     assert "permission denied" in result.output
+    assert "Traceback" not in (result.output or "")
+
+
+def test_session_command_continues_after_parse_oserror(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """OSError from parse_events for one session is silently skipped;
+    the command still finds a matching session in another directory."""
+    target_session_dir = _write_session(tmp_path, "target-session-aaa", name="Target")
+    failing_session_dir = _write_session(
+        tmp_path, "failing-session-bbb", name="Failing"
+    )
+
+    # Set explicit mtimes so the failing session is visited first (higher mtime
+    # appears first in the reverse-sorted list), avoiding nondeterminism on
+    # filesystems with coarse mtime resolution.
+    target_events = target_session_dir / "events.jsonl"
+    failing_events = failing_session_dir / "events.jsonl"
+    os.utime(target_events, (1_000_000, 1_000_000))
+    os.utime(failing_events, (2_000_000, 2_000_000))
+
+    original_parse = parse_events
+
+    def _flaky_parse(path: Path) -> list[Any]:
+        if "failing" in str(path):
+            raise OSError("permission denied")
+        return original_parse(path)
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _flaky_parse)
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "target"])
+    assert result.exit_code == 0
+    assert "target" in result.output.lower()
+    assert "Traceback" not in (result.output or "")
+
+
+def test_session_command_all_parse_oserror(tmp_path: Path, monkeypatch: Any) -> None:
+    """When all sessions fail to parse with OSError, the command shows
+    'no session matching' rather than crashing."""
+    _write_session(tmp_path, "sess-aaa-fail-0000", name="Fail1")
+    _write_session(tmp_path, "sess-bbb-fail-0000", name="Fail2")
+
+    def _always_fail(path: Path) -> list[Any]:
+        raise OSError("disk I/O error")
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _always_fail)
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "sess"])
+    assert result.exit_code == 1
+    assert "no session matching" in result.output.lower()
     assert "Traceback" not in (result.output or "")
 
 
