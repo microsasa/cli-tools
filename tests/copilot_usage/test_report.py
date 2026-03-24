@@ -2566,6 +2566,17 @@ class TestFilterSessionsReversedDateRange:
         assert "--since" in str(caught[0].message)
         assert "after" in str(caught[0].message)
 
+    def test_reversed_range_warns_on_empty_list(self) -> None:
+        """Warning fires even with an empty sessions list (short-circuit)."""
+        since = datetime(2026, 12, 31, tzinfo=UTC)
+        until = datetime(2026, 1, 1, tzinfo=UTC)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _filter_sessions([], since=since, until=until)
+        assert result == []
+        assert len(caught) == 1
+        assert "--since" in str(caught[0].message)
+
     def test_normal_range_no_warning(self) -> None:
         """Passing since < until does NOT emit a warning."""
         session = SessionSummary(

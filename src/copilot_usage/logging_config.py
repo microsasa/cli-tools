@@ -24,6 +24,7 @@ CONSOLE_FORMAT = (
 
 
 def _emoji_patcher(record: "loguru.Record") -> None:
+    """Inject a level-specific emoji into the log record's extras."""
     record["extra"]["emoji"] = LEVEL_EMOJI.get(record["level"].name, "  ")
 
 

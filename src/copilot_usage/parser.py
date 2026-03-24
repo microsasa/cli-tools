@@ -399,6 +399,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         summaries.append(summary)
 
     def _sort_key(s: SessionSummary) -> datetime:
+        """Return an aware start_time for sorting, falling back to EPOCH."""
         return ensure_aware(s.start_time) if s.start_time is not None else EPOCH
 
     summaries.sort(key=_sort_key, reverse=True)
