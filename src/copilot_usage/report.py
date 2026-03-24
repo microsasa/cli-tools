@@ -888,11 +888,11 @@ def _render_historical_section(
     sessions: list[SessionSummary],
 ) -> None:
     """Render Section 1: Historical Data from shutdown cycles."""
-    # Filter to sessions that have shutdown data
+    # Include all completed (non-active) sessions so they are never silently
+    # invisible.  Previously, zero-metrics completed sessions were excluded,
+    # causing a count mismatch with ``render_summary()``.
     historical = [
-        s
-        for s in sessions
-        if s.total_premium_requests > 0 or (s.model_metrics and not s.is_active)
+        s for s in sessions if s.total_premium_requests > 0 or not s.is_active
     ]
 
     if not historical:
