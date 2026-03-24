@@ -1330,6 +1330,13 @@ def test_interactive_cost_view_prints_version_header(
 
     import copilot_usage.cli as cli_mod
 
+    # Disable watchdog to avoid spurious auto-refresh triggering extra header calls
+    monkeypatch.setattr(
+        cli_mod,
+        "_start_observer",
+        lambda _p, _e: None,  # pyright: ignore[reportUnknownLambdaType]
+    )
+
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
 
@@ -1372,6 +1379,13 @@ def test_interactive_detail_view_prints_version_header(
     _write_session(tmp_path, "vh_det00-0000-0000-0000-000000000000", name="VHDetail")
 
     import copilot_usage.cli as cli_mod
+
+    # Disable watchdog to avoid spurious auto-refresh triggering extra header calls
+    monkeypatch.setattr(
+        cli_mod,
+        "_start_observer",
+        lambda _p, _e: None,  # pyright: ignore[reportUnknownLambdaType]
+    )
 
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
