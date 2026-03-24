@@ -38,9 +38,15 @@ __all__ = [
     "render_live_sessions",
     "render_session_detail",
     "render_summary",
+    "session_display_name",
 ]
 
 _MAX_CONTENT_LEN = 80
+
+
+def session_display_name(session: SessionSummary) -> str:
+    """Return session name, falling back to first 12 chars of session ID."""
+    return session.name or session.session_id[:12]
 
 
 def format_tokens(n: int) -> str:
@@ -819,7 +825,7 @@ def _render_session_table(
     table.add_column("Status")
 
     for s in sorted_sessions:
-        name = s.name or s.session_id[:12]
+        name = session_display_name(s)
         model = s.model or "—"
 
         token_fn = (
@@ -951,7 +957,7 @@ def _render_active_section(
     table.add_column("Running Time", justify="right")
 
     for s in active:
-        name = s.name or s.session_id[:12]
+        name = session_display_name(s)
         model = s.model or "—"
         running = _format_session_running_time(s)
 
@@ -1033,7 +1039,7 @@ def render_cost_view(
     grand_output = 0
 
     for s in filtered:
-        name = s.name or s.session_id[:12]
+        name = session_display_name(s)
         model_calls_display = str(s.model_calls)
 
         if s.model_metrics:

@@ -75,6 +75,13 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _safe_int_tokens(raw: object) -> int | None:
+    """Return *raw* as int if it is a genuine integer (not bool), else None."""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return None
+
+
 def _safe_mtime(path: Path) -> float:
     """Return *path*'s mtime, or ``0`` on any OS-level error (deleted, permission denied, etc.)."""
     try:
@@ -250,9 +257,8 @@ def build_session_summary(
 
         # -- assistant.message --------------------------------------------
         elif ev.type == EventType.ASSISTANT_MESSAGE:
-            raw_tokens = ev.data.get("outputTokens")
-            if isinstance(raw_tokens, int) and not isinstance(raw_tokens, bool):
-                total_output_tokens += raw_tokens
+            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
+                total_output_tokens += tokens
 
     # Derive name
     name = _extract_session_name(session_dir) if session_dir else None
@@ -272,10 +278,12 @@ def build_session_summary(
                 session_resumed = True
             if ev.type == EventType.SESSION_RESUME and ev.timestamp is not None:
                 last_resume_time = ev.timestamp
-            if ev.type == EventType.ASSISTANT_MESSAGE:
-                raw_tokens = ev.data.get("outputTokens")
-                if isinstance(raw_tokens, int) and not isinstance(raw_tokens, bool):
-                    post_shutdown_output_tokens += raw_tokens
+            if (
+                ev.type == EventType.ASSISTANT_MESSAGE
+                and (tokens := _safe_int_tokens(ev.data.get("outputTokens")))
+                is not None
+            ):
+                post_shutdown_output_tokens += tokens
             if ev.type == EventType.ASSISTANT_TURN_START:
                 post_shutdown_turn_starts += 1
             if ev.type == EventType.USER_MESSAGE:

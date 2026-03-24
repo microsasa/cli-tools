@@ -29,6 +29,7 @@ from copilot_usage.parser import (
     _extract_session_name,
     _infer_model_from_metrics,
     _read_config_model,
+    _safe_int_tokens,
     _safe_mtime,
     build_session_summary,
     discover_sessions,
@@ -2825,3 +2826,206 @@ class TestParserFalsyStringEdgeCases:
         events = parse_events(p)
         summary = build_session_summary(events)
         assert summary.active_output_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# _safe_int_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestSafeIntTokens:
+    def test_returns_int_for_genuine_int(self) -> None:
+        assert _safe_int_tokens(42) == 42
+
+    def test_returns_none_for_bool_true(self) -> None:
+        assert _safe_int_tokens(True) is None
+
+    def test_returns_none_for_bool_false(self) -> None:
+        assert _safe_int_tokens(False) is None
+
+    def test_returns_none_for_string(self) -> None:
+        assert _safe_int_tokens("100") is None
+
+    def test_returns_none_for_none(self) -> None:
+        assert _safe_int_tokens(None) is None
+
+    def test_returns_none_for_float(self) -> None:
+        assert _safe_int_tokens(3.14) is None
+
+    def test_returns_zero_for_zero(self) -> None:
+        assert _safe_int_tokens(0) == 0
+
+
+# ---------------------------------------------------------------------------
+# Three shutdown cycles with mixed models
+# ---------------------------------------------------------------------------
+
+
+class TestThreeShutdownCyclesMergeModelMetrics:
+    def test_three_shutdown_cycles_merge_model_metrics(self, tmp_path: Path) -> None:
+        """Metrics accumulate correctly across 3 shutdown cycles with mixed models."""
+        shutdown_cycle_1 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 500,
+                    "totalApiDurationMs": 10000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 10, "cost": 500},
+                            "usage": {
+                                "inputTokens": 2000,
+                                "outputTokens": 1000,
+                                "cacheReadTokens": 100,
+                                "cacheWriteTokens": 50,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-sonnet-4",
+                },
+                "id": "ev-sd1",
+                "timestamp": "2026-03-07T10:30:00.000Z",
+                "currentModel": "claude-sonnet-4",
+            }
+        )
+        resume_1 = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-r1",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        user_msg_2 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "cycle 2"},
+                "id": "ev-u2",
+                "timestamp": "2026-03-07T11:01:00.000Z",
+            }
+        )
+        shutdown_cycle_2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 100,
+                    "totalApiDurationMs": 5000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-opus-4.6": {
+                            "requests": {"count": 5, "cost": 100},
+                            "usage": {
+                                "inputTokens": 3000,
+                                "outputTokens": 800,
+                                "cacheReadTokens": 200,
+                                "cacheWriteTokens": 60,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-opus-4.6",
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+                "currentModel": "claude-opus-4.6",
+            }
+        )
+        resume_2 = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-r2",
+                "timestamp": "2026-03-07T13:00:00.000Z",
+            }
+        )
+        user_msg_3 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "cycle 3"},
+                "id": "ev-u3",
+                "timestamp": "2026-03-07T13:01:00.000Z",
+            }
+        )
+        shutdown_cycle_3 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 200,
+                    "totalApiDurationMs": 8000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 7, "cost": 200},
+                            "usage": {
+                                "inputTokens": 4000,
+                                "outputTokens": 600,
+                                "cacheReadTokens": 150,
+                                "cacheWriteTokens": 30,
+                            },
+                        },
+                        "claude-opus-4.6": {
+                            "requests": {"count": 3, "cost": 150},
+                            "usage": {
+                                "inputTokens": 1500,
+                                "outputTokens": 400,
+                                "cacheReadTokens": 80,
+                                "cacheWriteTokens": 20,
+                            },
+                        },
+                    },
+                    "currentModel": "claude-sonnet-4",
+                },
+                "id": "ev-sd3",
+                "timestamp": "2026-03-07T14:00:00.000Z",
+                "currentModel": "claude-sonnet-4",
+            }
+        )
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            shutdown_cycle_1,
+            resume_1,
+            user_msg_2,
+            shutdown_cycle_2,
+            resume_2,
+            user_msg_3,
+            shutdown_cycle_3,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        # Total premium requests: 500 + 100 + 200 = 800
+        assert summary.total_premium_requests == 800
+        # Total API duration: 10000 + 5000 + 8000 = 23000
+        assert summary.total_api_duration_ms == 23000
+        # Completed (shutdown is last event)
+        assert summary.is_active is False
+
+        # Both models present
+        assert "claude-sonnet-4" in summary.model_metrics
+        assert "claude-opus-4.6" in summary.model_metrics
+
+        # claude-sonnet-4: cycle 1 + cycle 3 merged
+        sonnet = summary.model_metrics["claude-sonnet-4"]
+        assert sonnet.requests.count == 10 + 7  # 17
+        assert sonnet.requests.cost == 500 + 200  # 700
+        assert sonnet.usage.inputTokens == 2000 + 4000  # 6000
+        assert sonnet.usage.outputTokens == 1000 + 600  # 1600
+        assert sonnet.usage.cacheReadTokens == 100 + 150  # 250
+        assert sonnet.usage.cacheWriteTokens == 50 + 30  # 80
+
+        # claude-opus-4.6: cycle 2 + cycle 3 merged
+        opus = summary.model_metrics["claude-opus-4.6"]
+        assert opus.requests.count == 5 + 3  # 8
+        assert opus.requests.cost == 100 + 150  # 250
+        assert opus.usage.inputTokens == 3000 + 1500  # 4500
+        assert opus.usage.outputTokens == 800 + 400  # 1200
+        assert opus.usage.cacheReadTokens == 200 + 80  # 280
+        assert opus.usage.cacheWriteTokens == 60 + 20  # 80
