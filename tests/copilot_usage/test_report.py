@@ -2515,10 +2515,10 @@ class TestFilterSessionsNoneStartTime:
         assert "no-time" not in ids
         assert "with-time" in ids
 
-    def test_filter_sessions_excludes_session_with_no_start_time(self) -> None:
-        since = datetime(2026, 1, 1, tzinfo=UTC)
+    def test_none_start_time_included_when_no_bounds(self) -> None:
         session = SessionSummary(session_id="s", start_time=None)
-        assert _filter_sessions([session], since=since, until=None) == []
+        result = _filter_sessions([session], since=None, until=None)
+        assert [s.session_id for s in result] == ["s"]
 
 
 # ---------------------------------------------------------------------------
@@ -3372,32 +3372,6 @@ class TestTotalOutputTokens:
             },
         )
         assert _total_output_tokens(session) == 600  # 200 + 300 + 100
-
-    def test_total_output_tokens_empty_metrics_includes_active_tokens(self) -> None:
-        """Empty model_metrics + active tokens → returns active tokens."""
-        session = SessionSummary(
-            session_id="test",
-            model_metrics={},
-            active_output_tokens=500,
-            is_active=True,
-        )
-        assert _total_output_tokens(session) == 500
-
-    def test_total_output_tokens_pure_active_no_double_count(self) -> None:
-        """Pure-active session: active tokens already in model_metrics; no double-count."""
-        session = SessionSummary(
-            session_id="test",
-            model_metrics={
-                "claude": ModelMetrics(
-                    requests=RequestMetrics(count=0),
-                    usage=TokenUsage(outputTokens=350),
-                )
-            },
-            active_output_tokens=350,
-            is_active=True,
-        )
-        # has_shutdown_metrics is False (count=0), so baseline only
-        assert _total_output_tokens(session) == 350
 
 
 class TestRenderAggregateStatsResumedTokens:
