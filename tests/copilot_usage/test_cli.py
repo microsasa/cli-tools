@@ -462,14 +462,16 @@ def test_session_command_continues_after_parse_oserror(
 ) -> None:
     """OSError from parse_events for one session is silently skipped;
     the command still finds a matching session in another directory."""
-    _write_session(tmp_path, "target-session-aaa", name="Target")
-    _write_session(tmp_path, "failing-session-bbb", name="Failing")
+    target_session_dir = _write_session(tmp_path, "target-session-aaa", name="Target")
+    failing_session_dir = _write_session(
+        tmp_path, "failing-session-bbb", name="Failing"
+    )
 
     # Set explicit mtimes so the failing session is visited first (higher mtime
     # appears first in the reverse-sorted list), avoiding nondeterminism on
     # filesystems with coarse mtime resolution.
-    target_events = tmp_path / "target-s" / "events.jsonl"
-    failing_events = tmp_path / "failing-" / "events.jsonl"
+    target_events = target_session_dir / "events.jsonl"
+    failing_events = failing_session_dir / "events.jsonl"
     os.utime(target_events, (1_000_000, 1_000_000))
     os.utime(failing_events, (2_000_000, 2_000_000))
 
