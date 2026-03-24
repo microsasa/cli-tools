@@ -465,6 +465,14 @@ def test_session_command_continues_after_parse_oserror(
     _write_session(tmp_path, "target-session-aaa", name="Target")
     _write_session(tmp_path, "failing-session-bbb", name="Failing")
 
+    # Set explicit mtimes so the failing session is visited first (higher mtime
+    # appears first in the reverse-sorted list), avoiding nondeterminism on
+    # filesystems with coarse mtime resolution.
+    target_events = tmp_path / "target-s" / "events.jsonl"
+    failing_events = tmp_path / "failing-" / "events.jsonl"
+    os.utime(target_events, (1_000_000, 1_000_000))
+    os.utime(failing_events, (2_000_000, 2_000_000))
+
     original_parse = parse_events
 
     def _flaky_parse(path: Path) -> list[Any]:
@@ -508,7 +516,7 @@ def test_session_command_all_parse_oserror(tmp_path: Path, monkeypatch: Any) -> 
     monkeypatch.setattr("copilot_usage.cli.parse_events", _always_fail)
     runner = CliRunner()
     result = runner.invoke(main, ["session", "sess"])
-    assert result.exit_code != 0
+    assert result.exit_code == 1
     assert "no session matching" in result.output.lower()
     assert "Traceback" not in (result.output or "")
 
