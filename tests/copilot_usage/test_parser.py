@@ -2252,6 +2252,29 @@ class TestConfigModelReading:
         summary = build_session_summary(events, config_path=config)
         assert summary.model is None
 
+    def test_invalid_config_json_emits_warning(self, tmp_path: Path) -> None:
+        """Malformed config.json → returns None AND emits a WARNING log."""
+        from loguru import logger
+
+        config = tmp_path / "config.json"
+        config.write_text("NOT JSON{{{", encoding="utf-8")
+
+        warnings: list[str] = []
+        handler_id = logger.add(
+            lambda msg: warnings.append(str(msg)),
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            result = _read_config_model(config)
+        finally:
+            logger.remove(handler_id)
+
+        assert result is None
+        assert len(warnings) == 1
+        assert "malformed JSON" in warnings[0]
+        assert str(config) in warnings[0]
+
     def test_config_without_model_key(self, tmp_path: Path) -> None:
         """config.json without 'model' key → model stays None."""
         config = tmp_path / "config.json"

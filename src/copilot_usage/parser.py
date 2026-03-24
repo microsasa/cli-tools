@@ -59,7 +59,14 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
         data = json.loads(path.read_text(encoding="utf-8"))
         model = data.get("model")
         return model if isinstance(model, str) and model else None
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Config file {} contains malformed JSON; model will be unavailable: {}",
+            path,
+            exc,
+        )
+        return None
+    except OSError:
         return None
 
 
