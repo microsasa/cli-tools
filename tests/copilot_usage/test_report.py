@@ -3698,7 +3698,7 @@ class TestRenderModelTableSortOrder:
     """Assert _render_model_table lists models in alphabetical order."""
 
     def test_model_table_sorted_alphabetically(self) -> None:
-        """Two models via render_summary — rows appear in alphabetical order."""
+        """Two models via _render_model_table — rows appear in alphabetical order."""
         session = SessionSummary(
             session_id="sort-mt-1234",
             name="Model Table Sort",
