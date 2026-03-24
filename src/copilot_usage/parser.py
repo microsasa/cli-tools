@@ -66,7 +66,8 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
             exc,
         )
         return None
-    except OSError:
+    except OSError as exc:
+        logger.debug("Could not read config file {}: {}", path, exc)
         return None
 
 
