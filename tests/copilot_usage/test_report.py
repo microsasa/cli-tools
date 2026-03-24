@@ -1622,6 +1622,31 @@ class TestRenderFullSummary:
             "Row should not display historical total output tokens '100.0K'"
         )
 
+    def test_completed_zero_metrics_session_visible(self) -> None:
+        """Completed session with zero metrics must appear in historical section.
+
+        Regression test for issue #323: a completed (is_active=False) session
+        with total_premium_requests=0 and model_metrics={} was silently
+        excluded from both the historical and active sections in interactive
+        mode, making it completely invisible.
+        """
+        session = SessionSummary(
+            session_id="zero-met-1111-aaaaaa",
+            name="Zero Metrics Done",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            end_time=datetime(2025, 1, 15, 10, 5, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=0,
+            model_metrics={},
+        )
+        output = _capture_full_summary([session])
+        # The session must NOT be invisible — it should appear in the
+        # historical section (either by name or session ID prefix).
+        assert "Zero Metrics Done" in output
+        # The historical section must be rendered (not "No historical shutdown
+        # data"), since there IS a completed session.
+        assert "No historical shutdown data" not in output
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
