@@ -2512,6 +2512,21 @@ class TestExtractSessionName:
             logger.remove(handler_id)
         assert any("Could not read session name" in msg for msg in log_messages)
 
+    def test_extract_session_name_unicode_decode_error(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_bytes(b"\xff\xfe not valid utf-8")
+        assert _extract_session_name(tmp_path) is None  # was crashing before fix
+
+    def test_extract_session_name_no_h1_header(self, tmp_path: Path) -> None:
+        (tmp_path / "plan.md").write_text(
+            "## Subheading\nsome text\n", encoding="utf-8"
+        )
+        assert _extract_session_name(tmp_path) is None
+
+    def test_extract_session_name_empty_h1(self, tmp_path: Path) -> None:
+        (tmp_path / "plan.md").write_text("# \n", encoding="utf-8")
+        assert _extract_session_name(tmp_path) is None
+
 
 # ---------------------------------------------------------------------------
 # Issue #19 — get_all_sessions OSError recovery
