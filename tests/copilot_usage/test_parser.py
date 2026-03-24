@@ -28,6 +28,7 @@ from copilot_usage.models import (
 from copilot_usage.parser import (
     _extract_session_name,
     _infer_model_from_metrics,
+    _read_config_model,
     _safe_mtime,
     build_session_summary,
     discover_sessions,
@@ -2735,3 +2736,69 @@ class TestGetAllSessionsNoStartEvent:
         assert results[0].start_time is None
         # Completed (has shutdown), not active
         assert results[0].is_active is False
+
+
+# ---------------------------------------------------------------------------
+# Falsy-string edge cases (issue #321)
+# ---------------------------------------------------------------------------
+
+
+class TestParserFalsyStringEdgeCases:
+    """Edge cases where parser helpers return '' instead of None."""
+
+    def test_extract_session_name_whitespace_heading_returns_none(
+        self, tmp_path: Path
+    ) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("# \n", encoding="utf-8")
+        assert _extract_session_name(tmp_path) is None
+
+    def test_extract_session_name_hash_only_returns_none(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("#\n", encoding="utf-8")
+        assert _extract_session_name(tmp_path) is None
+
+    def test_read_config_model_empty_string_returns_none(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.json"
+        config.write_text('{"model": ""}', encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_output_tokens_boolean_true_excluded(self, tmp_path: Path) -> None:
+        """Boolean True must not be counted as outputTokens."""
+        msg_bool_tokens = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "outputTokens": True,
+                },
+                "id": "ev-m",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, msg_bool_tokens)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
+
+    def test_output_tokens_boolean_false_excluded(self, tmp_path: Path) -> None:
+        """Boolean False must not be counted as outputTokens."""
+        msg_bool_tokens = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "outputTokens": False,
+                },
+                "id": "ev-m",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, msg_bool_tokens)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
