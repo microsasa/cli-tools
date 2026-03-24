@@ -48,6 +48,7 @@ from copilot_usage.report import (
     render_full_summary,
     render_live_sessions,
     render_summary,
+    session_display_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -3763,3 +3764,27 @@ class TestRenderModelTableSortOrder:
         _render_model_table(console, [session])
         output = buf.getvalue()
         assert output.count("only-model") == 1
+
+
+# ---------------------------------------------------------------------------
+# session_display_name
+# ---------------------------------------------------------------------------
+
+
+class TestSessionDisplayName:
+    def test_returns_name_when_set(self) -> None:
+        s = SessionSummary(session_id="abcdef123456789x", name="My Session")
+        assert session_display_name(s) == "My Session"
+
+    def test_returns_truncated_id_when_name_is_none(self) -> None:
+        s = SessionSummary(session_id="abcdef123456789x", name=None)
+        assert session_display_name(s) == "abcdef123456"
+
+    def test_returns_truncated_id_when_name_is_empty(self) -> None:
+        s = SessionSummary(session_id="abcdef123456789x", name="")
+        assert session_display_name(s) == "abcdef123456"
+
+    def test_short_session_id(self) -> None:
+        """When session_id is shorter than 12 chars, return whatever slice gives."""
+        s = SessionSummary(session_id="abc", name=None)
+        assert session_display_name(s) == "abc"

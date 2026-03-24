@@ -33,6 +33,7 @@ from copilot_usage.report import (
     render_live_sessions,
     render_session_detail,
     render_summary,
+    session_display_name,
 )
 
 _DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
@@ -69,7 +70,7 @@ def _render_session_list(console: Console, sessions: list[SessionSummary]) -> No
     table.add_column("Status")
 
     for idx, s in enumerate(sessions, start=1):
-        name = s.name or s.session_id[:12]
+        name = session_display_name(s)
         model = s.model or "—"
         status = "🟢 Active" if s.is_active else "Completed"
         table.add_row(str(idx), name, model, status)
