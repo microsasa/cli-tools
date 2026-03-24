@@ -58,7 +58,7 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         model = data.get("model")
-        return model if isinstance(model, str) else None
+        return model if isinstance(model, str) and model else None
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -144,7 +144,7 @@ def _extract_session_name(session_dir: Path) -> str | None:
     try:
         first_line = plan.read_text(encoding="utf-8").split("\n", maxsplit=1)[0]
         if first_line.startswith("# "):
-            return first_line.removeprefix("# ").strip()
+            return first_line.removeprefix("# ").strip() or None
     except OSError as exc:
         logger.debug("Could not read session name from {}: {}", plan, exc)
     return None
@@ -244,7 +244,7 @@ def build_session_summary(
         # -- assistant.message --------------------------------------------
         elif ev.type == EventType.ASSISTANT_MESSAGE:
             raw_tokens = ev.data.get("outputTokens")
-            if isinstance(raw_tokens, int):
+            if isinstance(raw_tokens, int) and not isinstance(raw_tokens, bool):
                 total_output_tokens += raw_tokens
 
     # Derive name
@@ -267,7 +267,7 @@ def build_session_summary(
                 last_resume_time = ev.timestamp
             if ev.type == EventType.ASSISTANT_MESSAGE:
                 raw_tokens = ev.data.get("outputTokens")
-                if isinstance(raw_tokens, int):
+                if isinstance(raw_tokens, int) and not isinstance(raw_tokens, bool):
                     post_shutdown_output_tokens += raw_tokens
             if ev.type == EventType.ASSISTANT_TURN_START:
                 post_shutdown_turn_starts += 1
