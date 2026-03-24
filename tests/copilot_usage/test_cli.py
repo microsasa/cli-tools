@@ -1331,11 +1331,11 @@ def test_interactive_cost_view_prints_version_header(
     import copilot_usage.cli as cli_mod
 
     # Disable watchdog to avoid spurious auto-refresh triggering extra header calls
-    monkeypatch.setattr(
-        cli_mod,
-        "_start_observer",
-        lambda _p, _e: None,  # pyright: ignore[reportUnknownLambdaType]
-    )
+    def _null_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        """Test stub for _start_observer that disables watchdog behavior."""
+        return
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _null_start)
 
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
@@ -1381,11 +1381,11 @@ def test_interactive_detail_view_prints_version_header(
     import copilot_usage.cli as cli_mod
 
     # Disable watchdog to avoid spurious auto-refresh triggering extra header calls
-    monkeypatch.setattr(
-        cli_mod,
-        "_start_observer",
-        lambda _p, _e: None,  # pyright: ignore[reportUnknownLambdaType]
-    )
+    def _null_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        """Test stub for _start_observer that disables watchdog behavior."""
+        return
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _null_start)
 
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
