@@ -1,5 +1,7 @@
 """Tests for copilot_usage.pricing."""
 
+# pyright: reportPrivateUsage=false
+
 import warnings
 
 import pytest
@@ -8,6 +10,7 @@ from copilot_usage.pricing import (
     KNOWN_PRICING,
     ModelPricing,
     PricingTier,
+    _tier_from_multiplier,
     categorize_model,
     lookup_model_pricing,
 )
@@ -28,6 +31,33 @@ class TestModelPricing:
         assert p.model_name == "opus"
         assert p.multiplier == 50.0
         assert p.tier == PricingTier.PREMIUM
+
+
+# ---------------------------------------------------------------------------
+# _tier_from_multiplier boundary tests (issue #328)
+# ---------------------------------------------------------------------------
+
+
+class TestTierFromMultiplier:
+    @pytest.mark.parametrize(
+        ("multiplier", "expected"),
+        [
+            (0.0, PricingTier.FREE),  # exact FREE boundary
+            (0.001, PricingTier.LIGHT),  # smallest non-zero → LIGHT, not FREE
+            (0.33, PricingTier.LIGHT),  # haiku value
+            (0.5, PricingTier.LIGHT),  # middle of LIGHT range
+            (0.999, PricingTier.LIGHT),  # just below STANDARD boundary
+            (1.0, PricingTier.STANDARD),  # exact STANDARD lower boundary
+            (1.5, PricingTier.STANDARD),  # middle of STANDARD range
+            (2.999, PricingTier.STANDARD),  # just below PREMIUM boundary
+            (3.0, PricingTier.PREMIUM),  # exact PREMIUM boundary (inclusive)
+            (6.0, PricingTier.PREMIUM),  # above threshold
+        ],
+    )
+    def test_tier_classification(
+        self, multiplier: float, expected: PricingTier
+    ) -> None:
+        assert _tier_from_multiplier(multiplier) == expected
 
 
 # ---------------------------------------------------------------------------
