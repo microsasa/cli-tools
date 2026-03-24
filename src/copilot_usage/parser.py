@@ -160,7 +160,7 @@ def _extract_session_name(session_dir: Path) -> str | None:
         first_line = plan.read_text(encoding="utf-8").split("\n", maxsplit=1)[0]
         if first_line.startswith("# "):
             return first_line.removeprefix("# ").strip() or None
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.debug("Could not read session name from {}: {}", plan, exc)
     return None
 

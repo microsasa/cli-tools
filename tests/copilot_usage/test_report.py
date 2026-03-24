@@ -2515,6 +2515,11 @@ class TestFilterSessionsNoneStartTime:
         assert "no-time" not in ids
         assert "with-time" in ids
 
+    def test_none_start_time_included_when_no_bounds(self) -> None:
+        session = SessionSummary(session_id="s", start_time=None)
+        result = _filter_sessions([session], since=None, until=None)
+        assert [s.session_id for s in result] == ["s"]
+
 
 # ---------------------------------------------------------------------------
 # Issue #19 — _render_totals singular grammar
