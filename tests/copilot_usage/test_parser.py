@@ -2342,6 +2342,38 @@ class TestConfigModelReading:
 
         assert summary.model is None
 
+    def test_unreadable_config_logs_debug(self, tmp_path: Path) -> None:
+        """OSError reading config.json → returns None AND emits a DEBUG log."""
+        from loguru import logger
+
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
+        original_read_text = Path.read_text
+
+        def _raise_on_config(self_path: Path, *args: object, **kwargs: object) -> str:
+            if self_path == config:
+                raise OSError("Permission denied")
+            return original_read_text(self_path, *args, **kwargs)  # type: ignore[arg-type]
+
+        log_messages: list[str] = []
+        handler_id = logger.add(
+            lambda msg: log_messages.append(str(msg)),
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            with patch.object(Path, "read_text", new=_raise_on_config):
+                result = _read_config_model(config)
+        finally:
+            logger.remove(handler_id)
+
+        assert result is None
+        assert any(
+            "Could not read config file" in msg and str(config) in msg
+            for msg in log_messages
+        )
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — empty session (only session.start)
