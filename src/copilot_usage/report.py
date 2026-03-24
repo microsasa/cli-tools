@@ -691,6 +691,7 @@ def _filter_sessions(
             UserWarning,
             stacklevel=2,
         )
+        return []
 
     if since is None and until is None:
         return sessions

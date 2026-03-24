@@ -57,6 +57,7 @@ class ModelPricing(BaseModel):
 
 
 def _tier_from_multiplier(m: float) -> PricingTier:
+    """Map a numeric multiplier to the corresponding ``PricingTier``."""
     if m >= 3.0:
         return PricingTier.PREMIUM
     if m == 0.0:

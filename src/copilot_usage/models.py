@@ -213,8 +213,7 @@ class SessionEvent(BaseModel):
     """A single event from an ``events.jsonl`` file.
 
     ``data`` is kept as a generic dict-like object; callers can use the
-    helper ``parsed_data`` property (or ``parse_data()``) to get a typed
-    payload when needed.
+    helper ``parse_data()`` method to get a typed payload when needed.
     """
 
     type: str
