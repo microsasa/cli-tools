@@ -456,6 +456,55 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     assert "Traceback" not in (result.output or "")
 
 
+# ---------------------------------------------------------------------------
+# Issue #329 — session command OSError on parse_events
+# ---------------------------------------------------------------------------
+
+
+def test_session_command_oserror_all_files(tmp_path: Path, monkeypatch: Any) -> None:
+    """parse_events OSError for every file → graceful 'no session matching' exit."""
+    _write_session(tmp_path, "dead0000-0000-0000-0000-000000000000", name="Vanished")
+
+    def _fake_discover(_base: Any = None) -> list[Path]:
+        return list(tmp_path.glob("*/events.jsonl"))
+
+    def _exploding_parse(path: Any) -> list[Any]:
+        raise OSError("file deleted")
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _exploding_parse)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "dead0000"])
+    assert result.exit_code != 0
+    assert "no session matching" in result.output
+    assert "Traceback" not in (result.output or "")
+
+
+def test_session_command_oserror_partial(tmp_path: Path, monkeypatch: Any) -> None:
+    """parse_events OSError for some files; matching session still found and rendered."""
+    _write_session(tmp_path, "dead0000-0000-0000-0000-000000000000", name="Vanished")
+    _write_session(tmp_path, "good1111-0000-0000-0000-000000000000", name="GoodSession")
+
+    def _fake_discover(_base: Any = None) -> list[Path]:
+        return sorted(tmp_path.glob("*/events.jsonl"))
+
+    from copilot_usage.parser import parse_events as real_parse
+
+    def _selective_parse(path: Path) -> list[Any]:
+        if "dead0000" in str(path):
+            raise OSError("file deleted")
+        return real_parse(path)
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _selective_parse)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "good1111"])
+    # Session found and rendered (exit 0); the dead session was silently skipped
+    assert result.exit_code == 0
+
+
 def test_cost_no_model_metrics(tmp_path: Path) -> None:
     """Session with no model metrics → cost command doesn't crash (line 201)."""
     session_dir = tmp_path / "nomodel00"
@@ -663,6 +712,75 @@ def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
 def test_stop_observer_none_is_noop() -> None:
     """_stop_observer(None) returns silently without raising."""
     _stop_observer(None)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Issue #329 — _interactive_loop with non-existent session directory
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_loop_nonexistent_session_path(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Interactive loop starts cleanly when session_path doesn't exist (observer=None).
+
+    When the default ``~/.copilot/session-state/`` directory is absent
+    (e.g. first run), ``observer`` is ``None``.  The loop should still
+    show "No sessions", quit cleanly on ``q``, and call
+    ``_stop_observer(None)`` in the ``finally`` block without error.
+    """
+    import copilot_usage.cli as cli_mod
+
+    missing_path = tmp_path / "does-not-exist"
+    assert not missing_path.exists()
+
+    # _start_observer must NOT be called when path doesn't exist
+    start_observer_called = False
+
+    def _bomb_start(
+        session_path: Path, change_event: threading.Event
+    ) -> object:  # pragma: no cover
+        nonlocal start_observer_called
+        start_observer_called = True
+        raise AssertionError("_start_observer should not be called")
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _bomb_start)
+
+    # Track _stop_observer to verify it receives None
+    stop_observer_args: list[object] = []
+
+    def _tracking_stop(observer: object) -> None:
+        stop_observer_args.append(observer)
+
+    monkeypatch.setattr(cli_mod, "_stop_observer", _tracking_stop)
+
+    # Return "q" immediately so the loop exits
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    # Capture what _draw_home receives (avoids Console I/O in test)
+    draw_sessions: list[list[Any]] = []
+
+    def _tracking_draw(console: Console, sessions: list[Any]) -> None:
+        draw_sessions.append(sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw)
+
+    # Suppress prompt output
+    monkeypatch.setattr(cli_mod, "_write_prompt", lambda prompt: None)  # pyright: ignore[reportUnknownLambdaType]
+
+    cli_mod._interactive_loop(missing_path)  # pyright: ignore[reportPrivateUsage]
+
+    # observer was never started
+    assert not start_observer_called
+    # _stop_observer was called with None in the finally block
+    assert len(stop_observer_args) == 1
+    assert stop_observer_args[0] is None
+    # Home view was drawn with empty sessions list ("No sessions")
+    assert len(draw_sessions) == 1
+    assert draw_sessions[0] == []
 
 
 # ---------------------------------------------------------------------------
