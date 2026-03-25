@@ -722,6 +722,49 @@ def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
         _stop_observer(observer)
 
 
+def test_start_observer_returns_none_on_startup_error(tmp_path: Path) -> None:
+    """_start_observer returns None (not raise) when Observer.start() fails."""
+    from loguru import logger
+
+    change_event = threading.Event()
+    log_messages: list[str] = []
+    handler_id = logger.add(lambda m: log_messages.append(str(m)), level="WARNING")
+
+    try:
+        with patch(
+            "copilot_usage.cli.Observer.start",
+            side_effect=RuntimeError("inotify limit exceeded"),
+        ):
+            result = _start_observer(tmp_path, change_event)
+    finally:
+        logger.remove(handler_id)
+
+    assert result is None
+    assert any("File watcher unavailable" in m for m in log_messages)
+    assert any("inotify limit exceeded" in m for m in log_messages)
+
+
+def test_start_observer_returns_none_on_os_error(tmp_path: Path) -> None:
+    """_start_observer handles OSError (e.g. permission denied, NFS)."""
+    from loguru import logger
+
+    change_event = threading.Event()
+    log_messages: list[str] = []
+    handler_id = logger.add(lambda m: log_messages.append(str(m)), level="WARNING")
+
+    try:
+        with patch(
+            "copilot_usage.cli.Observer.start",
+            side_effect=OSError("Permission denied"),
+        ):
+            result = _start_observer(tmp_path, change_event)
+    finally:
+        logger.remove(handler_id)
+
+    assert result is None
+    assert any("File watcher unavailable" in m for m in log_messages)
+
+
 # ---------------------------------------------------------------------------
 # _stop_observer(None) guard
 # ---------------------------------------------------------------------------
