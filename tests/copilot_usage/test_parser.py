@@ -492,7 +492,12 @@ class TestParseEvents:
         events = parse_events(p)
         # Should return what was parsed before the error and not raise.
         assert isinstance(events, list)
-        assert len(events) <= 1  # 0 or 1 depending on buffered I/O
+        # 0 or 1 events may be returned depending on buffered I/O behavior.
+        assert len(events) <= 1
+        if events:
+            # If any event is returned, it should be the initial session.start.
+            assert len(events) == 1
+            assert events[0].type == "session.start"
 
     def test_unicode_decode_error_full_file(self, tmp_path: Path) -> None:
         """events.jsonl that is entirely invalid UTF-8 returns empty list."""
@@ -2834,9 +2839,7 @@ class TestGetAllSessionsOsError:
         # Create a session with invalid UTF-8 bytes
         d_bad = tmp_path / "sess-bad"
         d_bad.mkdir()
-        (d_bad / "events.jsonl").write_bytes(
-            b'{"type": "session.start"}\n\xff\xfe\x80\x81\n'
-        )
+        (d_bad / "events.jsonl").write_bytes(b"\xff\xfe\x80\x81\n")
 
         results = get_all_sessions(tmp_path)
         # The good session should be present; the bad one skipped

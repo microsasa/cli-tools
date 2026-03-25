@@ -122,6 +122,9 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
+
+    If a UTF-8 decode error occurs while reading the file, parsing stops
+    early and the events parsed so far are returned (a partial session).
     """
     events: list[SessionEvent] = []
     try:
