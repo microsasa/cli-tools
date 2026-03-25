@@ -2,10 +2,12 @@
 
 # pyright: reportPrivateUsage=false
 
+import json
 import re
 import warnings
 from datetime import UTC, datetime, timedelta
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +22,7 @@ from copilot_usage.models import (
     SessionSummary,
     TokenUsage,
 )
+from copilot_usage.parser import build_session_summary, parse_events
 from copilot_usage.report import (
     _aggregate_model_metrics,
     _build_event_details,
@@ -3446,6 +3449,131 @@ class TestTotalOutputTokens:
             },
         )
         assert _total_output_tokens(session) == shutdown_tokens + active_tokens
+
+    def test_completed_session_empty_metrics_via_parser(self, tmp_path: Path) -> None:
+        """Parser→report integration: shutdown with modelMetrics={} → 0 tokens."""
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True)
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "empty-metrics-session",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.0",
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/project"},
+                },
+                "id": "ev-start",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+                "parentId": None,
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {},
+                },
+                "id": "ev-shutdown",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+                "parentId": "ev-start",
+            }
+        )
+        p.write_text(start + "\n" + shutdown + "\n", encoding="utf-8")
+        events = parse_events(p)
+        summary = build_session_summary(events, session_dir=p.parent)
+        assert summary.model_metrics == {}
+        assert _total_output_tokens(summary) == 0
+
+    def test_resumed_session_empty_shutdown_metrics_via_parser(
+        self, tmp_path: Path
+    ) -> None:
+        """Parser→report integration: shutdown with modelMetrics={} then resume → only active tokens."""
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True)
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "empty-metrics-resumed",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.0",
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/project"},
+                },
+                "id": "ev-start",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+                "parentId": None,
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {},
+                },
+                "id": "ev-shutdown",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+                "parentId": "ev-start",
+            }
+        )
+        resume = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hello",
+                    "transformedContent": "hello",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": "ev-user1",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+                "parentId": "ev-resume",
+            }
+        )
+        assistant_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-1",
+                    "content": "hi there",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 400,
+                },
+                "id": "ev-asst1",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        lines = [start, shutdown, resume, user_msg, assistant_msg]
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        events = parse_events(p)
+        summary = build_session_summary(events, session_dir=p.parent)
+        assert summary.is_active is True
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 400
+        assert _total_output_tokens(summary) == 400
 
 
 class TestRenderAggregateStatsResumedTokens:
