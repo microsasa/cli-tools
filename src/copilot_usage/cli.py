@@ -172,9 +172,9 @@ def _start_observer(
             if observer.is_alive():
                 observer.stop()
                 observer.join(timeout=2)
-        except Exception:
-            logger.debug(
-                "Failed to clean up file watcher after start failure", exc_info=True
+        except Exception as cleanup_exc:
+            logger.opt(exception=cleanup_exc).debug(
+                "Failed to clean up file watcher after start failure"
             )
         return None
     return cast(_Stoppable, observer)
