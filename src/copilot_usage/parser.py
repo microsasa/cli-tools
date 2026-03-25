@@ -207,6 +207,7 @@ def build_session_summary(
     end_time = None
     cwd: str | None = None
     model: str | None = None
+    seen_session_start = False
     all_shutdowns: list[tuple[int, SessionShutdownData, str | None]] = []
     user_message_count = 0
     total_output_tokens = 0
@@ -227,7 +228,8 @@ def build_session_summary(
                 continue
             # First valid session.start wins — subsequent ones are ignored
             # so that duplicate events don't silently overwrite identity.
-            if not session_id:
+            if not seen_session_start:
+                seen_session_start = True
                 session_id = data.sessionId
                 start_time = data.startTime
                 cwd = data.context.cwd

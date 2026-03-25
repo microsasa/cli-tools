@@ -1896,8 +1896,50 @@ class TestBuildSessionSummaryEdgeCases:
         assert summary.start_time.minute == 0
         assert summary.cwd == "/home/user/project"
 
+    def test_empty_session_id_blocks_subsequent_start(self, tmp_path: Path) -> None:
+        """First session.start with empty sessionId still blocks later starts."""
+        empty_id_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.0",
+                    "startTime": "2026-03-07T09:00:00.000Z",
+                    "context": {"cwd": "/home/user/first"},
+                },
+                "id": "ev-empty-start",
+                "timestamp": "2026-03-07T09:00:00.000Z",
+                "parentId": None,
+            }
+        )
+        second_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "real-session-id",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.0",
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/second"},
+                },
+                "id": "ev-start-2",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+                "parentId": None,
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, empty_id_start, second_start, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # First start wins even with empty sessionId
+        assert summary.session_id == ""
+        assert summary.cwd == "/home/user/first"
+        assert summary.start_time is not None
+        assert summary.start_time.hour == 9
 
-class TestGetAllSessionsEdgeCases:
     def test_skips_empty_events_files(self, tmp_path: Path) -> None:
         _write_events(tmp_path / "empty" / "events.jsonl")
         _write_events(tmp_path / "valid" / "events.jsonl", _START_EVENT)
