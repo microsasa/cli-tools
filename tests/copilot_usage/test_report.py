@@ -3447,6 +3447,30 @@ class TestTotalOutputTokens:
         )
         assert _total_output_tokens(session) == shutdown_tokens + active_tokens
 
+    def test_completed_session_empty_metrics(self) -> None:
+        """Completed session with has_shutdown_metrics=False and empty model_metrics → 0 tokens."""
+        session = SessionSummary(
+            session_id="s",
+            is_active=False,
+            has_shutdown_metrics=False,
+            model_metrics={},
+            active_output_tokens=0,
+        )
+        assert _total_output_tokens(session) == 0
+
+    def test_resumed_session_empty_shutdown_metrics(self) -> None:
+        """Resumed session with has_shutdown_metrics=False → only active_output_tokens counted."""
+        session = SessionSummary(
+            session_id="s",
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_metrics={},
+            active_output_tokens=400,
+            active_model_calls=2,
+            last_resume_time=datetime.now(tz=UTC),
+        )
+        assert _total_output_tokens(session) == 400
+
 
 class TestRenderAggregateStatsResumedTokens:
     """Issue #290 — _render_aggregate_stats includes active tokens for resumed sessions."""
