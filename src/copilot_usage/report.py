@@ -127,10 +127,10 @@ def _shutdown_output_tokens(session: SessionSummary) -> int:
 def _total_output_tokens(session: SessionSummary) -> int:
     """Return total output tokens including post-resume active tokens.
 
-    For resumed sessions whose ``model_metrics`` contain real shutdown data
-    (at least one model with ``requests.count > 0``), the
-    ``active_output_tokens`` field represents *additional* tokens produced
-    after the last shutdown and must be added to the historical baseline.
+    For resumed sessions whose ``has_shutdown_metrics`` flag is ``True``,
+    the ``active_output_tokens`` field represents *additional* tokens
+    produced after the last shutdown and must be added to the historical
+    baseline.
 
     When ``model_metrics`` is empty the baseline is zero, so the active
     tokens are the only source and are included unconditionally.
@@ -140,11 +140,8 @@ def _total_output_tokens(session: SessionSummary) -> int:
     would double-count.
     """
     baseline = _shutdown_output_tokens(session)
-    has_shutdown_metrics = any(
-        mm.requests.count > 0 for mm in session.model_metrics.values()
-    )
     if (
-        _has_active_period_stats(session) and has_shutdown_metrics
+        _has_active_period_stats(session) and session.has_shutdown_metrics
     ) or not session.model_metrics:
         return baseline + session.active_output_tokens
     return baseline

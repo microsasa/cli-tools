@@ -325,6 +325,7 @@ class SessionSummary(BaseModel):
     user_messages: int = 0
     last_resume_time: datetime | None = None
     is_active: bool = False
+    has_shutdown_metrics: bool = False
     events_path: Path | None = None
 
     # Post-shutdown activity (only populated for resumed/active sessions)

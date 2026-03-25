@@ -319,6 +319,7 @@ def build_session_summary(
             model_calls=total_turn_starts,
             user_messages=user_message_count,
             is_active=session_resumed,
+            has_shutdown_metrics=bool(merged_metrics),
             last_resume_time=last_resume_time,
             active_model_calls=post_shutdown_turn_starts,
             active_user_messages=post_shutdown_user_messages,
