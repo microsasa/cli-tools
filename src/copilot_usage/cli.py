@@ -174,7 +174,7 @@ def _start_observer(
             if observer.is_alive():
                 observer.stop()
                 observer.join(timeout=2)
-        except (OSError, RuntimeError) as cleanup_exc:
+        except Exception as cleanup_exc:
             logger.opt(exception=cleanup_exc).debug(
                 "Failed to clean up file watcher after start failure"
             )
