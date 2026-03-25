@@ -600,14 +600,27 @@ class TestBuildSessionSummaryActive:
         assert summary.active_output_tokens == 350  # 150 + 200
 
     def test_active_session_model_from_tool_events(self, tmp_path: Path) -> None:
-        """Active session with tool.execution_complete → model inferred, tokens populated."""
+        """Active session with tool.execution_complete → model_metrics reflect active tokens."""
         p = tmp_path / "s" / "events.jsonl"
+        # One assistant message with 150 output tokens and a tool.execution_complete
+        # that provides the model name. This should result in active_output_tokens
+        # being accounted for in model_metrics for the inferred model.
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
         events = parse_events(p)
         summary = build_session_summary(events, session_dir=p.parent)
+
+        # Session should be considered active.
         assert summary.is_active is True
-        assert summary.model == "claude-sonnet-4"
-        assert summary.active_output_tokens > 0
+
+        # model_metrics should exist and contain an entry for the inferred model.
+        assert summary.model_metrics is not None
+        assert "claude-sonnet-4" in summary.model_metrics
+        sonnet_metrics = summary.model_metrics["claude-sonnet-4"]
+
+        # The usage for the inferred model should reflect the active session's
+        # output tokens (150 from the single assistant message).
+        assert sonnet_metrics.usage is not None
+        assert sonnet_metrics.usage.outputTokens == summary.active_output_tokens == 150
 
 
 # ---------------------------------------------------------------------------
