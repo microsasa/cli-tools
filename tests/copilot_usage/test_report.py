@@ -3867,7 +3867,7 @@ class TestRenderHeaderEdgeCases:
         assert "—" in output
 
     def test_render_header_naive_start_time(self) -> None:
-        """Naive start_time (no tzinfo) is handled by ensure_aware internally."""
+        """Naive start_time (no tzinfo) does not raise — strftime works on naive datetimes."""
         s = SessionSummary(
             session_id="hdr_naive0000",
             start_time=datetime(2025, 1, 15, 10, 0),  # noqa: DTZ001
@@ -4011,9 +4011,9 @@ class TestRenderCodeChangesEdgeCases:
         assert "Files modified" in output
         assert "+10" in output
         assert "-3" in output
+        # Ensure the rendered file count matches the number of entries, regardless of path content.
+        assert re.search(r"Files modified.*\b2\b", output)
 
-
-class TestExtractToolNameEdgeCases:
     """Tests for _extract_tool_name edge cases."""
 
     def test_none_telemetry(self) -> None:
@@ -4031,9 +4031,12 @@ class TestExtractToolNameEdgeCases:
         result = _extract_tool_name(data)
         assert result == "bash"
 
-    def test_no_separator_in_tool_call_id(self) -> None:
-        """toolCallId has no ':' separator, no telemetry → returns empty string."""
-        data = ToolExecutionData(toolCallId="noseparator", toolTelemetry=None)
+    def test_telemetry_without_tool_name_property(self) -> None:
+        """toolTelemetry missing 'tool_name' property → returns empty string."""
+        data = ToolExecutionData(
+            toolCallId="call:without-tool-name",
+            toolTelemetry=ToolTelemetry(properties={"other": "value"}),
+        )
         result = _extract_tool_name(data)
         assert result == ""
 
