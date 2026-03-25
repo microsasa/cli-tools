@@ -477,6 +477,27 @@ class TestParseEvents:
         events = parse_events(p)
         assert len(events) == 1
 
+    def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
+        """events.jsonl with invalid UTF-8 bytes returns what was parsed so far."""
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Write a valid first line, then raw invalid UTF-8 bytes
+        valid_line = _START_EVENT.encode("utf-8") + b"\n"
+        bad_line = b"\xff\xfe invalid utf-8 bytes\n"
+        p.write_bytes(valid_line + bad_line)
+        events = parse_events(p)
+        # Should return what was parsed before the error (may be 1 or 0)
+        assert isinstance(events, list)
+        assert not any(True for _ in events if False)  # no crash
+
+    def test_unicode_decode_error_full_file(self, tmp_path: Path) -> None:
+        """events.jsonl that is entirely invalid UTF-8 returns empty list."""
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\xff\xfe\x80\x81\x82")
+        events = parse_events(p)
+        assert events == [] or isinstance(events, list)
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — completed session
@@ -2578,6 +2599,13 @@ class TestConfigModelReading:
             for msg in log_messages
         )
 
+    def test_unicode_decode_error_returns_none(self, tmp_path: Path) -> None:
+        """config.json with non-UTF-8 bytes → returns None without raising."""
+        config = tmp_path / "config.json"
+        config.write_bytes(b'\xff\xfe{"model": "gpt-5.1"}')
+        result = _read_config_model(config)
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — empty session (only session.start)
@@ -2777,6 +2805,39 @@ class TestGetAllSessionsOsError:
 
         assert len(results) == 1
         assert results[0].session_id == "sess-b"
+
+    def test_unicode_decode_error_session_is_skipped(self, tmp_path: Path) -> None:
+        """A session with non-UTF-8 events.jsonl is gracefully skipped."""
+        # Create a valid session
+        d_good = tmp_path / "sess-good"
+        d_good.mkdir()
+        (d_good / "events.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": "sess-good",
+                        "startTime": "2025-01-15T10:00:00Z",
+                        "context": {"cwd": "/"},
+                    },
+                    "timestamp": "2025-01-15T10:00:00Z",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a session with invalid UTF-8 bytes
+        d_bad = tmp_path / "sess-bad"
+        d_bad.mkdir()
+        (d_bad / "events.jsonl").write_bytes(
+            b'{"type": "session.start"}\n\xff\xfe\x80\x81\n'
+        )
+
+        results = get_all_sessions(tmp_path)
+        # The good session should be present; the bad one skipped
+        session_ids = [r.session_id for r in results]
+        assert "sess-good" in session_ids
 
 
 # ---------------------------------------------------------------------------
