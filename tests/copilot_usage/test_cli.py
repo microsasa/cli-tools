@@ -706,6 +706,49 @@ def test_show_session_by_index_missing_file(tmp_path: Path) -> None:
     assert "no longer available" in capture.get().lower()
 
 
+def test_show_session_by_index_happy_path(tmp_path: Path) -> None:
+    """Valid index + existing events file → rendered output contains session ID."""
+    session_id = "happy000-1111-2222-3333-444444444444"
+    session_dir = tmp_path / session_id[:8]
+    session_dir.mkdir()
+    events_file = session_dir / "events.jsonl"
+    events_file.write_text(
+        json.dumps(
+            {
+                "type": "session.start",
+                "timestamp": "2025-01-15T10:00:00Z",
+                "data": {
+                    "sessionId": session_id,
+                    "startTime": "2025-01-15T10:00:00Z",
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "user.message",
+                "timestamp": "2025-01-15T10:01:00Z",
+                "data": {"content": "hello"},
+            }
+        )
+        + "\n"
+    )
+
+    from copilot_usage.models import SessionSummary
+
+    s = SessionSummary(
+        session_id=session_id,
+        events_path=events_file,
+        start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+        name="HappySession",
+    )
+    console = Console(file=None, force_terminal=True, width=120)
+    with console.capture() as capture:
+        _show_session_by_index(console, [s], 1)
+    output = capture.get()
+    assert session_id in output
+
+
 # ---------------------------------------------------------------------------
 # Watchdog observer tests
 # ---------------------------------------------------------------------------

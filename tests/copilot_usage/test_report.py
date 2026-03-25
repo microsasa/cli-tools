@@ -19,6 +19,8 @@ from copilot_usage.models import (
     SessionEvent,
     SessionSummary,
     TokenUsage,
+    ToolExecutionData,
+    ToolTelemetry,
 )
 from copilot_usage.report import (
     _aggregate_model_metrics,
@@ -28,6 +30,7 @@ from copilot_usage.report import (
     _EffectiveStats,
     _estimate_premium_cost,
     _event_type_label,
+    _extract_tool_name,
     _filter_sessions,
     _format_detail_duration,
     _format_elapsed_since,
@@ -36,7 +39,12 @@ from copilot_usage.report import (
     _format_timedelta,
     _has_active_period_stats,
     _hms,
+    _render_active_period,
+    _render_aggregate_stats,
+    _render_code_changes,
+    _render_header,
     _render_model_table,
+    _render_session_table,
     _render_shutdown_cycles,
     _safe_event_data,
     _shutdown_output_tokens,
@@ -3804,3 +3812,316 @@ class TestSessionDisplayName:
         """When session_id is shorter than 12 chars, return whatever slice gives."""
         s = SessionSummary(session_id="abc", name=None)
         assert session_display_name(s) == "abc"
+
+
+# ---------------------------------------------------------------------------
+# Issue #349 — render helpers and session-table tests
+# ---------------------------------------------------------------------------
+
+
+class TestRenderHeaderEdgeCases:
+    """Tests for _render_header edge cases."""
+
+    def test_render_header_no_end_time(self) -> None:
+        """Active session with no end_time renders 'active' label without crash."""
+        s = SessionSummary(
+            session_id="hdr_noend000",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            end_time=None,
+            is_active=True,
+            name="ActiveSession",
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_header(s, target_console=c)
+        output = capture.get().lower()
+        assert "active" in output
+        assert "hdr_noend000" in output
+
+    def test_render_header_none_session_id(self) -> None:
+        """Session with empty session_id renders without raising."""
+        s = SessionSummary(
+            session_id="",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            end_time=None,
+            is_active=False,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_header(s, target_console=c)
+        # Should not raise; output includes "Session Detail"
+        assert "session detail" in capture.get().lower()
+
+    def test_render_header_none_start_time(self) -> None:
+        """Session with start_time=None shows dash, no elapsed time."""
+        s = SessionSummary(
+            session_id="hdr_nostart0",
+            start_time=None,
+            end_time=None,
+            is_active=True,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_header(s, target_console=c)
+        output = capture.get()
+        assert "—" in output
+
+    def test_render_header_naive_start_time(self) -> None:
+        """Naive start_time (no tzinfo) is handled by ensure_aware internally."""
+        s = SessionSummary(
+            session_id="hdr_naive0000",
+            start_time=datetime(2025, 1, 15, 10, 0),  # noqa: DTZ001
+            end_time=None,
+            is_active=False,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_header(s, target_console=c)
+        assert "2025-01-15" in capture.get()
+
+
+class TestRenderAggregateStatsEdgeCases:
+    """Tests for _render_aggregate_stats edge cases."""
+
+    def test_none_code_changes(self) -> None:
+        """Session with code_changes=None renders without error."""
+        s = SessionSummary(
+            session_id="agg_nocc0000",
+            code_changes=None,
+            model_calls=5,
+            user_messages=3,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_aggregate_stats(s, target_console=c)
+        output = capture.get()
+        assert "5" in output  # model_calls visible
+        assert "3" in output  # user_messages visible
+
+    def test_empty_model_metrics(self) -> None:
+        """Session with empty model_metrics dict renders without exception."""
+        s = SessionSummary(
+            session_id="agg_empty_mm0",
+            model_metrics={},
+            model_calls=2,
+            user_messages=1,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_aggregate_stats(s, target_console=c)
+        output = capture.get()
+        assert "aggregate stats" in output.lower()
+
+
+class TestRenderActivePeriodEdgeCases:
+    """Tests for _render_active_period edge cases."""
+
+    def test_none_model(self) -> None:
+        """Active session with model=None renders without raising."""
+        s = SessionSummary(
+            session_id="act_nonemdl0",
+            is_active=True,
+            model=None,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=datetime(2025, 1, 15, 12, 0, tzinfo=UTC),
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_active_period(s, target_console=c)
+        output = capture.get().lower()
+        assert "active period" in output
+
+    def test_all_zero_counters_with_resume(self) -> None:
+        """Active counters all zero but last_resume_time is set → renders without error."""
+        s = SessionSummary(
+            session_id="act_zeros000",
+            is_active=True,
+            model="claude-sonnet-4",
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=datetime(2025, 1, 15, 12, 0, tzinfo=UTC),
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_active_period(s, target_console=c)
+        output = capture.get()
+        assert "0" in output
+
+    def test_not_active_produces_no_output(self) -> None:
+        """Non-active session produces no output."""
+        s = SessionSummary(
+            session_id="act_inactive0",
+            is_active=False,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_active_period(s, target_console=c)
+        assert capture.get() == ""
+
+
+class TestRenderCodeChangesEdgeCases:
+    """Tests for _render_code_changes edge cases."""
+
+    def test_none_code_changes(self) -> None:
+        """code_changes=None returns immediately with no output."""
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_code_changes(None, target_console=c)
+        assert capture.get() == ""
+
+    def test_empty_files_with_lines(self) -> None:
+        """Empty filesModified but non-zero lines → table rendered showing 0 files."""
+        cc = CodeChanges(filesModified=[], linesAdded=5, linesRemoved=2)
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_code_changes(cc, target_console=c)
+        output = capture.get()
+        assert "Code Changes" in output
+        assert "0" in output  # 0 files modified
+
+    def test_all_zero_returns_no_output(self) -> None:
+        """Empty files + zero lines added/removed → returns with no output."""
+        cc = CodeChanges(filesModified=[], linesAdded=0, linesRemoved=0)
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_code_changes(cc, target_console=c)
+        assert capture.get() == ""
+
+    def test_rich_markup_in_path(self) -> None:
+        """File paths with Rich markup characters don't cause rendering errors."""
+        cc = CodeChanges(
+            filesModified=["[file].txt", "src/[bold]test[/bold].py"],
+            linesAdded=10,
+            linesRemoved=3,
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_code_changes(cc, target_console=c)
+        output = capture.get()
+        assert "Code Changes" in output
+        assert "2" in output  # 2 files modified
+
+
+class TestExtractToolNameEdgeCases:
+    """Tests for _extract_tool_name edge cases."""
+
+    def test_none_telemetry(self) -> None:
+        """toolTelemetry is None → does not raise, returns empty string."""
+        data = ToolExecutionData(toolCallId="some:tool:call", toolTelemetry=None)
+        result = _extract_tool_name(data)
+        assert result == ""
+
+    def test_telemetry_with_tool_name(self) -> None:
+        """toolTelemetry has tool_name property → returns that name."""
+        data = ToolExecutionData(
+            toolCallId="call:123",
+            toolTelemetry=ToolTelemetry(properties={"tool_name": "bash"}),
+        )
+        result = _extract_tool_name(data)
+        assert result == "bash"
+
+    def test_no_separator_in_tool_call_id(self) -> None:
+        """toolCallId has no ':' separator, no telemetry → returns empty string."""
+        data = ToolExecutionData(toolCallId="noseparator", toolTelemetry=None)
+        result = _extract_tool_name(data)
+        assert result == ""
+
+    def test_empty_tool_call_id(self) -> None:
+        """Empty toolCallId with no telemetry → returns empty string."""
+        data = ToolExecutionData(toolCallId="", toolTelemetry=None)
+        result = _extract_tool_name(data)
+        assert result == ""
+
+    def test_empty_properties_dict(self) -> None:
+        """toolTelemetry with empty properties dict → returns empty string."""
+        data = ToolExecutionData(
+            toolCallId="call:456",
+            toolTelemetry=ToolTelemetry(properties={}),
+        )
+        result = _extract_tool_name(data)
+        assert result == ""
+
+
+class TestFilterSessionsNaiveStartTimeAware:
+    """Tests for _filter_sessions with naive datetime edge cases."""
+
+    def test_naive_start_time_with_aware_since(self) -> None:
+        """Naive start_time + aware since → no TypeError, correctly filtered."""
+        naive_dt = datetime(2025, 1, 15, 10, 0)  # noqa: DTZ001
+        s = SessionSummary(session_id="naive000", start_time=naive_dt)
+        since = datetime(2025, 1, 14, 0, 0, tzinfo=UTC)
+        result = _filter_sessions([s], since, None)
+        # naive_dt treated as UTC → 2025-01-15 > 2025-01-14 → included
+        assert len(result) == 1
+
+    def test_naive_start_time_excluded_by_since(self) -> None:
+        """Naive start_time before since → session excluded, no TypeError."""
+        naive_dt = datetime(2025, 1, 10, 10, 0)  # noqa: DTZ001
+        s = SessionSummary(session_id="naive_ex0", start_time=naive_dt)
+        since = datetime(2025, 1, 14, 0, 0, tzinfo=UTC)
+        result = _filter_sessions([s], since, None)
+        assert len(result) == 0
+
+
+class TestFilterSessionsInvertedRange:
+    """Tests for _filter_sessions with inverted date range."""
+
+    def test_since_after_until_returns_empty(self) -> None:
+        """since > until → zero sessions returned with a warning."""
+        s = SessionSummary(
+            session_id="inv_range0",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+        )
+        since = datetime(2025, 2, 1, 0, 0, tzinfo=UTC)
+        until = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _filter_sessions([s], since, until)
+        assert result == []
+        assert any("since" in str(w.message).lower() for w in caught)
+
+
+class TestRenderSessionTableNoneStartTime:
+    """Tests for _render_session_table with None start_time."""
+
+    def test_mixed_none_and_valid_start_times(self) -> None:
+        """Mix of sessions with and without start_time → sort completes, no TypeError."""
+        s1 = SessionSummary(
+            session_id="tbl_valid000",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            name="ValidStart",
+        )
+        s2 = SessionSummary(
+            session_id="tbl_none0000",
+            start_time=None,
+            name="NoStart",
+        )
+        s3 = SessionSummary(
+            session_id="tbl_valid200",
+            start_time=datetime(2025, 1, 20, 10, 0, tzinfo=UTC),
+            name="LaterStart",
+        )
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_table(c, [s1, s2, s3])
+        output = capture.get()
+        # All three sessions rendered
+        assert "ValidStart" in output
+        assert "NoStart" in output
+        assert "LaterStart" in output
+
+    def test_all_none_start_times(self) -> None:
+        """All sessions have start_time=None → sort completes, no TypeError."""
+        sessions = [
+            SessionSummary(session_id="all_none_a00", start_time=None, name="A"),
+            SessionSummary(session_id="all_none_b00", start_time=None, name="B"),
+        ]
+        c = Console(file=None, force_terminal=True, width=120)
+        with c.capture() as capture:
+            _render_session_table(c, sessions)
+        output = capture.get()
+        assert "A" in output
+        assert "B" in output
