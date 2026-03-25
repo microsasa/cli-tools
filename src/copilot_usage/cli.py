@@ -167,7 +167,7 @@ def _start_observer(
     observer.daemon = True
     try:
         observer.start()
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         logger.warning("File watcher unavailable (auto-refresh disabled): {}", exc)
         # Best-effort cleanup in case the observer partially started
         try:

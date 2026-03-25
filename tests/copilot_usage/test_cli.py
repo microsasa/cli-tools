@@ -820,6 +820,20 @@ def test_start_observer_cleanup_failure_logged_as_debug(tmp_path: Path) -> None:
     assert any("Failed to clean up file watcher" in m for m in log_messages)
 
 
+def test_start_observer_propagates_unexpected_exception(tmp_path: Path) -> None:
+    """_start_observer does not catch non-OSError/RuntimeError exceptions."""
+    change_event = threading.Event()
+
+    with (
+        patch(
+            "copilot_usage.cli.Observer.start",
+            side_effect=TypeError("unexpected"),
+        ),
+        pytest.raises(TypeError, match="unexpected"),
+    ):
+        _start_observer(tmp_path, change_event)
+
+
 # ---------------------------------------------------------------------------
 # _stop_observer(None) guard
 # ---------------------------------------------------------------------------
