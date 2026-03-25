@@ -478,7 +478,11 @@ class TestParseEvents:
         assert len(events) == 1
 
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
-        """events.jsonl with invalid UTF-8 bytes returns what was parsed so far."""
+        """events.jsonl with invalid UTF-8 bytes returns what was parsed so far.
+
+        Due to buffered I/O, the UnicodeDecodeError may fire before any
+        lines are yielded, so the result is typically an empty list.
+        """
         p = tmp_path / "s" / "events.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
         # Write a valid first line, then raw invalid UTF-8 bytes
@@ -486,9 +490,9 @@ class TestParseEvents:
         bad_line = b"\xff\xfe invalid utf-8 bytes\n"
         p.write_bytes(valid_line + bad_line)
         events = parse_events(p)
-        # Should return what was parsed before the error (may be 1 or 0)
+        # Should return what was parsed before the error and not raise.
         assert isinstance(events, list)
-        assert not any(True for _ in events if False)  # no crash
+        assert len(events) <= 1  # 0 or 1 depending on buffered I/O
 
     def test_unicode_decode_error_full_file(self, tmp_path: Path) -> None:
         """events.jsonl that is entirely invalid UTF-8 returns empty list."""
@@ -496,7 +500,7 @@ class TestParseEvents:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"\xff\xfe\x80\x81\x82")
         events = parse_events(p)
-        assert events == [] or isinstance(events, list)
+        assert events == []
 
 
 # ---------------------------------------------------------------------------
@@ -2838,6 +2842,8 @@ class TestGetAllSessionsOsError:
         # The good session should be present; the bad one skipped
         session_ids = [r.session_id for r in results]
         assert "sess-good" in session_ids
+        assert "sess-bad" not in session_ids
+        assert len(session_ids) == 1
 
 
 # ---------------------------------------------------------------------------

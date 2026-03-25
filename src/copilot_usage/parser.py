@@ -148,7 +148,10 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
                     )
     except UnicodeDecodeError as exc:
         logger.warning(
-            "{} — UTF-8 decode error, skipping session: {}", events_path, exc
+            "{} — UTF-8 decode error while reading; returning {} parsed events so far (partial session): {}",
+            events_path,
+            len(events),
+            exc,
         )
     return events
 
