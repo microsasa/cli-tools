@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import click
 from loguru import logger
@@ -36,6 +36,8 @@ from copilot_usage.report import (
     render_summary,
     session_display_name,
 )
+
+type _View = Literal["home", "detail", "cost"]
 
 _DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
 
@@ -198,7 +200,7 @@ def _interactive_loop(path: Path | None) -> None:
         _start_observer(session_path, change_event) if session_path.exists() else None
     )
 
-    view: str = "home"  # "home" | "detail" | "cost"
+    view: _View = "home"
     detail_idx: int | None = None
 
     sessions = get_all_sessions(path)

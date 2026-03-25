@@ -5,12 +5,16 @@ These models provide typed parsing for all known event types plus a
 flexible fallback for unknown ones.
 """
 
-import builtins
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+# Defensive alias for the built-in ``type`` so it remains usable inside
+# classes (like SessionEvent) that may define a Pydantic field ``type``
+# with a default/Field assignment in the future, which would shadow it.
+_type = type
 
 # ---------------------------------------------------------------------------
 # Shared datetime utilities
@@ -240,9 +244,7 @@ class SessionEvent(BaseModel):
             case _:
                 return GenericEventData.model_validate(self.data)
 
-    def _as[T: BaseModel](
-        self, expected_type: EventType, model_cls: builtins.type[T]
-    ) -> T:
+    def _as[T: BaseModel](self, expected_type: EventType, model_cls: _type[T]) -> T:
         """Validate event type and return parsed data.
 
         Raises:
