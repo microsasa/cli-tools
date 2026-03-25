@@ -3838,7 +3838,7 @@ class TestRenderHeaderEdgeCases:
         assert "active" in output
         assert "hdr_noend000" in output
 
-    def test_render_header_none_session_id(self) -> None:
+    def test_render_header_empty_session_id(self) -> None:
         """Session with empty session_id renders without raising."""
         s = SessionSummary(
             session_id="",
