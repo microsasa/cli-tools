@@ -1774,6 +1774,7 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 10, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=12,
             user_messages=6,
             active_model_calls=4,
@@ -1823,6 +1824,7 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=10,
             user_messages=4,
             active_model_calls=3,
@@ -1923,6 +1925,7 @@ class TestRenderCostView:
             model="claude-opus-4.5",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=5,
             active_model_calls=4,
             active_output_tokens=800,
@@ -3306,6 +3309,7 @@ class TestTotalOutputTokens:
         session = SessionSummary(
             session_id="resumed-1234",
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=250,
             model_metrics={
@@ -3322,6 +3326,7 @@ class TestTotalOutputTokens:
         session = SessionSummary(
             session_id="pure-active-1234",
             is_active=True,
+            has_shutdown_metrics=False,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=400,
             model_metrics={
@@ -3331,7 +3336,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        # requests.count == 0 → synthetic metrics; should NOT add active tokens
+        # has_shutdown_metrics=False → should NOT add active tokens
         assert _total_output_tokens(session) == 400
 
     def test_empty_model_metrics(self) -> None:
@@ -3358,6 +3363,7 @@ class TestTotalOutputTokens:
         session = SessionSummary(
             session_id="multi-model-resumed",
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=100,
             model_metrics={
@@ -3372,6 +3378,52 @@ class TestTotalOutputTokens:
             },
         )
         assert _total_output_tokens(session) == 600  # 200 + 300 + 100
+
+    # -- Issue #351 regression tests --
+
+    def test_active_session_with_nonzero_request_count_no_double_count(self) -> None:
+        """Active session with requests.count > 0 but has_shutdown_metrics=False.
+
+        Simulates a future scenario where in-flight requests bump count
+        without real shutdown data.  Must not double-count.
+        """
+        session = SessionSummary(
+            session_id="active-nonzero-req",
+            is_active=True,
+            has_shutdown_metrics=False,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=400,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=0),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        assert _total_output_tokens(session) == 400
+
+    def test_resumed_session_with_shutdown_adds_active_tokens(self) -> None:
+        """Resumed session with has_shutdown_metrics=True adds active tokens.
+
+        Ensures shutdown_tokens + active_output_tokens, not
+        shutdown_tokens + 2 × active_output_tokens.
+        """
+        shutdown_tokens = 500
+        active_tokens = 200
+        session = SessionSummary(
+            session_id="resumed-explicit-flag",
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=active_tokens,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=20),
+                    usage=TokenUsage(outputTokens=shutdown_tokens),
+                ),
+            },
+        )
+        assert _total_output_tokens(session) == shutdown_tokens + active_tokens
 
 
 class TestRenderAggregateStatsResumedTokens:
@@ -3390,6 +3442,7 @@ class TestRenderAggregateStatsResumedTokens:
             total_premium_requests=2,
             total_api_duration_ms=1500,
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=250,
             model_metrics={
@@ -3423,6 +3476,7 @@ class TestComputeSessionTotalsResumed:
             user_messages=4,
             total_api_duration_ms=3000,
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=250,
             model_metrics={
@@ -3457,6 +3511,7 @@ class TestComputeSessionTotalsResumed:
             user_messages=3,
             total_api_duration_ms=2000,
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=200,
             model_metrics={
@@ -3482,6 +3537,7 @@ class TestRenderSessionTableResumed:
             model="gpt-4",
             start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             model_calls=10,
             user_messages=5,
@@ -3511,6 +3567,7 @@ class TestRenderCostViewResumed:
             model="gpt-4",
             start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             model_calls=10,
             user_messages=5,
@@ -3568,6 +3625,7 @@ class TestShutdownOutputTokens:
         session = SessionSummary(
             session_id="shutdown-only-1234",
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             active_output_tokens=250,
             model_metrics={
@@ -3598,6 +3656,7 @@ class TestRenderFullSummaryResumedSplitView:
             model="gpt-4",
             start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             last_resume_time=datetime.now(tz=UTC),
             total_premium_requests=10,
             model_calls=8,
