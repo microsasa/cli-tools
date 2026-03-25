@@ -1,5 +1,6 @@
 """End-to-end tests running CLI commands against anonymized fixture data."""
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -626,11 +627,14 @@ class TestCostDateFilterE2E:
         # b5df8a34 (2026-03-08) and empty-session (2026-03-10) should appear
         assert "b5df" in result.output
         assert "empty-sess" in result.output
-        # Verify the Grand Total premium cost equals the expected filtered total
+        # Verify the Grand Total premium cost column equals the expected value.
+        # The Rich table uses │ separators; Premium Cost is the 5th column (index 4).
         grand_total_line = next(
             line for line in result.output.splitlines() if "Grand Total" in line
         )
-        assert "288" in grand_total_line
+        columns = [c.strip() for c in grand_total_line.split("│")]
+        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        assert premium_cost_col == "288"
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
         """--until 2026-03-07 limits cost view to sessions up to that date."""
@@ -681,7 +685,6 @@ class TestSessionNotFoundAvailableE2E:
         assert result.exit_code != 0
         assert "no session matching 'xxxxxxxx'" in result.output
         assert "Available:" in result.output
-        # At least one known fixture session prefix should appear
-        assert any(
-            prefix in result.output for prefix in ["b5df8a34", "4a547040", "0faecbdf"]
-        )
+        # All known fixture session prefixes should appear
+        for prefix in ["b5df8a34", "4a547040", "0faecbdf"]:
+            assert prefix in result.output
