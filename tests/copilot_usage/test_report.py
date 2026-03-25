@@ -3863,3 +3863,29 @@ class TestSessionDisplayName:
         """When session_id is shorter than 12 chars, return whatever slice gives."""
         s = SessionSummary(session_id="abc", name=None)
         assert session_display_name(s) == "abc"
+
+
+# ---------------------------------------------------------------------------
+# Issue #355 — _filter_sessions exact timestamp boundary semantics
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsExactBoundary:
+    def test_session_at_exact_since_is_included(self) -> None:
+        t = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
+        s = SessionSummary(session_id="s", start_time=t)
+        result = _filter_sessions([s], since=t, until=None)
+        assert len(result) == 1
+
+    def test_session_at_exact_until_is_included(self) -> None:
+        t = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
+        s = SessionSummary(session_id="s", start_time=t)
+        result = _filter_sessions([s], since=None, until=t)
+        assert len(result) == 1
+
+    def test_session_at_exact_point_range_is_included(self) -> None:
+        """since == until == session.start_time → included."""
+        t = datetime(2025, 6, 15, tzinfo=UTC)
+        s = SessionSummary(session_id="s", start_time=t)
+        result = _filter_sessions([s], since=t, until=t)
+        assert len(result) == 1

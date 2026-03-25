@@ -282,3 +282,27 @@ class TestLookupModelPricingTieBreaking:
         expected = KNOWN_PRICING[first_key]
         assert p.multiplier == expected.multiplier
         assert p.tier == expected.tier
+
+
+# ---------------------------------------------------------------------------
+# Issue #355 — lookup_model_pricing empty/unknown string edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestLookupModelPricingEdgeCases:
+    def test_empty_string_warns_and_returns_standard(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("")
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert len(caught) == 1
+        assert "Unknown model" in str(caught[0].message)
+
+    def test_single_char_unknown_warns_and_returns_standard(self) -> None:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("x")
+        assert p.multiplier == 1.0
+        assert len(w) == 1
+        assert "Unknown model" in str(w[0].message)
