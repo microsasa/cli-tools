@@ -2763,6 +2763,26 @@ class TestSessionDetailFallbackToNow:
         assert "+0:00" in output
 
 
+class TestSessionDetailNaiveEventFallback:
+    """Issue #370 — render_session_detail with naive timestamp fallback."""
+
+    def test_single_naive_event_no_start_time(self) -> None:
+        """A single event with a naive timestamp and start_time=None must not raise TypeError."""
+        from copilot_usage.report import render_session_detail
+
+        naive_ts = datetime(2025, 6, 1, 12, 0, 0)  # noqa: DTZ001
+        summary = SessionSummary(session_id="naive-only", start_time=None)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "hello"},
+                timestamp=naive_ts,
+            ),
+        ]
+        output = _capture_console(render_session_detail, events, summary)
+        assert "Recent Events" in output
+
+
 class TestHistoricalSectionZeroPremiumWithMetrics:
     """Issue #230 — completed session with 0 premium requests but non-empty model_metrics."""
 

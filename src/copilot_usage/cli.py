@@ -167,14 +167,14 @@ def _start_observer(
     observer.daemon = True
     try:
         observer.start()
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         logger.warning("File watcher unavailable (auto-refresh disabled): {}", exc)
         # Best-effort cleanup in case the observer partially started
         try:
             if observer.is_alive():
                 observer.stop()
                 observer.join(timeout=2)
-        except Exception as cleanup_exc:
+        except (OSError, RuntimeError) as cleanup_exc:
             logger.opt(exception=cleanup_exc).debug(
                 "Failed to clean up file watcher after start failure"
             )
