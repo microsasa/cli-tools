@@ -153,7 +153,6 @@ class SessionShutdownData(BaseModel):
     shutdownType: str = ""
     totalPremiumRequests: int = 0
     totalApiDurationMs: int = 0
-    sessionStartTime: int = 0
     codeChanges: CodeChanges | None = None
     modelMetrics: dict[str, ModelMetrics] = Field(default_factory=dict)
     currentModel: str | None = None

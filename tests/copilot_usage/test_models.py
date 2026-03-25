@@ -175,6 +175,15 @@ def test_session_shutdown_data() -> None:
     assert m.usage.inputTokens == 1627935
 
 
+def test_session_shutdown_data_ignores_session_start_time() -> None:
+    """sessionStartTime was removed; Pydantic silently drops the extra field."""
+    d = SessionShutdownData.model_validate(
+        {"shutdownType": "routine", "sessionStartTime": 12345}
+    )
+    assert d.shutdownType == "routine"
+    assert not hasattr(d, "sessionStartTime")
+
+
 def test_tool_execution_data() -> None:
     d = ToolExecutionData.model_validate(RAW_TOOL_EXEC["data"])
     assert d.success is True

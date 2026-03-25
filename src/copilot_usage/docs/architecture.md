@@ -25,7 +25,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
                                                     │ pricing     │
                                                     │             │
                                                     │ multipliers │
-                                                    │ (reference) │
+                                                    │ (live est.) │
                                                     └─────────────┘
 ```
 
@@ -37,7 +37,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session. Counts raw events (model calls via assistant.turn_start, user messages). |
 | `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
 | `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), session detail, live view, premium request breakdown. Reports raw counts, no estimation. |
-| `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers retained as reference data only; not used for estimation. |
+| `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers are used for `~`-prefixed cost estimates in live/active views (`render_live_sessions`, `render_cost_view`); historical post-shutdown views use exact API-provided numbers exclusively. |
 | `logging_config.py` | Loguru setup — stderr warnings only, no file output. Called once from CLI entry point. |
 
 ### Event Processing Pipeline
@@ -52,7 +52,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
    - For active/resumed sessions: sums `outputTokens` from individual `assistant.message` events
    - Detects resumed sessions: if events exist after `session.shutdown`, marks `is_active = True`
    - Tracks `last_resume_time` from `session.resume` events — used to calculate "Running" duration for active sessions
-   - Reports exact premium requests from shutdown data only — no multiplier-based estimation
+   - Reports exact premium requests from shutdown data; multiplier-based `~` estimates are used only in live/active views
 5. **Rendering** — Report functions receive `SessionSummary` objects and render Rich output
 
 ### Key Design Decisions
