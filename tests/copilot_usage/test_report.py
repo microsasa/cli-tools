@@ -3864,7 +3864,10 @@ class TestRenderHeaderEdgeCases:
         with c.capture() as capture:
             _render_header(s, target_console=c)
         output = capture.get()
-        assert "—" in output
+        # Strip ANSI escape sequences so the regex matches the visible text.
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # Specifically assert that the Started line uses a dash placeholder
+        assert re.search(r"Started.*—", plain)
 
     def test_render_header_naive_start_time(self) -> None:
         """Naive start_time (no tzinfo) does not raise — strftime works on naive datetimes."""
@@ -3895,10 +3898,14 @@ class TestRenderAggregateStatsEdgeCases:
         with c.capture() as capture:
             _render_aggregate_stats(s, target_console=c)
         output = capture.get()
-        assert "5" in output
-        assert "model calls" in output.lower()
-        assert "3" in output
-        assert "user messages" in output.lower()
+        # Strip ANSI escape sequences so assertions don't accidentally match
+        # digits inside color codes (e.g., "38;5;...").
+        plain_output = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lower_output = plain_output.lower()
+        # Assert on value+label combinations to ensure the actual counters
+        # are present in the rendered text.
+        assert re.search(r"5.*model calls", lower_output, re.DOTALL)
+        assert re.search(r"3.*user messages", lower_output, re.DOTALL)
 
     def test_renders_panel_title(self) -> None:
         """Aggregate stats panel title is present in output."""
@@ -4014,6 +4021,8 @@ class TestRenderCodeChangesEdgeCases:
         # Ensure the rendered file count matches the number of entries, regardless of path content.
         assert re.search(r"Files modified.*\b2\b", output)
 
+
+class TestExtractToolNameEdgeCases:
     """Tests for _extract_tool_name edge cases."""
 
     def test_none_telemetry(self) -> None:
