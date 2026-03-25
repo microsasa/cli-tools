@@ -77,8 +77,8 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 
 
 def _safe_int_tokens(raw: object) -> int | None:
-    """Return *raw* as int if it is a genuine integer (not bool), else None."""
-    if isinstance(raw, int) and not isinstance(raw, bool):
+    """Return *raw* as non-negative int if it is a genuine integer (not bool), else None."""
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
         return raw
     return None
 
@@ -225,9 +225,12 @@ def build_session_summary(
                     exc.error_count(),
                 )
                 continue
-            session_id = data.sessionId
-            start_time = data.startTime
-            cwd = data.context.cwd
+            # First valid session.start wins — subsequent ones are ignored
+            # so that duplicate events don't silently overwrite identity.
+            if not session_id:
+                session_id = data.sessionId
+                start_time = data.startTime
+                cwd = data.context.cwd
 
         # -- session.shutdown ---------------------------------------------
         elif ev.type == EventType.SESSION_SHUTDOWN:

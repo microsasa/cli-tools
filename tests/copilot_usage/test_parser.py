@@ -1805,10 +1805,96 @@ class TestBuildSessionSummaryEdgeCases:
         # No outputTokens → model_metrics should be empty even though model is known
         assert summary.model_metrics == {}
 
+    def test_negative_output_tokens_not_accumulated(self, tmp_path: Path) -> None:
+        """assistant.message with negative outputTokens → active_output_tokens == 0."""
+        neg_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-neg",
+                    "content": "bad tokens",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": -50,
+                },
+                "id": "ev-neg",
+                "timestamp": "2026-03-07T10:01:05.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, neg_msg, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
 
-# ---------------------------------------------------------------------------
-# get_all_sessions — additional edge cases
-# ---------------------------------------------------------------------------
+    def test_mixed_valid_bool_negative_tokens(self, tmp_path: Path) -> None:
+        """Mix of valid (150), boolean (True), and negative (-50) outputTokens → 150."""
+        bool_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-bool",
+                    "content": "bool tokens",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": True,
+                },
+                "id": "ev-bool",
+                "timestamp": "2026-03-07T10:01:06.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        neg_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-neg2",
+                    "content": "neg tokens",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": -50,
+                },
+                "id": "ev-neg2",
+                "timestamp": "2026-03-07T10:01:07.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, bool_msg, neg_msg, _TOOL_EXEC
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 150
+
+    def test_multiple_session_start_uses_first(self, tmp_path: Path) -> None:
+        """Two session.start events; session_id, start_time, cwd match FIRST event."""
+        second_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "second-session-999",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.0",
+                    "startTime": "2026-03-07T10:30:00.000Z",
+                    "context": {"cwd": "/home/user/other-project"},
+                },
+                "id": "ev-start-2",
+                "timestamp": "2026-03-07T10:30:00.000Z",
+                "parentId": None,
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, second_start, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.session_id == "test-session-001"
+        assert summary.start_time is not None
+        assert summary.start_time.hour == 10
+        assert summary.start_time.minute == 0
+        assert summary.cwd == "/home/user/project"
 
 
 class TestGetAllSessionsEdgeCases:
@@ -2927,8 +3013,11 @@ class TestSafeIntTokens:
     def test_returns_zero_for_zero(self) -> None:
         assert _safe_int_tokens(0) == 0
 
-    def test_returns_negative_for_negative_int(self) -> None:
-        assert _safe_int_tokens(-5) == -5
+    def test_returns_none_for_negative_int(self) -> None:
+        assert _safe_int_tokens(-1) is None
+
+    def test_returns_none_for_large_negative(self) -> None:
+        assert _safe_int_tokens(-100_000) is None
 
 
 # ---------------------------------------------------------------------------
