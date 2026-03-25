@@ -545,8 +545,6 @@ class TestPureActiveSessionActivityE2E:
 
     def test_live_shows_pure_active_session(self) -> None:
         """Pure active session appears in the live view."""
-        import re
-
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
         clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
@@ -653,18 +651,19 @@ class TestCostDateFilterE2E:
 
     def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
         """--since after --until emits a warning and shows no sessions."""
-        result = CliRunner().invoke(
-            main,
-            [
-                "cost",
-                "--path",
-                str(FIXTURES),
-                "--since",
-                "2026-12-01",
-                "--until",
-                "2026-01-01",
-            ],
-        )
+        with pytest.warns(UserWarning, match="."):
+            result = CliRunner().invoke(
+                main,
+                [
+                    "cost",
+                    "--path",
+                    str(FIXTURES),
+                    "--since",
+                    "2026-12-01",
+                    "--until",
+                    "2026-01-01",
+                ],
+            )
         assert result.exit_code == 0
         assert "No sessions found" in result.output
 
