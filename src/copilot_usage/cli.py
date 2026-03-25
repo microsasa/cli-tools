@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import click
+from loguru import logger
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -148,13 +149,34 @@ class _Stoppable(Protocol):
     def is_alive(self) -> bool: ...
 
 
-def _start_observer(session_path: Path, change_event: threading.Event) -> _Stoppable:
-    """Start a watchdog observer monitoring *session_path* for changes."""
+def _start_observer(
+    session_path: Path, change_event: threading.Event
+) -> _Stoppable | None:
+    """Start a watchdog observer monitoring *session_path* for changes.
+
+    Returns ``None`` when the observer cannot be started (e.g. inotify
+    watch limit exhausted, unsupported filesystem). The caller should
+    treat a ``None`` return as "auto-refresh unavailable" and continue
+    without it.
+    """
     handler = _FileChangeHandler(change_event)
     observer = Observer()
     observer.schedule(handler, str(session_path), recursive=True)
     observer.daemon = True
-    observer.start()
+    try:
+        observer.start()
+    except Exception as exc:
+        logger.warning("File watcher unavailable (auto-refresh disabled): {}", exc)
+        # Best-effort cleanup in case the observer partially started
+        try:
+            if observer.is_alive():
+                observer.stop()
+                observer.join(timeout=2)
+        except Exception as cleanup_exc:
+            logger.opt(exception=cleanup_exc).debug(
+                "Failed to clean up file watcher after start failure"
+            )
+        return None
     return cast(_Stoppable, observer)
 
 
