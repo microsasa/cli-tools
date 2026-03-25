@@ -765,6 +765,61 @@ def test_start_observer_returns_none_on_os_error(tmp_path: Path) -> None:
     assert any("File watcher unavailable" in m for m in log_messages)
 
 
+def test_start_observer_cleanup_when_alive_after_failure(tmp_path: Path) -> None:
+    """When Observer.start() fails but the observer is partially alive, cleanup runs."""
+    from loguru import logger
+
+    change_event = threading.Event()
+    log_messages: list[str] = []
+    handler_id = logger.add(lambda m: log_messages.append(str(m)), level="WARNING")
+
+    try:
+        with (
+            patch(
+                "copilot_usage.cli.Observer.start",
+                side_effect=RuntimeError("partial start failure"),
+            ),
+            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
+            patch("copilot_usage.cli.Observer.stop") as mock_stop,
+            patch("copilot_usage.cli.Observer.join") as mock_join,
+        ):
+            result = _start_observer(tmp_path, change_event)
+    finally:
+        logger.remove(handler_id)
+
+    assert result is None
+    mock_stop.assert_called_once()
+    mock_join.assert_called_once_with(timeout=2)
+
+
+def test_start_observer_cleanup_failure_logged_as_debug(tmp_path: Path) -> None:
+    """When cleanup after a failed start also raises, a DEBUG message is logged."""
+    from loguru import logger
+
+    change_event = threading.Event()
+    log_messages: list[str] = []
+    handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+
+    try:
+        with (
+            patch(
+                "copilot_usage.cli.Observer.start",
+                side_effect=RuntimeError("start failed"),
+            ),
+            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
+            patch(
+                "copilot_usage.cli.Observer.stop",
+                side_effect=RuntimeError("cleanup failed"),
+            ),
+        ):
+            result = _start_observer(tmp_path, change_event)
+    finally:
+        logger.remove(handler_id)
+
+    assert result is None
+    assert any("Failed to clean up file watcher" in m for m in log_messages)
+
+
 # ---------------------------------------------------------------------------
 # _stop_observer(None) guard
 # ---------------------------------------------------------------------------
