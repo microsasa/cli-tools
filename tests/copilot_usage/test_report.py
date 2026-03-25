@@ -1276,6 +1276,28 @@ class TestReportCoverageGaps:
         output = _capture_console(render_session_detail, events, summary)
         assert "Recent Events" in output
 
+    def test_session_detail_naive_first_event_with_aware_subsequent(self) -> None:
+        """Naive events[0].timestamp mixed with aware later timestamps must not raise TypeError."""
+        from copilot_usage.report import render_session_detail
+
+        naive_time = datetime(2025, 3, 1, 10, 0, 0)  # noqa: DTZ001
+        aware_time = datetime(2025, 3, 1, 10, 0, 5, tzinfo=UTC)
+        summary = SessionSummary(session_id="naive-start", start_time=None)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "hi"},
+                timestamp=naive_time,
+            ),
+            _make_event(
+                EventType.ASSISTANT_MESSAGE,
+                data={"content": "ok", "outputTokens": 10, "messageId": "m1"},
+                timestamp=aware_time,
+            ),
+        ]
+        output = _capture_console(render_session_detail, events, summary)
+        assert "Recent Events" in output
+
 
 # ---------------------------------------------------------------------------
 # Premium requests display (raw facts, no estimation)

@@ -571,7 +571,7 @@ def _render_recent_events(
 
     for ev in recent:
         if ev.timestamp is not None:
-            delta = ev.timestamp - session_start
+            delta = ensure_aware(ev.timestamp) - session_start
             rel = _format_relative_time(delta)
         else:
             rel = "—"
@@ -659,7 +659,7 @@ def render_session_detail(
         ensure_aware(summary.start_time)
         if summary.start_time
         else (
-            events[0].timestamp
+            ensure_aware(events[0].timestamp)
             if events and events[0].timestamp
             else datetime.now(tz=UTC)
         )
