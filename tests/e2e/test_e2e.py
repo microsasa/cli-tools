@@ -635,19 +635,27 @@ class TestCostDateFilterE2E:
         assert premium_cost_col == "288"
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
-        """--until 2026-03-07 limits cost view to sessions up to that date."""
+        """--until 2026-03-07 limits cost view to sessions before 2026-03-07 (up to 2026-03-07 00:00)."""
         result = CliRunner().invoke(
             main, ["cost", "--path", str(FIXTURES), "--until", "2026-03-07"]
         )
         assert result.exit_code == 0
-        # Only 2026-03-06 sessions (multi-shutdown-resumed, resumed-session)
-        # should contribute to the Grand Total; newer sessions must be excluded.
+        # Only sessions from 2026-03-06 (multi-shutdown-resumed, resumed-session),
+        # i.e. those starting before 2026-03-07 00:00, should contribute to the Grand Total.
         assert "resumed-sess" in result.output
         assert "multi-shutdo" in result.output
-        # Sessions after 2026-03-07 should not appear
+        # Sessions on or after 2026-03-07 should not appear
         assert "b5df" not in result.output
         assert "empty-sess" not in result.output
         assert "Grand Total" in result.output
+        # Verify the Grand Total premium cost column equals the expected value.
+        # multi-shutdown-resumed (8) + resumed-session (10) = 18
+        grand_total_line = next(
+            line for line in result.output.splitlines() if "Grand Total" in line
+        )
+        columns = [c.strip() for c in grand_total_line.split("│")]
+        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        assert premium_cost_col == "18"
 
     def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
         """--since after --until emits a warning and shows no sessions."""
