@@ -1,5 +1,6 @@
 """End-to-end tests running CLI commands against anonymized fixture data."""
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -544,8 +545,6 @@ class TestPureActiveSessionActivityE2E:
 
     def test_live_shows_pure_active_session(self) -> None:
         """Pure active session appears in the live view."""
-        import re
-
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
         clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
@@ -607,3 +606,92 @@ class TestShutdownAggregationE2E:
         # Find rows in the shutdown cycles table containing premium values
         cycle_rows = [line for line in lines if "2026-03-07" in line]
         assert len(cycle_rows) >= 2, f"Expected 2 shutdown cycles, got: {cycle_rows}"
+
+
+# ---------------------------------------------------------------------------
+# cost --since / --until date filtering (Gap 1 from #368)
+# ---------------------------------------------------------------------------
+
+
+class TestCostDateFilterE2E:
+    """E2E tests for cost --since / --until against fixture data."""
+
+    def test_cost_since_excludes_older_sessions(self) -> None:
+        """--since 2026-03-08 narrows cost view to sessions on/after that date."""
+        result = CliRunner().invoke(
+            main, ["cost", "--path", str(FIXTURES), "--since", "2026-03-08"]
+        )
+        assert result.exit_code == 0
+        # b5df8a34 (2026-03-08) and empty-session (2026-03-10) should appear
+        assert "b5df" in result.output
+        assert "empty-sess" in result.output
+        # Verify the Grand Total premium cost column equals the expected value.
+        # The Rich table uses │ separators; Premium Cost is the 5th column (index 4).
+        grand_total_line = next(
+            line for line in result.output.splitlines() if "Grand Total" in line
+        )
+        columns = [c.strip() for c in grand_total_line.split("│")]
+        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        assert premium_cost_col == "288"
+
+    def test_cost_until_excludes_newer_sessions(self) -> None:
+        """--until 2026-03-07 limits cost view to sessions before 2026-03-07 (up to 2026-03-07 00:00)."""
+        result = CliRunner().invoke(
+            main, ["cost", "--path", str(FIXTURES), "--until", "2026-03-07"]
+        )
+        assert result.exit_code == 0
+        # Only sessions from 2026-03-06 (multi-shutdown-resumed, resumed-session),
+        # i.e. those starting before 2026-03-07 00:00, should contribute to the Grand Total.
+        assert "resumed-sess" in result.output
+        assert "multi-shutdo" in result.output
+        # Sessions on or after 2026-03-07 should not appear
+        assert "b5df" not in result.output
+        assert "empty-sess" not in result.output
+        assert "Grand Total" in result.output
+        # Verify the Grand Total premium cost column equals the expected value.
+        # multi-shutdown-resumed (8) + resumed-session (10) = 18
+        grand_total_line = next(
+            line for line in result.output.splitlines() if "Grand Total" in line
+        )
+        columns = [c.strip() for c in grand_total_line.split("│")]
+        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        assert premium_cost_col == "18"
+
+    def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
+        """--since after --until emits a warning and shows no sessions."""
+        with pytest.warns(UserWarning, match="."):
+            result = CliRunner().invoke(
+                main,
+                [
+                    "cost",
+                    "--path",
+                    str(FIXTURES),
+                    "--since",
+                    "2026-12-01",
+                    "--until",
+                    "2026-01-01",
+                ],
+            )
+        assert result.exit_code == 0
+        assert "No sessions found" in result.output
+
+
+# ---------------------------------------------------------------------------
+# session not-found "Available:" list (Gap 2 from #368)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionNotFoundAvailableE2E:
+    """E2E test for the 'Available:' list when session lookup fails."""
+
+    def test_not_found_shows_available_list(self) -> None:
+        """session with bad prefix prints 'Available:' with known fixture IDs."""
+        result = CliRunner().invoke(
+            main, ["session", "xxxxxxxx", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code != 0
+        assert "no session matching 'xxxxxxxx'" in result.output
+        assert "Available:" in result.output
+        # All known fixture session prefixes should appear
+        for prefix in ["b5df8a34", "4a547040", "0faecbdf"]:
+            assert prefix in result.output
