@@ -625,9 +625,12 @@ class TestCostDateFilterE2E:
         assert result.exit_code == 0
         # b5df8a34 (2026-03-08) and empty-session (2026-03-10) should appear
         assert "b5df" in result.output
-        # Older sessions should be excluded from the grand total row
-        # The total premium from these two sessions only, not the full 825
-        assert "825" not in result.output
+        assert "empty-sess" in result.output
+        # Verify the Grand Total premium cost equals the expected filtered total
+        grand_total_line = next(
+            line for line in result.output.splitlines() if "Grand Total" in line
+        )
+        assert "288" in grand_total_line
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
         """--until 2026-03-07 limits cost view to sessions up to that date."""
@@ -636,8 +639,12 @@ class TestCostDateFilterE2E:
         )
         assert result.exit_code == 0
         # Only 2026-03-06 sessions (multi-shutdown-resumed, resumed-session)
-        # Sessions after 2026-03-07 should not appear in the Grand Total
+        # should contribute to the Grand Total; newer sessions must be excluded.
+        assert "resumed-sess" in result.output
+        assert "multi-shutdo" in result.output
+        # Sessions after 2026-03-07 should not appear
         assert "b5df" not in result.output
+        assert "empty-sess" not in result.output
         assert "Grand Total" in result.output
 
     def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
@@ -672,6 +679,7 @@ class TestSessionNotFoundAvailableE2E:
             main, ["session", "xxxxxxxx", "--path", str(FIXTURES)]
         )
         assert result.exit_code != 0
+        assert "no session matching 'xxxxxxxx'" in result.output
         assert "Available:" in result.output
         # At least one known fixture session prefix should appear
         assert any(
