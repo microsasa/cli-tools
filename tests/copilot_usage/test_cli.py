@@ -723,7 +723,7 @@ def test_start_observer_returns_running_observer(tmp_path: Path) -> None:
 
 
 def test_start_observer_returns_none_on_startup_error(tmp_path: Path) -> None:
-    """_start_observer returns None (not raise) when Observer.start() fails."""
+    """_start_observer returns None (does not raise) when Observer.start() fails."""
     from loguru import logger
 
     change_event = threading.Event()

@@ -155,7 +155,7 @@ def _start_observer(
     """Start a watchdog observer monitoring *session_path* for changes.
 
     Returns ``None`` when the observer cannot be started (e.g. inotify
-    watch limit exhausted, unsupported filesystem).  The caller should
+    watch limit exhausted, unsupported filesystem). The caller should
     treat a ``None`` return as "auto-refresh unavailable" and continue
     without it.
     """
