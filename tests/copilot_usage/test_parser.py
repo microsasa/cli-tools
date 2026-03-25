@@ -599,6 +599,16 @@ class TestBuildSessionSummaryActive:
         assert summary.active_user_messages == 2
         assert summary.active_output_tokens == 350  # 150 + 200
 
+    def test_active_session_model_from_tool_events(self, tmp_path: Path) -> None:
+        """Active session with tool.execution_complete → model inferred, tokens populated."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events, session_dir=p.parent)
+        assert summary.is_active is True
+        assert summary.model == "claude-sonnet-4"
+        assert summary.active_output_tokens > 0
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — resumed session (shutdown followed by more events)
@@ -2615,6 +2625,11 @@ class TestInferModelFromMetrics:
         }
         assert _infer_model_from_metrics(metrics_reversed) == "model-b"
 
+    def test_single_model_with_zero_count(self) -> None:
+        """Single model with count=0 is still returned (single-key fast path)."""
+        metrics = {"gpt-4o": ModelMetrics(requests=RequestMetrics(count=0))}
+        assert _infer_model_from_metrics(metrics) == "gpt-4o"
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — completed session without currentModel (integration)
@@ -2898,6 +2913,9 @@ class TestSafeIntTokens:
 
     def test_returns_zero_for_zero(self) -> None:
         assert _safe_int_tokens(0) == 0
+
+    def test_returns_negative_for_negative_int(self) -> None:
+        assert _safe_int_tokens(-5) == -5
 
 
 # ---------------------------------------------------------------------------
