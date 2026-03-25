@@ -2006,6 +2006,32 @@ class TestBuildSessionSummaryEdgeCases:
         assert result[0].session_id == "naive-session"
         assert result[1].session_id == "no-time"
 
+    def test_shutdown_with_empty_model_metrics_has_shutdown_metrics_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown with modelMetrics: {} → has_shutdown_metrics is False."""
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 1000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, shutdown)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.has_shutdown_metrics is False
+        assert summary.model_metrics == {}
+        assert summary.is_active is False
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — parser.py
@@ -2247,32 +2273,6 @@ class TestBuildSessionSummaryDebugLogging:
             "could not parse" in msg and "tool.execution_complete" in msg
             for msg in log_messages
         )
-
-    def test_shutdown_with_empty_model_metrics_has_shutdown_metrics_false(
-        self, tmp_path: Path
-    ) -> None:
-        """Shutdown with modelMetrics: {} → has_shutdown_metrics is False."""
-        shutdown = json.dumps(
-            {
-                "type": "session.shutdown",
-                "data": {
-                    "shutdownType": "routine",
-                    "totalPremiumRequests": 0,
-                    "totalApiDurationMs": 1000,
-                    "sessionStartTime": 0,
-                    "modelMetrics": {},
-                },
-                "id": "ev-sd",
-                "timestamp": "2026-03-07T11:00:00.000Z",
-            }
-        )
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(p, _START_EVENT, _USER_MSG, shutdown)
-        events = parse_events(p)
-        summary = build_session_summary(events)
-        assert summary.has_shutdown_metrics is False
-        assert summary.model_metrics == {}
-        assert summary.is_active is False
 
 
 # ---------------------------------------------------------------------------
