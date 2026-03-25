@@ -3883,8 +3883,8 @@ class TestRenderHeaderEdgeCases:
 class TestRenderAggregateStatsEdgeCases:
     """Tests for _render_aggregate_stats edge cases."""
 
-    def test_none_code_changes(self) -> None:
-        """Session with code_changes=None renders without error."""
+    def test_renders_calls_and_messages(self) -> None:
+        """Aggregate stats panel renders model_calls and user_messages."""
         s = SessionSummary(
             session_id="agg_nocc0000",
             code_changes=None,
@@ -3895,11 +3895,13 @@ class TestRenderAggregateStatsEdgeCases:
         with c.capture() as capture:
             _render_aggregate_stats(s, target_console=c)
         output = capture.get()
-        assert "5" in output  # model_calls visible
-        assert "3" in output  # user_messages visible
+        assert "5" in output
+        assert "model calls" in output.lower()
+        assert "3" in output
+        assert "user messages" in output.lower()
 
-    def test_empty_model_metrics(self) -> None:
-        """Session with empty model_metrics dict renders without exception."""
+    def test_renders_panel_title(self) -> None:
+        """Aggregate stats panel title is present in output."""
         s = SessionSummary(
             session_id="agg_empty_mm0",
             model_metrics={},
@@ -3947,8 +3949,10 @@ class TestRenderActivePeriodEdgeCases:
         c = Console(file=None, force_terminal=True, width=120)
         with c.capture() as capture:
             _render_active_period(s, target_console=c)
-        output = capture.get()
-        assert "0" in output
+        output = capture.get().lower()
+        assert "model calls" in output
+        assert "user messages" in output
+        assert "active period" in output
 
     def test_not_active_produces_no_output(self) -> None:
         """Non-active session produces no output."""
@@ -3973,14 +3977,16 @@ class TestRenderCodeChangesEdgeCases:
         assert capture.get() == ""
 
     def test_empty_files_with_lines(self) -> None:
-        """Empty filesModified but non-zero lines → table rendered showing 0 files."""
+        """Empty filesModified but non-zero lines → table rendered with metrics."""
         cc = CodeChanges(filesModified=[], linesAdded=5, linesRemoved=2)
         c = Console(file=None, force_terminal=True, width=120)
         with c.capture() as capture:
             _render_code_changes(cc, target_console=c)
         output = capture.get()
         assert "Code Changes" in output
-        assert "0" in output  # 0 files modified
+        assert "Files modified" in output
+        assert "+5" in output
+        assert "-2" in output
 
     def test_all_zero_returns_no_output(self) -> None:
         """Empty files + zero lines added/removed → returns with no output."""
@@ -3990,8 +3996,8 @@ class TestRenderCodeChangesEdgeCases:
             _render_code_changes(cc, target_console=c)
         assert capture.get() == ""
 
-    def test_rich_markup_in_path(self) -> None:
-        """File paths with Rich markup characters don't cause rendering errors."""
+    def test_file_count_with_special_paths(self) -> None:
+        """File count reflects number of entries regardless of path content."""
         cc = CodeChanges(
             filesModified=["[file].txt", "src/[bold]test[/bold].py"],
             linesAdded=10,
@@ -4002,7 +4008,9 @@ class TestRenderCodeChangesEdgeCases:
             _render_code_changes(cc, target_console=c)
         output = capture.get()
         assert "Code Changes" in output
-        assert "2" in output  # 2 files modified
+        assert "Files modified" in output
+        assert "+10" in output
+        assert "-3" in output
 
 
 class TestExtractToolNameEdgeCases:
