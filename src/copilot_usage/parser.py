@@ -66,7 +66,7 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
             exc,
         )
         return None
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.debug("Could not read config file {}: {}", path, exc)
         return None
 
@@ -122,27 +122,40 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
+
+    If a UTF-8 decode error occurs while reading the file, parsing stops
+    early and the events parsed so far are returned (a partial session).
     """
     events: list[SessionEvent] = []
-    with events_path.open(encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                raw = json.loads(stripped)
-            except json.JSONDecodeError:
-                logger.warning("{}:{} — malformed JSON, skipping", events_path, lineno)
-                continue
-            try:
-                events.append(SessionEvent.model_validate(raw))
-            except ValidationError as exc:
-                logger.warning(
-                    "{}:{} — validation error ({}), skipping",
-                    events_path,
-                    lineno,
-                    exc.error_count(),
-                )
+    try:
+        with events_path.open(encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    raw = json.loads(stripped)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "{}:{} — malformed JSON, skipping", events_path, lineno
+                    )
+                    continue
+                try:
+                    events.append(SessionEvent.model_validate(raw))
+                except ValidationError as exc:
+                    logger.warning(
+                        "{}:{} — validation error ({}), skipping",
+                        events_path,
+                        lineno,
+                        exc.error_count(),
+                    )
+    except UnicodeDecodeError as exc:
+        logger.warning(
+            "{} — UTF-8 decode error while reading; returning {} parsed events so far (partial session): {}",
+            events_path,
+            len(events),
+            exc,
+        )
     return events
 
 
@@ -395,8 +408,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     for events_path in paths:
         try:
             events = parse_events(events_path)
-        except OSError as exc:
-            logger.warning("Skipping vanished session {}: {}", events_path, exc)
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
         if not events:
             continue
