@@ -2887,6 +2887,8 @@ class TestHistoricalSectionResumedFreeSessions:
         output = _capture_full_summary([session])
         assert "No historical shutdown data" in output
 
+
+class TestBuildEventDetailsCatchAll:
     """Issue #230 — _build_event_details catch-all branch for event types without explicit details."""
 
     @pytest.mark.parametrize(
