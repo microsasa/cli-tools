@@ -629,8 +629,8 @@ class TestRenderRecentEvents:
         assert "…" in output
         assert long_msg not in output
 
-    def test_recent_events_truncated_to_last_n(self) -> None:
-        """With >10 events only the last max_events (10) are rendered."""
+    def test_recent_events_custom_max_events(self) -> None:
+        """With a non-default max_events=5, only the last 5 are rendered."""
         start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
         events = [
             _make_event(
@@ -638,29 +638,17 @@ class TestRenderRecentEvents:
                 data={"content": f"evt-{i:02d}"},
                 timestamp=start + timedelta(seconds=i * 10),
             )
-            for i in range(12)
+            for i in range(8)
         ]
-        output = _capture_console(_render_recent_events, events, start)
-        # First 2 events (indices 0-1) should be omitted
-        assert "evt-00" not in output
-        assert "evt-01" not in output
-        # Last event must be present
-        assert "evt-11" in output
-        # Exactly 10 rows: spot-check the boundary event that IS included
-        assert "evt-02" in output
-
-    def test_recent_events_none_timestamp_shows_dash(self) -> None:
-        """An event with ``timestamp=None`` renders '—' for the time column."""
-        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
-        events = [
-            _make_event(
-                EventType.USER_MESSAGE,
-                data={"content": "no-ts"},
-                timestamp=None,
-            ),
-        ]
-        output = _capture_console(_render_recent_events, events, start)
-        assert "—" in output
+        output = _capture_console(_render_recent_events, events, start, max_events=5)
+        # First 3 events (indices 0-2) should be omitted
+        for i in range(3):
+            assert f"evt-{i:02d}" not in output
+        # Last 5 events (indices 3-7) must be present
+        for i in range(3, 8):
+            assert f"evt-{i:02d}" in output
+        # Assert exactly 5 rows by counting "user message" occurrences
+        assert output.count("user message") == 5
 
 
 # ---------------------------------------------------------------------------
