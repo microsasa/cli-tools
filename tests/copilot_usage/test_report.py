@@ -2860,11 +2860,13 @@ class TestHistoricalSectionResumedFreeSessions:
             },
         )
         output = _capture_full_summary([session])
-        # Ensure the active section is rendered and the resumed session appears there,
-        # not just the generic panel title used for empty active sessions.
-        assert "Active Sessions" in output
-        assert "ResumedFreeSession" in output
-        assert "No active Copilot sessions found" not in output
+        # Active section table title should indicate it is scoped to the period
+        # since the last shutdown, which distinguishes it from the historical table.
+        assert "Since Last Shutdown" in output
+        # The same resumed session should appear in both the historical and active sections.
+        assert output.count("ResumedFreeSession") == 2
+        # And the generic empty-active message should not be shown.
+        assert "No active sessions" not in output
 
     def test_pure_active_session_not_in_historical(self) -> None:
         """Pure active session (is_active=True, has_shutdown_metrics=False,
