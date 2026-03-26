@@ -1497,6 +1497,131 @@ def test_interactive_loop_fallback_eof_exits_cleanly(
 
 
 # ---------------------------------------------------------------------------
+# Issue #329 — observer=None when session_path doesn't exist
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_loop_nonexistent_session_path(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Interactive loop starts cleanly when session_path doesn't exist (observer=None).
+
+    When the default session-state directory is absent the loop should
+    still show 'No sessions found' and exit cleanly on 'q'.
+    """
+    import copilot_usage.cli as cli_mod
+    import copilot_usage.parser as parser_mod
+
+    # Use a non-existent path as the default session-state directory.
+    # Monkeypatch Path.home so the derived session_path doesn't exist,
+    # and also patch parser._DEFAULT_BASE so get_all_sessions(None)
+    # doesn't discover sessions from the real home directory.
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    missing_session_state = fake_home / ".copilot" / "session-state"
+    # Intentionally do NOT create .copilot/session-state inside fake_home.
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+
+    # _start_observer should never be called when session_path.exists() is False.
+    start_observer_calls: list[Path] = []
+
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        start_observer_calls.append(session_path)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
+
+    # Track _stop_observer calls to verify it's called with None in finally.
+    stop_observer_args: list[object] = []
+
+    def _tracking_stop(observer: object) -> None:
+        stop_observer_args.append(observer)
+        _stop_observer(observer)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(cli_mod, "_stop_observer", _tracking_stop)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    # Invoke without --path so _interactive_loop uses Path.home() default.
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    output = _strip_ansi(result.output)
+    assert "No sessions" in output
+    # _start_observer was never called (session_path.exists() == False).
+    assert start_observer_calls == []
+    # _stop_observer was called with None in the finally block.
+    assert len(stop_observer_args) == 1
+    assert stop_observer_args[0] is None
+
+
+def test_interactive_loop_observer_none_no_auto_refresh(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When observer=None (session_path missing), auto-refresh is skipped
+    but the loop still processes user input normally."""
+    import copilot_usage.cli as cli_mod
+    import copilot_usage.parser as parser_mod
+
+    fake_home = tmp_path / "fake_home2"
+    fake_home.mkdir()
+    missing_session_state = fake_home / ".copilot" / "session-state"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+
+    # Track _start_observer to verify it is never called.
+    start_observer_calls: list[Path] = []
+
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        start_observer_calls.append(session_path)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
+
+    draw_home_calls: list[int] = []
+    orig_draw = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_draw(console: Console, sessions: list[Any]) -> None:
+        draw_home_calls.append(1)
+        orig_draw(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "r"  # refresh
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    # _start_observer was never called (session_path doesn't exist).
+    assert start_observer_calls == []
+    # _draw_home called at least twice: initial draw + manual refresh
+    assert len(draw_home_calls) >= 2
+
+
+# ---------------------------------------------------------------------------
 # Issue #307 — version header on initial entry to cost / detail views
 # ---------------------------------------------------------------------------
 
