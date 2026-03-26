@@ -4195,3 +4195,36 @@ class TestFilterSessionsUntilBoundary:
         )
         result = _filter_sessions([session], since=None, until=until)
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #391 — smoke test: render_session_detail re-export from report
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailReExport:
+    """Guard against regressions in the public import path after the
+    session-detail extraction into render_detail.py (issue #391)."""
+
+    def test_render_session_detail_importable_from_report(self) -> None:
+        """``from copilot_usage.report import render_session_detail`` must resolve."""
+        from copilot_usage.report import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_render_session_detail_importable_from_render_detail(self) -> None:
+        """``from copilot_usage.render_detail import render_session_detail`` must resolve."""
+        from copilot_usage.render_detail import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_both_imports_are_same_function(self) -> None:
+        """The re-exported symbol is the exact same object."""
+        from copilot_usage.render_detail import (
+            render_session_detail as detail_fn,
+        )
+        from copilot_usage.report import (
+            render_session_detail as report_fn,
+        )
+
+        assert report_fn is detail_fn
