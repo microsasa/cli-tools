@@ -4147,7 +4147,7 @@ class TestFilterSessionsExactBoundary:
 
 class TestFilterSessionsUntilBoundary:
     def test_until_date_only_includes_sessions_from_that_date(self) -> None:
-        """--until 2026-03-07 (midnight) should include a session starting at 10am."""
+        """Date-only --until 2026-03-07 (normalized to end-of-day) should include a 10am session."""
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
         end_of_day = midnight.replace(hour=23, minute=59, second=59, microsecond=999999)
         session = SessionSummary(

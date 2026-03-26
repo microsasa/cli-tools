@@ -45,7 +45,14 @@ console = Console()
 
 
 def _normalize_until(dt: datetime | None) -> datetime | None:
-    """Extend a midnight-only until timestamp to end-of-day (23:59:59.999999 UTC)."""
+    """Extend an ``--until`` timestamp at midnight to end-of-day (23:59:59.999999).
+
+    Because :class:`click.DateTime` discards the original string format, we
+    cannot distinguish ``--until 2026-03-07`` from an explicit
+    ``--until 2026-03-07T00:00:00``.  Both are treated as "include the
+    entire day" and expanded to 23:59:59.999999 in the **same timezone**
+    as the input (naive inputs are made UTC-aware via :func:`ensure_aware`).
+    """
     if dt is None:
         return None
     aware = ensure_aware(dt)
@@ -339,7 +346,7 @@ def main(ctx: click.Context, path: Path | None) -> None:
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date.",
+    help="Show sessions starting before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -440,7 +447,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date.",
+    help="Show sessions starting before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",

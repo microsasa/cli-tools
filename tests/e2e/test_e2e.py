@@ -219,6 +219,10 @@ class TestSummaryDateFilterPartialE2E:
         # All sessions from 2026-03-06 and 2026-03-07 included (7 of 9);
         # b5df (2026-03-08) and empty-session (2026-03-10) excluded.
         assert "7 sessions" in result.output
+        # 0faecbdf (15:15) is a same-day session that must be included
+        assert "0faecbdf" in result.output
+        # b5df (2026-03-08) excluded
+        assert "b5df" not in result.output
 
     def test_since_and_until_combined(self) -> None:
         """--since 2026-03-06 --until 2026-03-07 includes both days (end-of-day)."""
@@ -246,20 +250,6 @@ class TestSummaryDateFilterPartialE2E:
         )
         assert result.exit_code == 0
         assert "9 sessions" in result.output
-
-    def test_until_date_only_includes_same_day_sessions(self) -> None:
-        """--until 2026-03-07 includes sessions that started during 2026-03-07 (#345)."""
-        result = CliRunner().invoke(
-            main,
-            ["summary", "--path", str(FIXTURES), "--until", "2026-03-07"],
-        )
-        assert result.exit_code == 0
-        # 0faecbdf (15:15), 4a547040 (00:59), corrupt (08:00),
-        # multi-shutdown-completed (09:00), pure-active (09:00) are all on 2026-03-07
-        # plus 2 from 2026-03-06 = 7 total
-        assert "7 sessions" in result.output
-        # b5df (2026-03-08) excluded
-        assert "b5df" not in result.output
 
     def test_until_with_explicit_time_not_expanded(self) -> None:
         """--until 2026-03-07T09:00:00 is NOT expanded; sessions after 09:00 excluded."""
