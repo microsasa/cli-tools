@@ -4239,16 +4239,24 @@ class TestRenderSessionDetailReExport:
         import subprocess
         import sys
 
-        result = subprocess.run(  # noqa: S603
-            [
-                sys.executable,
-                "-c",
-                "from copilot_usage.render_detail import render_session_detail; "
-                "assert callable(render_session_detail)",
-            ],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603
+                [
+                    sys.executable,
+                    "-c",
+                    "from copilot_usage.render_detail import render_session_detail; "
+                    "assert callable(render_session_detail)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "Subprocess import of 'copilot_usage.render_detail' timed out; "
+                "possible circular import regression causing the child interpreter "
+                "to hang."
+            )
         assert result.returncode == 0, (
             f"Importing render_detail first failed:\n{result.stderr}"
         )
