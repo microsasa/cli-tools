@@ -40,6 +40,7 @@ from copilot_usage.report import (
     _has_active_period_stats,
     _hms,
     _render_model_table,
+    _render_recent_events,
     _render_shutdown_cycles,
     _safe_event_data,
     _shutdown_output_tokens,
@@ -627,6 +628,39 @@ class TestRenderRecentEvents:
         output = _capture_console(render_session_detail, events, summary)
         assert "…" in output
         assert long_msg not in output
+
+    def test_recent_events_truncated_to_last_n(self) -> None:
+        """With >10 events only the last max_events (10) are rendered."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": f"evt-{i:02d}"},
+                timestamp=start + timedelta(seconds=i * 10),
+            )
+            for i in range(12)
+        ]
+        output = _capture_console(_render_recent_events, events, start)
+        # First 2 events (indices 0-1) should be omitted
+        assert "evt-00" not in output
+        assert "evt-01" not in output
+        # Last event must be present
+        assert "evt-11" in output
+        # Exactly 10 rows: spot-check the boundary event that IS included
+        assert "evt-02" in output
+
+    def test_recent_events_none_timestamp_shows_dash(self) -> None:
+        """An event with ``timestamp=None`` renders '—' for the time column."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "no-ts"},
+                timestamp=None,
+            ),
+        ]
+        output = _capture_console(_render_recent_events, events, start)
+        assert "—" in output
 
 
 # ---------------------------------------------------------------------------
