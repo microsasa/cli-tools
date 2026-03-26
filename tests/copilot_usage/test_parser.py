@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import io
 import json
 import time
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ import pytest
 
 from copilot_usage.models import (
     AssistantMessageData,
+    EventType,
     GenericEventData,
     ModelMetrics,
     RequestMetrics,
@@ -506,6 +508,39 @@ class TestParseEvents:
         p.write_bytes(b"\xff\xfe\x80\x81\x82")
         events = parse_events(p)
         assert events == []
+
+    def test_unicode_decode_error_returns_partial_results(self, tmp_path: Path) -> None:
+        """Valid events before an invalid UTF-8 sequence are returned.
+
+        Python's TextIOWrapper reads in buffer-sized chunks, so the valid
+        content must exceed one buffer to guarantee the first lines are
+        yielded before the decode error fires on the next chunk.
+        """
+        p = tmp_path / "s" / "events.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        valid_line = (
+            b'{"type":"session.start","timestamp":"2026-01-01T00:00:00Z","data":{}}\n'
+        )
+        # First block: repeat valid lines enough to exceed the default read buffer.
+        first_repeat = (io.DEFAULT_BUFFER_SIZE // len(valid_line)) + 2
+        first_block = valid_line * first_repeat
+        # Second block: additional valid lines that should never be returned.
+        second_repeat = 5
+        second_block = valid_line * second_repeat
+        total_valid_lines = first_repeat + second_repeat
+        # Insert invalid UTF-8 bytes between the two valid blocks so the decode
+        # error occurs in the middle of the file, after some events were yielded.
+        invalid_bytes = b"\xff\xfe"
+        p.write_bytes(first_block + invalid_bytes + second_block)
+        result = parse_events(p)
+        # Partial parse: at least the first event must survive.
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        assert result[0].type == EventType.SESSION_START
+        # Not everything was returned (error cut parsing short in the middle).
+        assert len(result) < total_valid_lines
+        # All returned events should be from the first valid block.
+        assert len(result) <= first_repeat
 
 
 # ---------------------------------------------------------------------------
@@ -2796,6 +2831,16 @@ class TestExtractSessionName:
     def test_extract_session_name_empty_h1(self, tmp_path: Path) -> None:
         (tmp_path / "plan.md").write_text("# \n", encoding="utf-8")
         assert _extract_session_name(tmp_path) is None
+
+    def test_extract_session_name_ignores_subsequent_headings(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the first ``# `` heading is used; later headings are ignored."""
+        plan = tmp_path / "plan.md"
+        plan.write_text(
+            "# First Heading\n# Second Heading\nsome body text\n", encoding="utf-8"
+        )
+        assert _extract_session_name(tmp_path) == "First Heading"
 
 
 # ---------------------------------------------------------------------------
