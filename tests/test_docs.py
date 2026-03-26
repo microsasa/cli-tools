@@ -15,11 +15,22 @@ def test_implementation_md_has_no_line_number_citations() -> None:
 
 def _parse_pricing_table(doc: str) -> dict[str, str]:
     """Return {model_name: tier_string} from the Markdown pricing table."""
-    rows: dict[str, str] = {}
-    for m in re.finditer(
-        r"^\|\s*`([^`]+)`\s*\|[^|]+\|\s*(\w+)\s*\|",
+    # Restrict parsing to the "Model Multiplier Reference" section to avoid
+    # accidentally picking up rows from unrelated tables earlier in the doc.
+    section_match = re.search(
+        r"^##\s+Model Multiplier Reference\b.*$",
         doc,
         re.MULTILINE,
+    )
+    if section_match is not None:
+        doc = doc[section_match.end() :]
+
+    rows: dict[str, str] = {}
+    for m in re.finditer(
+        # Match model rows with known tier values only, to avoid false positives.
+        r"^\|\s*`([^`]+)`\s*\|[^|]+\|\s*(premium|standard|light|free)\s*\|",
+        doc,
+        re.MULTILINE | re.IGNORECASE,
     ):
         rows[m.group(1)] = m.group(2).lower()
     return rows
@@ -43,8 +54,18 @@ def test_pricing_table_matches_known_pricing() -> None:
 
 def test_tier_derivation_description_mentions_all_tiers() -> None:
     """The tier derivation sentence must mention all four tier names."""
+    match = re.search(
+        r"^(Tier is derived from the multiplier.+)$",
+        _IMPL_MD,
+        re.MULTILINE,
+    )
+    assert match, (
+        "Could not find the 'Tier is derived from the multiplier...' "
+        "sentence in implementation.md"
+    )
+    tier_sentence = match.group(1)
     for tier_name in ("Premium", "Free", "Light", "Standard"):
-        assert tier_name in _IMPL_MD, (
+        assert tier_name in tier_sentence, (
             f"Tier derivation description in implementation.md "
             f"does not mention '{tier_name}'"
         )
