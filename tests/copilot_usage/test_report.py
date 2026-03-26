@@ -13,6 +13,10 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
+from copilot_usage._formatting import (
+    _format_timedelta,
+    _hms,
+)
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -36,9 +40,7 @@ from copilot_usage.report import (
     _format_elapsed_since,
     _format_relative_time,
     _format_session_running_time,
-    _format_timedelta,
     _has_active_period_stats,
-    _hms,
     _render_model_table,
     _render_recent_events,
     _render_shutdown_cycles,

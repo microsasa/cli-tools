@@ -19,9 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from copilot_usage._formatting import (
-    _MAX_CONTENT_LEN as _MAX_CONTENT_LEN,  # pyright: ignore[reportPrivateUsage]
-    _format_timedelta as _format_timedelta,  # pyright: ignore[reportPrivateUsage]
-    _hms as _hms,  # pyright: ignore[reportPrivateUsage]
+    _format_timedelta,  # pyright: ignore[reportPrivateUsage]
     format_duration,
     format_tokens,
 )

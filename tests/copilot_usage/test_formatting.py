@@ -2,8 +2,11 @@
 
 # pyright: reportPrivateUsage=false
 
+import ast
+import importlib.util
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -84,18 +87,38 @@ class TestMaxContentLenSingleDefinition:
     """_MAX_CONTENT_LEN must come from a single source."""
 
     def test_max_content_len_consistent(self) -> None:
-        """Both report.py and render_detail.py use the same _MAX_CONTENT_LEN value."""
+        """_formatting.py and render_detail.py use the same _MAX_CONTENT_LEN value."""
         from copilot_usage._formatting import _MAX_CONTENT_LEN as formatting_val
         from copilot_usage.render_detail import _MAX_CONTENT_LEN as detail_val
-        from copilot_usage.report import _MAX_CONTENT_LEN as report_val
 
-        assert formatting_val == report_val == detail_val == 80
+        assert formatting_val == detail_val == 80
 
-    def test_max_content_len_is_same_object(self) -> None:
-        """All modules reference the exact same constant from _formatting."""
-        from copilot_usage._formatting import _MAX_CONTENT_LEN as formatting_val
-        from copilot_usage.render_detail import _MAX_CONTENT_LEN as detail_val
-        from copilot_usage.report import _MAX_CONTENT_LEN as report_val
-
-        assert report_val is formatting_val
-        assert detail_val is formatting_val
+    def test_max_content_len_not_redefined(self) -> None:
+        """report.py and render_detail.py must not locally assign _MAX_CONTENT_LEN."""
+        for module_name in ("copilot_usage.report", "copilot_usage.render_detail"):
+            spec = importlib.util.find_spec(module_name)
+            assert spec is not None and spec.origin is not None
+            source = Path(spec.origin).read_text()
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if (
+                            isinstance(target, ast.Name)
+                            and target.id == "_MAX_CONTENT_LEN"
+                        ):
+                            pytest.fail(
+                                f"{module_name} redefines _MAX_CONTENT_LEN "
+                                f"at line {node.lineno}; "
+                                "it must be imported from _formatting"
+                            )
+                elif (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.target.id == "_MAX_CONTENT_LEN"
+                ):
+                    pytest.fail(
+                        f"{module_name} redefines _MAX_CONTENT_LEN "
+                        f"at line {node.lineno}; "
+                        "it must be imported from _formatting"
+                    )
