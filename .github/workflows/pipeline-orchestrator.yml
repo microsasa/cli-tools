@@ -115,7 +115,7 @@ jobs:
             exit 0
           fi
 
-          # Find oldest aw-labeled issue without aw-dispatched or aw-pr-stuck:*
+          # Find oldest aw-labeled issue without aw-dispatched, agentic-workflows, or aw-protected-files
           ISSUE=$(gh api graphql -f query='
             query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
