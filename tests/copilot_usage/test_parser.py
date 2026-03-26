@@ -3387,3 +3387,126 @@ class TestThreeShutdownCyclesMergeModelMetrics:
         assert opus.usage.outputTokens == 800 + 400  # 1200
         assert opus.usage.cacheReadTokens == 200 + 80  # 280
         assert opus.usage.cacheWriteTokens == 60 + 20  # 80
+
+
+# ---------------------------------------------------------------------------
+# _read_config_model — direct unit tests for every branch
+# ---------------------------------------------------------------------------
+
+
+class TestReadConfigModel:
+    """Direct unit tests for ``_read_config_model`` covering all branches."""
+
+    def test_valid_config_returns_model_string(self, tmp_path: Path) -> None:
+        """Happy path: {"model": "claude-opus-4"} → "claude-opus-4"."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "claude-opus-4"}', encoding="utf-8")
+        assert _read_config_model(config) == "claude-opus-4"
+
+    def test_config_path_does_not_exist(self, tmp_path: Path) -> None:
+        """Non-existent config_path → None (``not path.is_file()`` branch)."""
+        config = tmp_path / "no-such-file.json"
+        assert _read_config_model(config) is None
+
+    def test_malformed_json_returns_none(self, tmp_path: Path) -> None:
+        """File with invalid JSON → None (``json.JSONDecodeError`` branch)."""
+        config = tmp_path / "config.json"
+        config.write_text("NOT JSON{{{", encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_malformed_json_emits_warning(self, tmp_path: Path) -> None:
+        """Malformed JSON → ``logger.warning`` is called."""
+        from loguru import logger
+
+        config = tmp_path / "config.json"
+        config.write_text("{broken", encoding="utf-8")
+
+        warnings: list[str] = []
+        handler_id = logger.add(
+            lambda msg: warnings.append(str(msg)),
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            _read_config_model(config)
+        finally:
+            logger.remove(handler_id)
+
+        assert len(warnings) == 1
+        assert "malformed JSON" in warnings[0]
+        assert str(config) in warnings[0]
+
+    def test_model_integer_returns_none(self, tmp_path: Path) -> None:
+        """{"model": 123} → None (``isinstance(model, str)`` guard)."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": 123}', encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_model_null_returns_none(self, tmp_path: Path) -> None:
+        """{"model": null} → None (``data.get("model")`` returns None)."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": null}', encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_model_key_absent_returns_none(self, tmp_path: Path) -> None:
+        """Key missing entirely → None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"reasoning_effort": "high"}', encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_model_boolean_returns_none(self, tmp_path: Path) -> None:
+        """{"model": true} → None (bool is not str)."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": true}', encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_oserror_returns_none(self, tmp_path: Path) -> None:
+        """OSError on read → None."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        original_read_text = Path.read_text
+
+        def _raise(self_path: Path, *a: object, **kw: object) -> str:
+            if self_path == config:
+                raise OSError("Permission denied")
+            return original_read_text(self_path, *a, **kw)  # type: ignore[arg-type]
+
+        with patch.object(Path, "read_text", new=_raise):
+            assert _read_config_model(config) is None
+
+    def test_oserror_emits_debug_log(self, tmp_path: Path) -> None:
+        """OSError → ``logger.debug`` is called."""
+        from loguru import logger
+
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        original_read_text = Path.read_text
+
+        def _raise(self_path: Path, *a: object, **kw: object) -> str:
+            if self_path == config:
+                raise OSError("Permission denied")
+            return original_read_text(self_path, *a, **kw)  # type: ignore[arg-type]
+
+        messages: list[str] = []
+        handler_id = logger.add(
+            lambda msg: messages.append(str(msg)),
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            with patch.object(Path, "read_text", new=_raise):
+                _read_config_model(config)
+        finally:
+            logger.remove(handler_id)
+
+        assert any(
+            "Could not read config file" in m and str(config) in m for m in messages
+        )
+
+    def test_unicode_decode_error_returns_none(self, tmp_path: Path) -> None:
+        """Non-UTF-8 bytes → None (``UnicodeDecodeError`` branch)."""
+        config = tmp_path / "config.json"
+        config.write_bytes(b'\xff\xfe{"model": "gpt-5.1"}')
+        assert _read_config_model(config) is None
