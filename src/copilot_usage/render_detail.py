@@ -10,7 +10,7 @@ that external callers see no change.
 
 # pyright: reportPrivateUsage=false
 # (This companion module intentionally imports package-private utilities
-# from report.py — they share a single logical namespace.)
+# from _formatting.py and report.py — they share a single logical namespace.)
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -22,6 +22,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from copilot_usage._formatting import (
+    _MAX_CONTENT_LEN,
+    _format_timedelta,
+    _hms,
+    format_duration,
+    format_tokens,
+)
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -34,10 +41,6 @@ from copilot_usage.models import (
 
 __all__ = ["render_session_detail"]
 
-# Local copy of the constant to avoid importing from report at module scope
-# (which would create a circular import: render_detail ↔ report).
-_MAX_CONTENT_LEN = 80
-
 # ---------------------------------------------------------------------------
 # Session detail helpers
 # ---------------------------------------------------------------------------
@@ -45,8 +48,6 @@ _MAX_CONTENT_LEN = 80
 
 def _format_relative_time(delta: timedelta) -> str:
     """Format a timedelta as ``+M:SS`` or ``+H:MM:SS``."""
-    from copilot_usage.report import _hms
-
     total_seconds = max(int(delta.total_seconds()), 0)
     hours, minutes, seconds = _hms(total_seconds)
     if hours:
@@ -68,8 +69,6 @@ def _format_detail_duration(
     end: datetime | None,
 ) -> str:
     """Return a human-readable duration string between two timestamps."""
-    from copilot_usage.report import _format_timedelta
-
     if start is None or end is None:
         return "—"
     return _format_timedelta(end - start)
@@ -199,11 +198,7 @@ def _render_aggregate_stats(
     target_console: Console | None = None,
 ) -> None:
     """Print aggregate stats panel (model calls, user msgs, tokens, premium)."""
-    from copilot_usage.report import (
-        _total_output_tokens,
-        format_duration,
-        format_tokens,
-    )
+    from copilot_usage.report import _total_output_tokens
 
     out = target_console or Console()
 
@@ -225,8 +220,6 @@ def _render_shutdown_cycles(
     target_console: Console | None = None,
 ) -> None:
     """Render per-shutdown-cycle table from session events."""
-    from copilot_usage.report import format_duration, format_tokens
-
     out = target_console or Console()
 
     shutdown_events: list[SessionShutdownData] = []
@@ -270,8 +263,6 @@ def _render_active_period(
     target_console: Console | None = None,
 ) -> None:
     """Show model calls / messages / tokens since last shutdown (if active)."""
-    from copilot_usage.report import format_tokens
-
     out = target_console or Console()
 
     if not summary.is_active:

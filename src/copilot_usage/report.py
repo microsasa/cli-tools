@@ -11,13 +11,20 @@ here so that external callers see no change.
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from copilot_usage._formatting import (
+    _MAX_CONTENT_LEN as _MAX_CONTENT_LEN,  # pyright: ignore[reportPrivateUsage]
+    _format_timedelta as _format_timedelta,  # pyright: ignore[reportPrivateUsage]
+    _hms as _hms,  # pyright: ignore[reportPrivateUsage]
+    format_duration,
+    format_tokens,
+)
 from copilot_usage.models import (
     EPOCH,
     ModelMetrics,
@@ -38,55 +45,10 @@ __all__ = [
     "session_display_name",
 ]
 
-_MAX_CONTENT_LEN = 80
-
 
 def session_display_name(session: SessionSummary) -> str:
     """Return session name, falling back to first 12 chars of session ID."""
     return session.name or session.session_id[:12]
-
-
-def format_tokens(n: int) -> str:
-    """Format token count with K/M suffix.
-
-    Returns ``"1.6M"`` for 1 627 935, ``"16.7K"`` for 16 655, or the
-    raw integer string for values below 1 000.
-    """
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.1f}K"
-    return str(n)
-
-
-def _hms(total_seconds: int) -> tuple[int, int, int]:
-    """Decompose *total_seconds* into ``(hours, minutes, seconds)``."""
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return hours, minutes, seconds
-
-
-def _format_timedelta(td: timedelta) -> str:
-    """Format a timedelta to human-readable duration (e.g. '1h 5m 30s')."""
-    total_seconds = max(int(td.total_seconds()), 0)
-    hours, minutes, seconds = _hms(total_seconds)
-    parts: list[str] = []
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}m")
-    if seconds or not parts:
-        parts.append(f"{seconds}s")
-    return " ".join(parts)
-
-
-def format_duration(ms: int) -> str:
-    """Format milliseconds to human-readable duration.
-
-    Returns compact strings such as ``"6m 29s"``, ``"5s"``, or
-    ``"1h 1m 1s"``.
-    """
-    return _format_timedelta(timedelta(milliseconds=ms))
 
 
 def _format_elapsed_since(start: datetime) -> str:
