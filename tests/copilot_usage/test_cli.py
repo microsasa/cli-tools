@@ -1525,11 +1525,12 @@ def test_interactive_loop_nonexistent_session_path(
 
     # _start_observer should never be called when session_path.exists() is False.
     start_observer_calls: list[Path] = []
-    orig_start = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
 
-    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
         start_observer_calls.append(session_path)
-        return orig_start(session_path, change_event)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
 
     monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
 
@@ -1579,6 +1580,17 @@ def test_interactive_loop_observer_none_no_auto_refresh(
     monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
 
+    # Track _start_observer to verify it is never called.
+    start_observer_calls: list[Path] = []
+
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        start_observer_calls.append(session_path)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
+
     draw_home_calls: list[int] = []
     orig_draw = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
 
@@ -1603,6 +1615,8 @@ def test_interactive_loop_observer_none_no_auto_refresh(
     result = runner.invoke(main, [])
 
     assert result.exit_code == 0
+    # _start_observer was never called (session_path doesn't exist).
+    assert start_observer_calls == []
     # _draw_home called at least twice: initial draw + manual refresh
     assert len(draw_home_calls) >= 2
 
