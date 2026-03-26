@@ -339,7 +339,7 @@ Premium columns show `N/A` because there's no shutdown data for the active perio
 
 `render_full_summary()` (in `report.py`) renders two distinct sections:
 
-1. **Historical Data** (`_render_historical_section` in `report.py`): Sessions with shutdown data. Includes sessions where `total_premium_requests > 0`, OR sessions that are **not** active, OR sessions that have `has_shutdown_metrics` (indicating recorded shutdown cycles).
+1. **Historical Data** (`_render_historical_section` in `report.py`): Sessions with shutdown data. Includes sessions where `total_premium_requests > 0`, OR sessions that are **not** active, OR sessions that have `has_shutdown_metrics` (indicating non-empty shutdown model_metrics).
 2. **Active Sessions** (`_render_active_section` in `report.py`): Sessions where `is_active == True`. Shows `active_model_calls`, `active_user_messages`, `active_output_tokens`, and running time.
 
 Resumed sessions appear in **both** sections — historical section for their shutdown data, active section for their post-shutdown activity.
