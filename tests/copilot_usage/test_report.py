@@ -4138,3 +4138,32 @@ class TestFilterSessionsExactBoundary:
         s = SessionSummary(session_id="s", start_time=t)
         result = _filter_sessions([s], since=t, until=t)
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #345 — _filter_sessions until date-only boundary
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsUntilBoundary:
+    def test_until_date_only_includes_sessions_from_that_date(self) -> None:
+        """Date-only --until 2026-03-07 (normalized to end-of-day) should include a 10am session."""
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        end_of_day = midnight.replace(hour=23, minute=59, second=59, microsecond=999999)
+        session = SessionSummary(
+            session_id="test",
+            start_time=datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC),
+        )
+        # After normalization until = end-of-day
+        result = _filter_sessions([session], since=None, until=end_of_day)
+        assert len(result) == 1
+
+    def test_until_exact_timestamp_excludes_session_after(self) -> None:
+        """--until 2026-03-07T10:00:00 should exclude a session starting at 11am."""
+        until = datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC)
+        session = SessionSummary(
+            session_id="test",
+            start_time=datetime(2026, 3, 7, 11, 0, 0, tzinfo=UTC),
+        )
+        result = _filter_sessions([session], since=None, until=until)
+        assert len(result) == 0

@@ -14,6 +14,7 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _normalize_until,  # pyright: ignore[reportPrivateUsage]
     _print_version_header,  # pyright: ignore[reportPrivateUsage]
     _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
     _render_session_list,  # pyright: ignore[reportPrivateUsage]
@@ -1998,3 +1999,81 @@ class TestRenderSessionList:
         output = capture.get()
 
         assert "Sessions" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #345 — --until date-only normalization
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUntil:
+    """Verify _normalize_until extends midnight to end-of-day."""
+
+    def test_none_returns_none(self) -> None:
+        assert _normalize_until(None) is None
+
+    def test_midnight_becomes_end_of_day(self) -> None:
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        result = _normalize_until(midnight)
+        assert result is not None
+        assert result.hour == 23
+        assert result.minute == 59
+        assert result.second == 59
+        assert result.microsecond == 999999
+        assert result.date() == midnight.date()
+
+    def test_non_midnight_unchanged(self) -> None:
+        dt = datetime(2026, 3, 7, 10, 30, 0, tzinfo=UTC)
+        result = _normalize_until(dt)
+        assert result == dt
+
+    def test_naive_midnight_becomes_aware_end_of_day(self) -> None:
+        naive = datetime(2026, 3, 7, 0, 0, 0)
+        result = _normalize_until(naive)
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.hour == 23
+
+
+class TestSummaryUntilDateOnly:
+    """CLI-level test: summary --until date-only includes sessions from that date."""
+
+    def test_summary_until_date_only_includes_same_day(self, tmp_path: Path) -> None:
+        """--until 2026-03-07 includes a session starting at 10am on 2026-03-07."""
+        _write_session(
+            tmp_path,
+            "aaaa1111-0000-0000-0000-000000000000",
+            name="MorningSess",
+            start_time="2026-03-07T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["summary", "--path", str(tmp_path), "--until", "2026-03-07"]
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Morning" in output
+        assert "1 session" in output
+
+    def test_summary_until_iso_datetime_not_normalized(self, tmp_path: Path) -> None:
+        """--until with explicit time is not expanded to end-of-day."""
+        _write_session(
+            tmp_path,
+            "bbbb2222-0000-0000-0000-000000000000",
+            name="AfterCutoff",
+            start_time="2026-03-07T11:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "summary",
+                "--path",
+                str(tmp_path),
+                "--until",
+                "2026-03-07T10:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "No sessions" in output
