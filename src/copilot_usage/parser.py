@@ -127,9 +127,10 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
     early and the events parsed so far are returned (a partial session).
 
     Raises:
-        OSError: If the file cannot be opened (e.g., deleted between
-            discovery and parsing). UnicodeDecodeError is caught
-            internally; callers only need to handle OSError.
+        OSError: If the file cannot be opened or read (e.g., deleted
+            between discovery and parsing, or I/O error while streaming).
+            UnicodeDecodeError is caught internally; callers only need to
+            handle OSError.
     """
     events: list[SessionEvent] = []
     try:
