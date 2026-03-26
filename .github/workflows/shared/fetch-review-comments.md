@@ -30,8 +30,6 @@ steps:
           query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
             repository(owner: $owner, name: $repo) {
               pullRequest(number: $pr) {
-                title
-                body
                 reviewThreads(first: 100, after: $cursor) {
                   pageInfo {
                     hasNextPage
@@ -106,8 +104,8 @@ never reliably returns review comment data. Pre-fetching via `gh api` in a workf
 
 ### Output Files
 
-- `/tmp/gh-aw/review-data/threads.json` — Full GraphQL response with all review threads
-- `/tmp/gh-aw/review-data/unresolved-threads.json` — Filtered to unresolved threads only
+- `/tmp/gh-aw/review-data/threads.json` — All review threads (paginated, reconstructed wrapper)
+- `/tmp/gh-aw/review-data/unresolved-threads.json` — Filtered to unresolved threads only (agent reads this)
 
 ### Usage
 
