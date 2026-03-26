@@ -52,15 +52,8 @@ def session_display_name(session: SessionSummary) -> str:
 def format_tokens(n: int) -> str:
     """Format token count with K/M suffix.
 
-    Examples:
-        >>> format_tokens(1627935)
-        '1.6M'
-        >>> format_tokens(16655)
-        '16.7K'
-        >>> format_tokens(500)
-        '500'
-        >>> format_tokens(0)
-        '0'
+    Returns ``"1.6M"`` for 1 627 935, ``"16.7K"`` for 16 655, or the
+    raw integer string for values below 1 000.
     """
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
@@ -93,15 +86,8 @@ def _format_timedelta(td: timedelta) -> str:
 def format_duration(ms: int) -> str:
     """Format milliseconds to human-readable duration.
 
-    Examples:
-        >>> format_duration(389114)
-        '6m 29s'
-        >>> format_duration(5000)
-        '5s'
-        >>> format_duration(0)
-        '0s'
-        >>> format_duration(3661000)
-        '1h 1m 1s'
+    Returns compact strings such as ``"6m 29s"``, ``"5s"``, or
+    ``"1h 1m 1s"``.
     """
     return _format_timedelta(timedelta(milliseconds=ms))
 
@@ -857,9 +843,9 @@ def _render_session_table(
 
 def render_summary(
     sessions: list[SessionSummary],
+    *,
     since: datetime | None = None,
     until: datetime | None = None,
-    *,
     target_console: Console | None = None,
 ) -> None:
     """Render the full summary report to the terminal using Rich.
