@@ -40,6 +40,7 @@ from copilot_usage.report import (
     _has_active_period_stats,
     _hms,
     _render_model_table,
+    _render_recent_events,
     _render_shutdown_cycles,
     _safe_event_data,
     _shutdown_output_tokens,
@@ -627,6 +628,27 @@ class TestRenderRecentEvents:
         output = _capture_console(render_session_detail, events, summary)
         assert "…" in output
         assert long_msg not in output
+
+    def test_recent_events_custom_max_events(self) -> None:
+        """With a non-default max_events=5, only the last 5 are rendered."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": f"evt-{i:02d}"},
+                timestamp=start + timedelta(seconds=i * 10),
+            )
+            for i in range(8)
+        ]
+        output = _capture_console(_render_recent_events, events, start, max_events=5)
+        # First 3 events (indices 0-2) should be omitted
+        for i in range(3):
+            assert f"evt-{i:02d}" not in output
+        # Last 5 events (indices 3-7) must be present
+        for i in range(3, 8):
+            assert f"evt-{i:02d}" in output
+        # Assert exactly 5 rows by counting "user message" occurrences
+        assert output.count("user message") == 5
 
 
 # ---------------------------------------------------------------------------
