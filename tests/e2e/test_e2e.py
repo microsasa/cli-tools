@@ -210,17 +210,18 @@ class TestSummaryDateFilterPartialE2E:
         assert "3 sessions" in result.output
 
     def test_until_excludes_later_sessions(self) -> None:
-        """--until 2026-03-07 keeps only sessions starting on or before that date."""
+        """--until 2026-03-07 keeps sessions starting on or before that date (end-of-day)."""
         result = CliRunner().invoke(
             main,
             ["summary", "--path", str(FIXTURES), "--until", "2026-03-07"],
         )
         assert result.exit_code == 0
-        # multi-shutdown-resumed (2026-03-06) + resumed-session (2026-03-06)
-        assert "2 sessions" in result.output
+        # All sessions from 2026-03-06 and 2026-03-07 included (7 of 9);
+        # b5df (2026-03-08) and empty-session (2026-03-10) excluded.
+        assert "7 sessions" in result.output
 
     def test_since_and_until_combined(self) -> None:
-        """--since 2026-03-06 --until 2026-03-07 narrows to the same 2 sessions."""
+        """--since 2026-03-06 --until 2026-03-07 includes both days (end-of-day)."""
         result = CliRunner().invoke(
             main,
             [
@@ -234,8 +235,8 @@ class TestSummaryDateFilterPartialE2E:
             ],
         )
         assert result.exit_code == 0
-        assert "2 sessions" in result.output
-        assert "18 premium requests" in result.output
+        assert "7 sessions" in result.output
+        assert "539 premium requests" in result.output
 
     def test_summary_date_filter_includes_all(self) -> None:
         """--since far in the past includes all sessions."""
@@ -245,6 +246,36 @@ class TestSummaryDateFilterPartialE2E:
         )
         assert result.exit_code == 0
         assert "9 sessions" in result.output
+
+    def test_until_date_only_includes_same_day_sessions(self) -> None:
+        """--until 2026-03-07 includes sessions that started during 2026-03-07 (#345)."""
+        result = CliRunner().invoke(
+            main,
+            ["summary", "--path", str(FIXTURES), "--until", "2026-03-07"],
+        )
+        assert result.exit_code == 0
+        # 0faecbdf (15:15), 4a547040 (00:59), corrupt (08:00),
+        # multi-shutdown-completed (09:00), pure-active (09:00) are all on 2026-03-07
+        # plus 2 from 2026-03-06 = 7 total
+        assert "7 sessions" in result.output
+        # b5df (2026-03-08) excluded
+        assert "b5df" not in result.output
+
+    def test_until_with_explicit_time_not_expanded(self) -> None:
+        """--until 2026-03-07T09:00:00 is NOT expanded; sessions after 09:00 excluded."""
+        result = CliRunner().invoke(
+            main,
+            [
+                "summary",
+                "--path",
+                str(FIXTURES),
+                "--until",
+                "2026-03-07T09:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        # 0faecbdf (15:15) starts after 09:00, so excluded
+        assert "0faecbdf" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -635,27 +666,24 @@ class TestCostDateFilterE2E:
         assert premium_cost_col == "288"
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
-        """--until 2026-03-07 limits cost view to sessions before 2026-03-07 (up to 2026-03-07 00:00)."""
+        """--until 2026-03-07 includes sessions through end-of-day 2026-03-07."""
         result = CliRunner().invoke(
             main, ["cost", "--path", str(FIXTURES), "--until", "2026-03-07"]
         )
         assert result.exit_code == 0
-        # Only sessions from 2026-03-06 (multi-shutdown-resumed, resumed-session),
-        # i.e. those starting before 2026-03-07 00:00, should contribute to the Grand Total.
+        # Sessions from 2026-03-06 and 2026-03-07 are included;
+        # b5df (2026-03-08) and empty-session (2026-03-10) are excluded.
         assert "resumed-sess" in result.output
         assert "multi-shutdo" in result.output
-        # Sessions on or after 2026-03-07 should not appear
         assert "b5df" not in result.output
         assert "empty-sess" not in result.output
         assert "Grand Total" in result.output
-        # Verify the Grand Total premium cost column equals the expected value.
-        # multi-shutdown-resumed (8) + resumed-session (10) = 18
         grand_total_line = next(
             line for line in result.output.splitlines() if "Grand Total" in line
         )
         columns = [c.strip() for c in grand_total_line.split("│")]
         premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
-        assert premium_cost_col == "18"
+        assert premium_cost_col == "537"
 
     def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
         """--since after --until emits a warning and shows no sessions."""
