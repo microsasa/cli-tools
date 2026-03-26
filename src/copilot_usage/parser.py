@@ -125,6 +125,12 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 
     If a UTF-8 decode error occurs while reading the file, parsing stops
     early and the events parsed so far are returned (a partial session).
+
+    Raises:
+        OSError: If the file cannot be opened or read (e.g., deleted
+            between discovery and parsing, or I/O error while streaming).
+            UnicodeDecodeError is caught internally; callers only need to
+            handle OSError.
     """
     events: list[SessionEvent] = []
     try:
@@ -408,7 +414,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     for events_path in paths:
         try:
             events = parse_events(events_path)
-        except (OSError, UnicodeDecodeError) as exc:
+        except OSError as exc:
             logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
         if not events:
