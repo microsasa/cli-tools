@@ -4195,3 +4195,68 @@ class TestFilterSessionsUntilBoundary:
         )
         result = _filter_sessions([session], since=None, until=until)
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #391 — smoke test: render_session_detail re-export from report
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailReExport:
+    """Guard against regressions in the public import path after the
+    session-detail extraction into render_detail.py (issue #391)."""
+
+    def test_render_session_detail_importable_from_report(self) -> None:
+        """``from copilot_usage.report import render_session_detail`` must resolve."""
+        from copilot_usage.report import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_render_session_detail_importable_from_render_detail(self) -> None:
+        """``from copilot_usage.render_detail import render_session_detail`` must resolve."""
+        from copilot_usage.render_detail import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_both_imports_are_same_function(self) -> None:
+        """The re-exported symbol is the exact same object."""
+        from copilot_usage.render_detail import (
+            render_session_detail as detail_fn,
+        )
+        from copilot_usage.report import (
+            render_session_detail as report_fn,
+        )
+
+        assert report_fn is detail_fn
+
+    def test_render_detail_importable_first_in_fresh_process(self) -> None:
+        """Importing render_detail first in a clean interpreter must not fail.
+
+        This catches circular-import regressions that in-process imports
+        miss because ``copilot_usage.report`` is already cached in
+        ``sys.modules`` by earlier tests.
+        """
+        import subprocess
+        import sys
+
+        try:
+            result = subprocess.run(  # noqa: S603
+                [
+                    sys.executable,
+                    "-c",
+                    "from copilot_usage.render_detail import render_session_detail; "
+                    "assert callable(render_session_detail)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "Subprocess import of 'copilot_usage.render_detail' timed out; "
+                "possible circular import regression causing the child interpreter "
+                "to hang."
+            )
+        assert result.returncode == 0, (
+            f"Importing render_detail first failed:\n{result.stderr}"
+        )
