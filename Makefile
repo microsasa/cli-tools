@@ -18,10 +18,9 @@ else
   TEST_FLAGS := --cov --cov-fail-under=80 -q --no-header
 endif
 
-## Show available targets
-help:
+help: ## Show available targets
 	@printf "\n$(BOLD)$(CYAN)Available targets:$(RESET)\n\n"
-	@grep -E '^[a-zA-Z0-9_-]+:.* ## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.* ## "}; {printf "  $(GREEN)%-14s$(RESET) %s\n", $$1, $$2}'
+	@grep -h -E '^[a-zA-Z0-9_-]+:.* ## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.* ## "}; {printf "  $(GREEN)%-14s$(RESET) %s\n", $$1, $$2}'
 	@printf "\n  Use $(BOLD)V=1$(RESET) for verbose output (e.g. $(CYAN)make check V=1$(RESET))\n\n"
 
 # All checks (mirrors CI — run before pushing a PR)
