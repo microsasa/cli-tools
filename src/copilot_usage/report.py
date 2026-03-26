@@ -895,8 +895,9 @@ def _render_historical_section(
     # Include all completed (non-active) sessions so they are never silently
     # invisible.  Previously, zero-metrics completed sessions were excluded,
     # causing a count mismatch with ``render_summary()``.
-    # Also include resumed sessions (is_active + has_shutdown_metrics) that
-    # used only free-tier models (total_premium_requests == 0).
+    # Also include any session with shutdown model_metrics
+    # (has_shutdown_metrics), which covers resumed sessions that used only
+    # free-tier models (total_premium_requests == 0).
     historical = [
         s
         for s in sessions
