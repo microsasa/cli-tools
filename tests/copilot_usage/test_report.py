@@ -40,6 +40,7 @@ from copilot_usage.report import (
     _has_active_period_stats,
     _hms,
     _render_model_table,
+    _render_recent_events,
     _render_shutdown_cycles,
     _safe_event_data,
     _shutdown_output_tokens,
@@ -628,6 +629,27 @@ class TestRenderRecentEvents:
         assert "…" in output
         assert long_msg not in output
 
+    def test_recent_events_custom_max_events(self) -> None:
+        """With a non-default max_events=5, only the last 5 are rendered."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": f"evt-{i:02d}"},
+                timestamp=start + timedelta(seconds=i * 10),
+            )
+            for i in range(8)
+        ]
+        output = _capture_console(_render_recent_events, events, start, max_events=5)
+        # First 3 events (indices 0-2) should be omitted
+        for i in range(3):
+            assert f"evt-{i:02d}" not in output
+        # Last 5 events (indices 3-7) must be present
+        for i in range(3, 8):
+            assert f"evt-{i:02d}" in output
+        # Assert exactly 5 rows by counting "user message" occurrences
+        assert output.count("user message") == 5
+
 
 # ---------------------------------------------------------------------------
 # Tests — render_session_detail
@@ -1043,6 +1065,12 @@ class TestRenderSummary:
         s = _make_summary_session(start_time=datetime(2026, 3, 7, tzinfo=UTC))
         output = _capture_summary([s])
         assert output.count("2026-03-07") >= 2  # appears in both ends of range
+
+    def test_render_summary_rejects_positional_since(self) -> None:
+        """render_summary requires since/until as keyword-only arguments."""
+        sessions: list[SessionSummary] = []
+        with pytest.raises(TypeError):
+            render_summary(sessions, datetime.now(tz=UTC))  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -4138,3 +4166,97 @@ class TestFilterSessionsExactBoundary:
         s = SessionSummary(session_id="s", start_time=t)
         result = _filter_sessions([s], since=t, until=t)
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #345 — _filter_sessions until date-only boundary
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsUntilBoundary:
+    def test_until_date_only_includes_sessions_from_that_date(self) -> None:
+        """Date-only --until 2026-03-07 (normalized to end-of-day) should include a 10am session."""
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        end_of_day = midnight.replace(hour=23, minute=59, second=59, microsecond=999999)
+        session = SessionSummary(
+            session_id="test",
+            start_time=datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC),
+        )
+        # After normalization until = end-of-day
+        result = _filter_sessions([session], since=None, until=end_of_day)
+        assert len(result) == 1
+
+    def test_until_exact_timestamp_excludes_session_after(self) -> None:
+        """--until 2026-03-07T10:00:00 should exclude a session starting at 11am."""
+        until = datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC)
+        session = SessionSummary(
+            session_id="test",
+            start_time=datetime(2026, 3, 7, 11, 0, 0, tzinfo=UTC),
+        )
+        result = _filter_sessions([session], since=None, until=until)
+        assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #391 — smoke test: render_session_detail re-export from report
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailReExport:
+    """Guard against regressions in the public import path after the
+    session-detail extraction into render_detail.py (issue #391)."""
+
+    def test_render_session_detail_importable_from_report(self) -> None:
+        """``from copilot_usage.report import render_session_detail`` must resolve."""
+        from copilot_usage.report import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_render_session_detail_importable_from_render_detail(self) -> None:
+        """``from copilot_usage.render_detail import render_session_detail`` must resolve."""
+        from copilot_usage.render_detail import render_session_detail
+
+        assert callable(render_session_detail)
+
+    def test_both_imports_are_same_function(self) -> None:
+        """The re-exported symbol is the exact same object."""
+        from copilot_usage.render_detail import (
+            render_session_detail as detail_fn,
+        )
+        from copilot_usage.report import (
+            render_session_detail as report_fn,
+        )
+
+        assert report_fn is detail_fn
+
+    def test_render_detail_importable_first_in_fresh_process(self) -> None:
+        """Importing render_detail first in a clean interpreter must not fail.
+
+        This catches circular-import regressions that in-process imports
+        miss because ``copilot_usage.report`` is already cached in
+        ``sys.modules`` by earlier tests.
+        """
+        import subprocess
+        import sys
+
+        try:
+            result = subprocess.run(  # noqa: S603
+                [
+                    sys.executable,
+                    "-c",
+                    "from copilot_usage.render_detail import render_session_detail; "
+                    "assert callable(render_session_detail)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "Subprocess import of 'copilot_usage.render_detail' timed out; "
+                "possible circular import regression causing the child interpreter "
+                "to hang."
+            )
+        assert result.returncode == 0, (
+            f"Importing render_detail first failed:\n{result.stderr}"
+        )

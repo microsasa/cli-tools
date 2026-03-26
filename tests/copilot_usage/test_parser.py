@@ -1818,6 +1818,32 @@ class TestBuildSessionSummaryEdgeCases:
         summary = build_session_summary(events)
         assert summary.model == "gpt-4"
 
+    def test_ev_currentModel_takes_priority_over_data_currentModel(
+        self, tmp_path: Path
+    ) -> None:
+        """Top-level ev.currentModel wins over data.currentModel."""
+        shutdown_ev = json.dumps(
+            {
+                "type": "session.shutdown",
+                "currentModel": "claude-opus-4.6",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 100,
+                    "sessionStartTime": 0,
+                    "currentModel": "claude-sonnet-4",
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, shutdown_ev)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.model == "claude-opus-4.6"
+
     def test_assistant_message_without_output_tokens(self, tmp_path: Path) -> None:
         msg_no_tokens = json.dumps(
             {

@@ -8,7 +8,7 @@ import select
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -21,7 +21,7 @@ from watchdog.events import FileSystemEventHandler  # type: ignore[import-untype
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from copilot_usage import __version__
-from copilot_usage.models import SessionSummary, ensure_aware_opt
+from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
 from copilot_usage.parser import (
     build_session_summary,
     discover_sessions,
@@ -42,6 +42,23 @@ type _View = Literal["home", "detail", "cost"]
 _DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
 
 console = Console()
+
+
+def _normalize_until(dt: datetime | None) -> datetime | None:
+    """Extend an ``--until`` timestamp at midnight to end-of-day (23:59:59.999999).
+
+    Because :class:`click.DateTime` discards the original string format, we
+    cannot distinguish ``--until 2026-03-07`` from an explicit
+    ``--until 2026-03-07T00:00:00``.  Both are treated as "include the
+    entire day" and expanded to 23:59:59.999999 in the **same timezone**
+    as the input (naive inputs are made UTC-aware via :func:`ensure_aware`).
+    """
+    if dt is None:
+        return None
+    aware = ensure_aware(dt)
+    if aware.time() == dt_time(0, 0, 0):
+        return aware.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return aware
 
 
 def _print_version_header(target: Console | None = None) -> None:
@@ -323,13 +340,13 @@ def main(ctx: click.Context, path: Path | None) -> None:
     "--since",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting after this date.",
+    help="Show sessions starting on or after this date.",
 )
 @click.option(
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date.",
+    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -353,7 +370,7 @@ def summary(
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
     render_summary(
-        sessions, since=ensure_aware_opt(since), until=ensure_aware_opt(until)
+        sessions, since=ensure_aware_opt(since), until=_normalize_until(until)
     )
 
 
@@ -424,13 +441,13 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     "--since",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting after this date.",
+    help="Show sessions starting on or after this date.",
 )
 @click.option(
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date.",
+    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -457,7 +474,7 @@ def cost(
     render_cost_view(
         sessions,
         since=ensure_aware_opt(since),
-        until=ensure_aware_opt(until),
+        until=_normalize_until(until),
     )
 
 

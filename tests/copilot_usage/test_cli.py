@@ -14,6 +14,7 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from copilot_usage.cli import (
+    _normalize_until,  # pyright: ignore[reportPrivateUsage]
     _print_version_header,  # pyright: ignore[reportPrivateUsage]
     _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
     _render_session_list,  # pyright: ignore[reportPrivateUsage]
@@ -1497,6 +1498,131 @@ def test_interactive_loop_fallback_eof_exits_cleanly(
 
 
 # ---------------------------------------------------------------------------
+# Issue #329 — observer=None when session_path doesn't exist
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_loop_nonexistent_session_path(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Interactive loop starts cleanly when session_path doesn't exist (observer=None).
+
+    When the default session-state directory is absent the loop should
+    still show 'No sessions found' and exit cleanly on 'q'.
+    """
+    import copilot_usage.cli as cli_mod
+    import copilot_usage.parser as parser_mod
+
+    # Use a non-existent path as the default session-state directory.
+    # Monkeypatch Path.home so the derived session_path doesn't exist,
+    # and also patch parser._DEFAULT_BASE so get_all_sessions(None)
+    # doesn't discover sessions from the real home directory.
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    missing_session_state = fake_home / ".copilot" / "session-state"
+    # Intentionally do NOT create .copilot/session-state inside fake_home.
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+
+    # _start_observer should never be called when session_path.exists() is False.
+    start_observer_calls: list[Path] = []
+
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        start_observer_calls.append(session_path)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
+
+    # Track _stop_observer calls to verify it's called with None in finally.
+    stop_observer_args: list[object] = []
+
+    def _tracking_stop(observer: object) -> None:
+        stop_observer_args.append(observer)
+        _stop_observer(observer)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(cli_mod, "_stop_observer", _tracking_stop)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    # Invoke without --path so _interactive_loop uses Path.home() default.
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    output = _strip_ansi(result.output)
+    assert "No sessions" in output
+    # _start_observer was never called (session_path.exists() == False).
+    assert start_observer_calls == []
+    # _stop_observer was called with None in the finally block.
+    assert len(stop_observer_args) == 1
+    assert stop_observer_args[0] is None
+
+
+def test_interactive_loop_observer_none_no_auto_refresh(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When observer=None (session_path missing), auto-refresh is skipped
+    but the loop still processes user input normally."""
+    import copilot_usage.cli as cli_mod
+    import copilot_usage.parser as parser_mod
+
+    fake_home = tmp_path / "fake_home2"
+    fake_home.mkdir()
+    missing_session_state = fake_home / ".copilot" / "session-state"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+
+    # Track _start_observer to verify it is never called.
+    start_observer_calls: list[Path] = []
+
+    def _tracking_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        start_observer_calls.append(session_path)
+        raise AssertionError(
+            "_start_observer should not be called when session_path does not exist"
+        )
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
+
+    draw_home_calls: list[int] = []
+    orig_draw = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_draw(console: Console, sessions: list[Any]) -> None:
+        draw_home_calls.append(1)
+        orig_draw(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "r"  # refresh
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    # _start_observer was never called (session_path doesn't exist).
+    assert start_observer_calls == []
+    # _draw_home called at least twice: initial draw + manual refresh
+    assert len(draw_home_calls) >= 2
+
+
+# ---------------------------------------------------------------------------
 # Issue #307 — version header on initial entry to cost / detail views
 # ---------------------------------------------------------------------------
 
@@ -1873,3 +1999,81 @@ class TestRenderSessionList:
         output = capture.get()
 
         assert "Sessions" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #345 — --until date-only normalization
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUntil:
+    """Verify _normalize_until extends midnight to end-of-day."""
+
+    def test_none_returns_none(self) -> None:
+        assert _normalize_until(None) is None
+
+    def test_midnight_becomes_end_of_day(self) -> None:
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        result = _normalize_until(midnight)
+        assert result is not None
+        assert result.hour == 23
+        assert result.minute == 59
+        assert result.second == 59
+        assert result.microsecond == 999999
+        assert result.date() == midnight.date()
+
+    def test_non_midnight_unchanged(self) -> None:
+        dt = datetime(2026, 3, 7, 10, 30, 0, tzinfo=UTC)
+        result = _normalize_until(dt)
+        assert result == dt
+
+    def test_naive_midnight_becomes_aware_end_of_day(self) -> None:
+        naive = datetime(2026, 3, 7, 0, 0, 0)
+        result = _normalize_until(naive)
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.hour == 23
+
+
+class TestSummaryUntilDateOnly:
+    """CLI-level test: summary --until date-only includes sessions from that date."""
+
+    def test_summary_until_date_only_includes_same_day(self, tmp_path: Path) -> None:
+        """--until 2026-03-07 includes a session starting at 10am on 2026-03-07."""
+        _write_session(
+            tmp_path,
+            "aaaa1111-0000-0000-0000-000000000000",
+            name="MorningSess",
+            start_time="2026-03-07T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["summary", "--path", str(tmp_path), "--until", "2026-03-07"]
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Morning" in output
+        assert "1 session" in output
+
+    def test_summary_until_iso_datetime_not_normalized(self, tmp_path: Path) -> None:
+        """--until with explicit time is not expanded to end-of-day."""
+        _write_session(
+            tmp_path,
+            "bbbb2222-0000-0000-0000-000000000000",
+            name="AfterCutoff",
+            start_time="2026-03-07T11:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "summary",
+                "--path",
+                str(tmp_path),
+                "--until",
+                "2026-03-07T10:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "No sessions" in output
