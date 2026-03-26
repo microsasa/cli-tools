@@ -2809,7 +2809,78 @@ class TestHistoricalSectionZeroPremiumWithMetrics:
         assert "FreeModelSession" in output
 
 
-class TestBuildEventDetailsCatchAll:
+class TestHistoricalSectionResumedFreeSessions:
+    """Issue #377 — resumed sessions with 0 premium requests and has_shutdown_metrics."""
+
+    def test_resumed_free_session_appears_in_historical(self) -> None:
+        """Resumed session (is_active=True, has_shutdown_metrics=True, total_premium_requests=0)
+        must appear in the historical section."""
+        session = SessionSummary(
+            session_id="resumed-free-model-1234",
+            name="ResumedFreeSession",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=0,
+            user_messages=10,
+            model_calls=20,
+            active_model_calls=3,
+            active_output_tokens=500,
+            model_metrics={
+                "gpt-5-mini": ModelMetrics(
+                    requests=RequestMetrics(count=17, cost=0),
+                    usage=TokenUsage(outputTokens=8000),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Historical Totals" in output
+        assert "ResumedFreeSession" in output
+
+    def test_resumed_free_session_appears_in_active_section(self) -> None:
+        """Same resumed session must also appear in the active section."""
+        session = SessionSummary(
+            session_id="resumed-free-model-1234",
+            name="ResumedFreeSession",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=0,
+            user_messages=10,
+            model_calls=20,
+            active_model_calls=3,
+            active_output_tokens=500,
+            model_metrics={
+                "gpt-5-mini": ModelMetrics(
+                    requests=RequestMetrics(count=17, cost=0),
+                    usage=TokenUsage(outputTokens=8000),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+
+    def test_pure_active_session_not_in_historical(self) -> None:
+        """Pure active session (is_active=True, has_shutdown_metrics=False,
+        total_premium_requests=0) must NOT appear in the historical section."""
+        session = SessionSummary(
+            session_id="pure-active-1234",
+            name="PureActiveSession",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            total_premium_requests=0,
+            user_messages=2,
+            model_calls=1,
+            active_model_calls=1,
+            active_output_tokens=100,
+        )
+        output = _capture_full_summary([session])
+        assert "No historical shutdown data" in output
+
     """Issue #230 — _build_event_details catch-all branch for event types without explicit details."""
 
     @pytest.mark.parametrize(
