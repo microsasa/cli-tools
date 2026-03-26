@@ -507,6 +507,15 @@ class TestParseEvents:
         events = parse_events(p)
         assert events == []
 
+    def test_parse_events_never_raises_unicode_decode_error(
+        self, tmp_path: Path
+    ) -> None:
+        """parse_events catches UnicodeDecodeError internally — never propagates it."""
+        bad = tmp_path / "events.jsonl"
+        bad.write_bytes(b"\xff\xfe\x80\x81\n")
+        result = parse_events(bad)  # must not raise
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — completed session
