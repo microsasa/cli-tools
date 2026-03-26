@@ -4228,3 +4228,27 @@ class TestRenderSessionDetailReExport:
         )
 
         assert report_fn is detail_fn
+
+    def test_render_detail_importable_first_in_fresh_process(self) -> None:
+        """Importing render_detail first in a clean interpreter must not fail.
+
+        This catches circular-import regressions that in-process imports
+        miss because ``copilot_usage.report`` is already cached in
+        ``sys.modules`` by earlier tests.
+        """
+        import subprocess
+        import sys
+
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-c",
+                "from copilot_usage.render_detail import render_session_detail; "
+                "assert callable(render_session_detail)",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"Importing render_detail first failed:\n{result.stderr}"
+        )
