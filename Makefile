@@ -1,4 +1,5 @@
-.PHONY: check fix lint typecheck security test test-unit test-e2e
+.PHONY: help check fix lint typecheck security test test-unit test-e2e
+.DEFAULT_GOAL := help
 
 # Colors and symbols
 GREEN  := \033[0;32m
@@ -17,8 +18,14 @@ else
   TEST_FLAGS := --cov --cov-fail-under=80 -q --no-header
 endif
 
+## Show available targets
+help:
+	@printf "\n$(BOLD)$(CYAN)Available targets:$(RESET)\n\n"
+	@grep -E '^[a-zA-Z0-9_-]+:.* ## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.* ## "}; {printf "  $(GREEN)%-14s$(RESET) %s\n", $$1, $$2}'
+	@printf "\n  Use $(BOLD)V=1$(RESET) for verbose output (e.g. $(CYAN)make check V=1$(RESET))\n\n"
+
 # All checks (mirrors CI — run before pushing a PR)
-check:
+check: ## Run all checks (lint + typecheck + security + test)
 	@printf "\n$(BOLD)$(CYAN)🔍 Running all checks...$(RESET)\n"
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory typecheck
@@ -27,23 +34,23 @@ check:
 	@printf "\n$(BOLD)$(CYAN)🎉 All checks passed!$(RESET)\n\n"
 
 # Lint (includes format check)
-lint:
+lint: ## Lint and format check (ruff)
 	@printf "\n$(BOLD)$(CYAN)🧹 Linting...$(RESET)\n"
 	@uv run ruff check . $(QUIET) && printf "  $(GREEN)✅ ruff lint$(RESET)\n" || { printf "  $(RED)❌ ruff lint$(RESET)\n"; exit 1; }
 	@uv run ruff format --check . $(QUIET) && printf "  $(GREEN)✅ ruff format$(RESET)\n" || { printf "  $(RED)❌ ruff format$(RESET)\n"; exit 1; }
 
 # Type checking
-typecheck:
+typecheck: ## Type check (pyright)
 	@printf "\n$(BOLD)$(CYAN)🔬 Type checking...$(RESET)\n"
 	@uv run pyright $(QUIET) && printf "  $(GREEN)✅ pyright$(RESET)\n" || { printf "  $(RED)❌ pyright$(RESET)\n"; exit 1; }
 
 # Security scan
-security:
+security: ## Security scan (bandit)
 	@printf "\n$(BOLD)$(CYAN)🛡️  Security scan...$(RESET)\n"
 	@uv run bandit -r src/ -q $(QUIET) && printf "  $(GREEN)✅ bandit$(RESET)\n" || { printf "  $(RED)❌ bandit$(RESET)\n"; exit 1; }
 
 # Tests with coverage
-test:
+test: ## Run unit + e2e tests with coverage
 	@printf "\n$(BOLD)$(CYAN)🧪 Testing...$(RESET)\n"
 	@COV=$$(uv run pytest tests/copilot_usage $(TEST_FLAGS) 2>&1); \
 		if [ $$? -eq 0 ]; then \
@@ -61,17 +68,17 @@ test:
 		fi
 
 # Run only unit tests
-test-unit:
+test-unit: ## Run unit tests only (verbose)
 	@printf "\n$(BOLD)$(CYAN)🧪 Unit tests...$(RESET)\n"
 	@uv run pytest tests/copilot_usage -v --cov --cov-fail-under=80
 
 # Run only e2e tests
-test-e2e:
+test-e2e: ## Run e2e tests only (verbose)
 	@printf "\n$(BOLD)$(CYAN)🧪 E2E tests...$(RESET)\n"
 	@uv run pytest tests/e2e -v
 
 # Auto-fix
-fix:
+fix: ## Auto-fix lint and format issues
 	@printf "\n$(BOLD)$(CYAN)🔧 Auto-fixing...$(RESET)\n"
 	@uv run ruff check --fix . 2>/dev/null; uv run ruff format . $(QUIET)
 	@printf "  $(GREEN)✅ ruff fix + format$(RESET)\n"
