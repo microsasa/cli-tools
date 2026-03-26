@@ -425,11 +425,12 @@ From `pricing.py` — `_RAW_MULTIPLIERS` dict:
 | `gpt-5.3-codex`        | 1×         | Standard |
 | `gpt-5.1-codex-max`    | 1×         | Standard |
 | `gpt-5.1-codex-mini`   | 0.33×      | Light    |
-| `gpt-5-mini`           | 0×         | Light    |
-| `gpt-4.1`              | 0×         | Light    |
+| `gpt-5.4-mini`         | 0×         | Free     |
+| `gpt-5-mini`           | 0×         | Free     |
+| `gpt-4.1`              | 0×         | Free     |
 | `gemini-3-pro-preview` | 1×         | Standard |
 
-Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, <1.0 → Light, otherwise Standard.
+Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, = 0.0 → Free, < 1.0 → Light, otherwise Standard.
 
 **Important:** `pricing.py` is **reference data only**. The multipliers are not used in any runtime calculations — premium request counts come exclusively from `session.shutdown` events. The pricing module exists for `categorize_model()` (tier lookup) and potential future use.
 
