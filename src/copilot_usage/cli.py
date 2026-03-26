@@ -340,13 +340,13 @@ def main(ctx: click.Context, path: Path | None) -> None:
     "--since",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting after this date.",
+    help="Show sessions starting on or after this date.",
 )
 @click.option(
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date (midnight values are expanded to end-of-day).",
+    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -441,13 +441,13 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     "--since",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting after this date.",
+    help="Show sessions starting on or after this date.",
 )
 @click.option(
     "--until",
     type=click.DateTime(formats=_DATE_FORMATS),
     default=None,
-    help="Show sessions starting before this date (midnight values are expanded to end-of-day).",
+    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
