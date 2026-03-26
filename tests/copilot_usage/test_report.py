@@ -1066,6 +1066,12 @@ class TestRenderSummary:
         output = _capture_summary([s])
         assert output.count("2026-03-07") >= 2  # appears in both ends of range
 
+    def test_render_summary_rejects_positional_since(self) -> None:
+        """render_summary requires since/until as keyword-only arguments."""
+        sessions: list[SessionSummary] = []
+        with pytest.raises(TypeError):
+            render_summary(sessions, datetime.now(tz=UTC))  # type: ignore[misc]
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — report.py
