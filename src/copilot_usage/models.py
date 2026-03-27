@@ -25,7 +25,14 @@ EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
 
 
 def ensure_aware(dt: datetime) -> datetime:
-    """Attach UTC timezone to a naive datetime."""
+    """Attach UTC timezone to a naive datetime.
+
+    .. warning::
+        Assumes the input is already expressed in UTC. No timezone
+        conversion is performed — only the ``tzinfo`` flag is set.
+        Passing a naive datetime in a non-UTC local timezone will
+        produce a silently incorrect result.
+    """
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
