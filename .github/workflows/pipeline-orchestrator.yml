@@ -262,17 +262,14 @@ jobs:
               echo "  ✅ Resolved $ADDRESSED_COUNT thread(s)."
             fi
 
-            # Dispatch responder for unaddressed threads
+            # Dispatch responder for unaddressed threads (don't skip CI handling)
+            RESPONDER_DISPATCHED=""
             if [[ "$UNADDRESSED_COUNT" -gt 0 ]]; then
               # Check if a responder is already running
               RESP_RUNNING=$(gh run list --workflow=review-responder.lock.yml --json databaseId,status 2>/dev/null | jq -r '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length' 2>/dev/null || echo "1")
               if [[ "$RESP_RUNNING" -gt 0 ]]; then
                 echo "  ⏳ PR #${PR}: Responder already in flight. Skipping dispatch."
-                echo "::endgroup::"
-                continue
-              fi
-
-              if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
+              elif [[ -n "$HAS_RESPONSE_LABEL" ]]; then
                 # Count review-response-N labels for round tracking
                 ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
 
@@ -287,13 +284,13 @@ jobs:
                   gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"
                   echo "  📤 Dispatching responder for PR #${PR}."
                   gh workflow run review-responder.lock.yml -f pr_number="$PR"
+                  RESPONDER_DISPATCHED="yes"
                 fi
               else
                 echo "  📤 PR #${PR}: $UNADDRESSED_COUNT unaddressed threads. Dispatching responder."
                 gh workflow run review-responder.lock.yml -f pr_number="$PR"
+                RESPONDER_DISPATCHED="yes"
               fi
-              echo "::endgroup::"
-              continue
             fi
 
             # --- Step 2: CI failing ---
@@ -320,14 +317,30 @@ jobs:
                   NOW_EPOCH=$(date +%s)
                   AGE_MINUTES=$(( (NOW_EPOCH - COMMIT_EPOCH) / 60 ))
                   if [[ "$AGE_MINUTES" -ge 5 ]]; then
-                    echo "  🔄 PR #${PR}: CI is UNKNOWN and commit is ${AGE_MINUTES}m old. Re-triggering CI."
-                    gh workflow run ci.yml -f ref="$BRANCH"
+                    # Check if we already re-triggered CI recently (within last 30 min)
+                    RECENT_CI=$(gh run list --workflow=ci.yml --branch="$BRANCH" --limit 1 --json createdAt,event --jq '
+                      [.[] | select(.event == "workflow_dispatch") | select(
+                        (now - (.createdAt | fromdateiso8601)) < 1800
+                      )] | length' 2>/dev/null || echo "0")
+                    if [[ "$RECENT_CI" -eq 0 ]]; then
+                      echo "  🔄 PR #${PR}: CI is UNKNOWN and commit is ${AGE_MINUTES}m old. Re-triggering CI."
+                      gh workflow run ci.yml -f ref="$BRANCH"
+                    else
+                      echo "  ⏳ PR #${PR}: CI is UNKNOWN — already re-triggered recently. Waiting."
+                    fi
                     echo "::endgroup::"
                     continue
                   fi
                 fi
               fi
               echo "  ⏳ PR #${PR}: CI status is $CI_CONCLUSION. Waiting."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # --- Skip quality gate if threads still need work ---
+            if [[ "$UNADDRESSED_COUNT" -gt 0 || -n "$RESPONDER_DISPATCHED" ]]; then
+              echo "  ⏳ PR #${PR}: Threads still need attention. Skipping quality gate."
               echo "::endgroup::"
               continue
             fi
