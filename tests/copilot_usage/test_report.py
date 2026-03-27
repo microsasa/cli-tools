@@ -3936,16 +3936,25 @@ class TestCostViewModelCallsShutdownOnly:
             for line in lines
             if "claude-sonnet-4" in line and "Since last shutdown" not in line
         )
-        # Should show shutdown-only calls (7), not total (10)
-        assert " 7 " in model_row
+        # Cost view columns: | Session | Model | Requests | Premium Cost | Model Calls | Output Tokens |
+        model_cols = [c.strip() for c in model_row.split("│")]
+        assert model_cols[5] == "7", (
+            f"Model Calls column should be shutdown-only (7), got '{model_cols[5]}'"
+        )
 
         # Find the ↳ row
         since_row = next(line for line in lines if "Since last shutdown" in line)
-        assert " 3 " in since_row
+        since_cols = [c.strip() for c in since_row.split("│")]
+        assert since_cols[5] == "3", (
+            f"Model Calls column in ↳ row should be 3, got '{since_cols[5]}'"
+        )
 
         # Grand total row shows full session total (10)
         grand_row = next(line for line in lines if "Grand Total" in line)
-        assert " 10 " in grand_row
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[5] == "10", (
+            f"Model Calls column in Grand Total should be 10, got '{grand_cols[5]}'"
+        )
 
     def test_completed_session_unchanged(self) -> None:
         """Non-resumed session (active_model_calls=0) shows full model_calls."""
@@ -3971,10 +3980,17 @@ class TestCostViewModelCallsShutdownOnly:
         model_row = next(
             line for line in lines if "gpt-4" in line and "Grand Total" not in line
         )
-        assert " 10 " in model_row
+        # Cost view columns: | Session | Model | Requests | Premium Cost | Model Calls | Output Tokens |
+        model_cols = [c.strip() for c in model_row.split("│")]
+        assert model_cols[5] == "10", (
+            f"Model Calls column should be 10, got '{model_cols[5]}'"
+        )
 
         grand_row = next(line for line in lines if "Grand Total" in line)
-        assert " 10 " in grand_row
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[5] == "10", (
+            f"Model Calls column in Grand Total should be 10, got '{grand_cols[5]}'"
+        )
 
 
 # ---------------------------------------------------------------------------
