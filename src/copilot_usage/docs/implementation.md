@@ -74,6 +74,7 @@ Typed dispatch happens in `SessionEvent.parse_data()` (in `models.py`) via `matc
 | `model_calls`            | `int`                       | Count of `assistant.turn_start` events across entire session                        |
 | `user_messages`          | `int`                       | Count of `user.message` events across entire session                                |
 | `is_active`              | `bool`                      | `True` if no shutdowns, or if events exist after last shutdown                      |
+| `has_shutdown_metrics`   | `bool`                      | `True` when at least one shutdown event produced non-empty `modelMetrics`; set to `bool(merged_metrics)` after merging all shutdowns |
 | `last_resume_time`       | `datetime \| None`           | Timestamp of `session.resume` event (if any, after last shutdown)                   |
 | `events_path`            | `Path \| None`               | Set by `get_all_sessions()` after building — not from events                        |
 | `active_model_calls`     | `int`                       | `assistant.turn_start` count after last shutdown (resumed sessions only)            |
@@ -114,26 +115,13 @@ for _idx, sd, _m in all_shutdowns:
 
 ### Model metrics merging
 
-When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field (in `parser.py`):
+When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field. The merging is delegated to `merge_model_metrics()` (in `models.py`):
 
 ```python
-if model_name in merged_metrics:
-    existing = merged_metrics[model_name]
-    merged_metrics[model_name] = ModelMetrics(
-        requests=RequestMetrics(
-            count=existing.requests.count + metrics.requests.count,
-            cost=existing.requests.cost + metrics.requests.cost,
-        ),
-        usage=TokenUsage(
-            inputTokens=existing.usage.inputTokens + metrics.usage.inputTokens,
-            outputTokens=existing.usage.outputTokens + metrics.usage.outputTokens,
-            cacheReadTokens=existing.usage.cacheReadTokens + metrics.usage.cacheReadTokens,
-            cacheWriteTokens=existing.usage.cacheWriteTokens + metrics.usage.cacheWriteTokens,
-        ),
-    )
+merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
 ```
 
-When they reference **different models**, separate entries are kept in the `merged_metrics` dict.
+`merge_model_metrics()` returns a new dict without mutating the inputs. For each model name present in both dicts, it sums all metric fields (`requests.count`, `requests.cost`, and all `TokenUsage` fields). When they reference **different models**, separate entries are kept in the result dict.
 
 ### Model resolution for shutdowns
 
@@ -159,11 +147,11 @@ The model name for a shutdown is resolved in priority order (in `parser.py`):
 After collecting all shutdowns, `build_session_summary()` scans events after the last shutdown index (in `parser.py`):
 
 ```python
-_RESUME_INDICATOR_TYPES: set[str] = {
+_RESUME_INDICATOR_TYPES: frozenset[str] = frozenset({
     EventType.SESSION_RESUME,
     EventType.USER_MESSAGE,
     EventType.ASSISTANT_MESSAGE,
-}
+})
 
 last_shutdown_idx = all_shutdowns[-1][0] if all_shutdowns else -1
 
@@ -319,21 +307,23 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active (resumed) sessions, an extra row is appended (in `report.py`):
+For active sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate:
 
 ```python
 if s.is_active:
+    cost_stats = _effective_stats(s)
+    est = _estimate_premium_cost(s.model, cost_stats.model_calls)
     table.add_row(
         "  ↳ Since last shutdown",
         s.model or "—",
-        "N/A",          # no premium requests available
-        "N/A",          # no premium cost available
-        str(s.active_model_calls),
-        format_tokens(s.active_output_tokens),
+        "N/A",                         # Requests — no shutdown data
+        est,                           # Premium Cost — "~N" estimate
+        str(cost_stats.model_calls),
+        format_tokens(cost_stats.output_tokens),
     )
 ```
 
-Premium columns show `N/A` because there's no shutdown data for the active period.
+The Requests column shows `N/A` because there's no shutdown data for the active period. The Premium Cost column shows an estimate (e.g. `~3`) derived from `_estimate_premium_cost()`, which multiplies the model's pricing multiplier by the number of model calls. If the model is `None`, the Premium Cost column shows `"—"` instead.
 
 ### Historical vs active sections in full summary
 
