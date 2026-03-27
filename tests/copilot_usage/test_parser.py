@@ -1750,9 +1750,12 @@ class TestSessionEventParseData:
 
 class TestBuildSessionSummaryEdgeCases:
     def test_empty_events(self) -> None:
+        """Empty events → active SessionSummary with empty session_id (documented edge case)."""
         summary = build_session_summary([])
-        assert summary.session_id == ""
         assert summary.is_active is True
+        assert summary.session_id == ""
+        assert summary.model_calls == 0
+        assert summary.user_messages == 0
 
     def test_no_session_dir(self, tmp_path: Path) -> None:
         events, _ = _completed_events(tmp_path)

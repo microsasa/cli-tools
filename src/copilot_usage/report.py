@@ -45,8 +45,8 @@ __all__ = [
 
 
 def session_display_name(session: SessionSummary) -> str:
-    """Return session name, falling back to first 12 chars of session ID."""
-    return session.name or session.session_id[:12]
+    """Return session name, falling back to first 12 chars of ID, then "(no id)"."""
+    return session.name or session.session_id[:12] or "(no id)"
 
 
 def _format_elapsed_since(start: datetime) -> str:

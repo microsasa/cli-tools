@@ -167,12 +167,10 @@ def test_summary_with_since(tmp_path: Path) -> None:
 def test_session_command(tmp_path: Path) -> None:
     _write_session(tmp_path, "dddd4444-0000-0000-0000-000000000000", name="Detail")
     runner = CliRunner()
-    # Patch discover_sessions to use our tmp_path
-    result = runner.invoke(main, ["session", "dddd4444"])
-    # Will fail with "no session" because it looks in default path; test error path
-    assert (
-        result.exit_code != 0 or "dddd4444" in result.output or "Error" in result.output
-    )
+    result = runner.invoke(main, ["session", "dddd4444", "--path", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "Session Detail" in result.output
+    assert "dddd4444" in result.output
 
 
 def test_session_not_found(tmp_path: Path) -> None:
