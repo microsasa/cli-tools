@@ -2287,6 +2287,15 @@ class TestEstimatePremiumCost:
     def test_zero_calls_returns_zero(self) -> None:
         assert _estimate_premium_cost("claude-sonnet-4", 0) == "~0"
 
+    def test_mixed_case_model_uses_correct_multiplier(self) -> None:
+        """_estimate_premium_cost with mixed-case model name uses actual tier multiplier.
+
+        claude-opus-4.6 has multiplier 3.0; mixed-case resolves correctly after
+        normalization (issue #431).
+        """
+        result = _estimate_premium_cost("Claude-Opus-4.6", 10)
+        assert result == "~30"
+
 
 class TestRenderFullSummaryHelperReuse:
     """Verify _render_historical_section delegates to shared table helpers."""

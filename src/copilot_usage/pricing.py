@@ -108,6 +108,14 @@ KNOWN_PRICING: Final[dict[str, ModelPricing]] = {
 def lookup_model_pricing(model_name: str) -> ModelPricing:
     """Return ``ModelPricing`` for *model_name*.
 
+    The input is normalized to lowercase with surrounding whitespace stripped
+    before any comparison, so ``"Claude-Opus-4.6"`` and ``"claude-opus-4.6 "``
+    resolve identically to ``"claude-opus-4.6"``.
+
+    The returned :class:`ModelPricing` always uses this normalized value for
+    ``model_name`` (including for partial matches and unknown models), so the
+    original input casing and surrounding whitespace are not preserved.
+
     Resolution order:
 
     1. Exact match in ``KNOWN_PRICING``.
@@ -116,23 +124,35 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
     3. Fallback — returns a 1× standard entry and emits a
        :class:`UserWarning`.
     """
+    normalized = model_name.lower().strip()
+
+    if not normalized:
+        warnings.warn(
+            "Empty model name; assuming 1× standard pricing.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return ModelPricing(
+            model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
+        )
+
     # 1. Exact
-    if model_name in KNOWN_PRICING:
-        return KNOWN_PRICING[model_name]
+    if normalized in KNOWN_PRICING:
+        return KNOWN_PRICING[normalized]
 
     # 2. Partial (longest matching key wins to avoid false positives)
     best: ModelPricing | None = None
     best_len = 0
     for key, pricing in KNOWN_PRICING.items():
-        if model_name.startswith(key) or key.startswith(model_name):
-            match_len = min(len(key), len(model_name))
+        if normalized.startswith(key) or key.startswith(normalized):
+            match_len = min(len(key), len(normalized))
             if match_len > best_len:
                 best = pricing
                 best_len = match_len
 
     if best is not None:
         return ModelPricing(
-            model_name=model_name,
+            model_name=normalized,
             multiplier=best.multiplier,
             tier=best.tier,
         )
@@ -144,5 +164,5 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
         stacklevel=2,
     )
     return ModelPricing(
-        model_name=model_name, multiplier=1.0, tier=PricingTier.STANDARD
+        model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
     )
