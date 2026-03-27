@@ -1527,7 +1527,7 @@ def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) 
 
     def _crashing_prompt(prompt: str) -> None:
         prompt_call_count[0] += 1
-        # Fail on the best-effort prompt write (4th call: initial + crash-handler)
+        # Fail on the first best-effort prompt write (2nd call: initial + crash-handler)
         if prompt_call_count[0] == 2:
             raise OSError("prompt write failure")
         orig_write_prompt(prompt)

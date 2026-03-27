@@ -260,8 +260,10 @@ def _interactive_loop(path: Path | None) -> None:
                     try:
                         prompt = _HOME_PROMPT if view == "home" else _BACK_PROMPT
                         _write_prompt(prompt)
-                    except Exception:
-                        logger.debug("Best-effort prompt write also failed")
+                    except Exception as exc:
+                        logger.opt(exception=exc).debug(
+                            "Best-effort prompt write also failed"
+                        )
 
             # Non-blocking stdin read
             try:
