@@ -78,9 +78,9 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
     in the Premium Cost column.  This test prevents future drift on that detail.
     """
     # Extract the section starting from the "↳ Since last shutdown" heading/rows
-    # up to the next heading (##).
+    # up to the next heading (## or deeper).
     match = re.search(
-        r"(### .↳ Since last shutdown.+?)(?=\n###?\s|\Z)",
+        r"(##+\s.*↳ Since last shutdown.+?)(?=\n##+\s|\Z)",
         _IMPL_MD,
         re.DOTALL,
     )

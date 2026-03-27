@@ -307,7 +307,7 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active (resumed) sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests):
+For active sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests):
 
 ```python
 if s.is_active:
