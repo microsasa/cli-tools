@@ -357,6 +357,38 @@ def test_session_prefix_match(tmp_path: Path, monkeypatch: Any) -> None:
     assert "iiii9999" in result.output
 
 
+def test_session_prefix_collision_returns_newest_by_mtime(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When two sessions share the same prefix, the newest by mtime is returned.
+
+    This documents the intentional 'first discovered wins' contract.
+    If ambiguity-detection logic is ever added, this test must be updated.
+    """
+    older_uuid = "ab111111-0000-0000-0000-000000000000"
+    newer_uuid = "ab222222-0000-0000-0000-000000000000"
+    older_dir = _write_session(tmp_path, older_uuid, name="OlderSession")
+    newer_dir = _write_session(tmp_path, newer_uuid, name="NewerSession")
+
+    # Set explicit mtimes so the newer session sorts first even on filesystems
+    # with coarse mtime resolution (avoids CI flakiness).
+    os.utime(older_dir / "events.jsonl", (1_000_000, 1_000_000))
+    os.utime(newer_dir / "events.jsonl", (2_000_000, 2_000_000))
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        paths = list(tmp_path.glob("*/events.jsonl"))
+        return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "ab"])  # ambiguous prefix
+    assert result.exit_code == 0
+    # Newest match is returned — not an error, not a list of alternatives
+    assert "ab222222" in result.output
+    assert "ab111111" not in result.output
+
+
 def test_session_shows_available_on_miss(tmp_path: Path, monkeypatch: Any) -> None:
     """Test that session command shows available IDs when no match found."""
     _write_session(tmp_path, "jjjj0000-0000-0000-0000-000000000000", name="Exists")
@@ -2557,6 +2589,28 @@ class TestNormalizeUntil:
         assert result is not None
         assert result.tzinfo is not None
         assert result.hour == 23
+
+
+class TestNormalizeUntilNonUtcTimezone:
+    """_normalize_until preserves non-UTC timezone offsets when expanding midnight."""
+
+    def test_aware_midnight_non_utc_expanded_in_same_tz(self) -> None:
+        tz_plus5 = timezone(timedelta(hours=5))
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=tz_plus5)
+        result = _normalize_until(midnight)
+        assert result is not None
+        assert result.tzinfo == tz_plus5
+        assert result.hour == 23
+        assert result.minute == 59
+        assert result.second == 59
+        assert result.microsecond == 999999
+        assert result.date() == midnight.date()
+
+    def test_aware_non_midnight_non_utc_unchanged(self) -> None:
+        tz_minus8 = timezone(timedelta(hours=-8))
+        dt = datetime(2026, 3, 7, 14, 30, 0, tzinfo=tz_minus8)
+        result = _normalize_until(dt)
+        assert result == dt
 
 
 class TestSummaryUntilDateOnly:
