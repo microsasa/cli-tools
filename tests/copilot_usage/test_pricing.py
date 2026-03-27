@@ -340,6 +340,10 @@ class TestLookupModelPricingCaseNormalization:
 
     def test_mixed_case_partial_match(self) -> None:
         """Partial match works with mixed-case input."""
-        p = lookup_model_pricing("Claude-Opus-4.6-1M")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            # Use a name that normalizes to a non-exact key but shares a known prefix.
+            p = lookup_model_pricing("Claude-Opus-4.6-1M-EXTRA")
+        assert len(caught) == 0
         assert p.multiplier == 6.0
         assert p.tier == PricingTier.PREMIUM
