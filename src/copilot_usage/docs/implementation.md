@@ -307,10 +307,10 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate:
+For active sessions **with shutdown metrics** (i.e., sessions where `has_shutdown_metrics=True`), an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate. Pure-active sessions (never shut down) do **not** get this sub-row because there is no shutdown baseline to compare against:
 
 ```python
-if s.is_active:
+if s.is_active and s.has_shutdown_metrics:
     cost_stats = _effective_stats(s)
     est = _estimate_premium_cost(s.model, cost_stats.model_calls)
     table.add_row(
