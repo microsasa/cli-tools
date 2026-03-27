@@ -170,6 +170,7 @@ jobs:
                     mergeStateStatus
                     labels(first: 100) { nodes { name } }
                     commits(last: 1) { nodes { commit {
+                      committedDate
                       statusCheckRollup { state contexts(first: 30) { nodes {
                         ... on CheckRun { name conclusion status }
                       }}}
@@ -221,28 +222,7 @@ jobs:
 
             echo "  Branch: $BRANCH | CI: $CI_CONCLUSION"
 
-            # --- Step 1: CI failing ---
-            if [[ "$CI_CONCLUSION" == "FAILURE" || "$CI_CONCLUSION" == "failure" ]]; then
-              if [[ -n "$HAS_CI_FIX_LABEL" ]]; then
-                echo "  ❌ PR #${PR}: CI still failing after ci-fixer. Marking stuck."
-                gh pr edit "$PR" --add-label "aw-pr-stuck:ci"
-                gh pr comment "$PR" --body "❌ Pipeline orchestrator: CI still failing after ci-fixer attempt. Marking as stuck for human review."
-              else
-                echo "  🔧 PR #${PR}: CI failing. Dispatching ci-fixer."
-                gh workflow run ci-fixer.lock.yml -f pr_number="$PR"
-              fi
-              echo "::endgroup::"
-              continue
-            fi
-
-            # --- Step 2: CI still running or unknown ---
-            if [[ "$CI_CONCLUSION" != "SUCCESS" && "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "NEUTRAL" && "$CI_CONCLUSION" != "neutral" ]]; then
-              echo "  ⏳ PR #${PR}: CI status is $CI_CONCLUSION. Waiting."
-              echo "::endgroup::"
-              continue
-            fi
-
-            # --- Step 3: CI passed — check review threads ---
+            # --- Step 1: Check review threads (independent of CI) ---
             THREADS=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.reviewThreads.nodes')
 
             UNRESOLVED_COUNT=$(echo "$THREADS" | jq -r '[.[] | select(.isResolved == false)] | length')
@@ -316,9 +296,45 @@ jobs:
               continue
             fi
 
+            # --- Step 2: CI failing ---
+            if [[ "$CI_CONCLUSION" == "FAILURE" || "$CI_CONCLUSION" == "failure" ]]; then
+              if [[ -n "$HAS_CI_FIX_LABEL" ]]; then
+                echo "  ❌ PR #${PR}: CI still failing after ci-fixer. Marking stuck."
+                gh pr edit "$PR" --add-label "aw-pr-stuck:ci"
+                gh pr comment "$PR" --body "❌ Pipeline orchestrator: CI still failing after ci-fixer attempt. Marking as stuck for human review."
+              else
+                echo "  🔧 PR #${PR}: CI failing. Dispatching ci-fixer."
+                gh workflow run ci-fixer.lock.yml -f pr_number="$PR"
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+
+            # --- Step 3: CI still running or unknown — re-trigger if stale ---
+            if [[ "$CI_CONCLUSION" != "SUCCESS" && "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "NEUTRAL" && "$CI_CONCLUSION" != "neutral" ]]; then
+              # If CI is UNKNOWN, check if the commit is old enough to re-trigger
+              if [[ "$CI_CONCLUSION" == "UNKNOWN" ]]; then
+                COMMIT_DATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.commits.nodes[0].commit.committedDate // empty')
+                if [[ -n "$COMMIT_DATE" ]]; then
+                  COMMIT_EPOCH=$(date -d "$COMMIT_DATE" +%s 2>/dev/null || echo "0")
+                  NOW_EPOCH=$(date +%s)
+                  AGE_MINUTES=$(( (NOW_EPOCH - COMMIT_EPOCH) / 60 ))
+                  if [[ "$AGE_MINUTES" -ge 5 ]]; then
+                    echo "  🔄 PR #${PR}: CI is UNKNOWN and commit is ${AGE_MINUTES}m old. Re-triggering CI."
+                    gh workflow run ci.yml -f ref="$BRANCH"
+                    echo "::endgroup::"
+                    continue
+                  fi
+                fi
+              fi
+              echo "  ⏳ PR #${PR}: CI status is $CI_CONCLUSION. Waiting."
+              echo "::endgroup::"
+              continue
+            fi
+
             echo "  ✅ PR #${PR}: All threads resolved, CI passing."
 
-            # --- Step 3.5: Skip quality gate if PR needs rebase ---
+            # --- Step 4: Skip quality gate if PR needs rebase ---
             MERGE_STATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.mergeStateStatus')
             if [[ "$MERGE_STATE" == "BEHIND" || "$MERGE_STATE" == "DIRTY" ]]; then
               echo "  ⏳ PR #${PR}: PR is $MERGE_STATE — rebase needed before quality gate. Skipping."
@@ -326,7 +342,7 @@ jobs:
               continue
             fi
 
-            # --- Step 4: Dispatch quality gate if ready ---
+            # --- Step 5: Dispatch quality gate if ready ---
             # Check 1: Has Copilot reviewed the current head commit?
             HAS_COPILOT_REVIEW=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
               [.data.repository.pullRequest.latestReviews.nodes[]
