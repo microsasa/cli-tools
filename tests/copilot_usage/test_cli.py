@@ -989,6 +989,24 @@ def test_interactive_refresh_uppercase(tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_interactive_session_index_zero(tmp_path: Path) -> None:
+    """Session index 0 is out of range and prints 'Invalid session number: 0'."""
+    _write_session(tmp_path, "idx00000-0000-0000-0000-000000000000", name="IdxZero")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="0\nq\n")
+    assert result.exit_code == 0
+    assert "Invalid session number: 0" in _strip_ansi(result.output)
+
+
+def test_interactive_session_index_negative(tmp_path: Path) -> None:
+    """Negative session index prints 'Invalid session number: -1'."""
+    _write_session(tmp_path, "idx_neg0-0000-0000-0000-000000000000", name="IdxNeg")
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)], input="-1\nq\n")
+    assert result.exit_code == 0
+    assert "Invalid session number: -1" in _strip_ansi(result.output)
+
+
 # 3. _show_session_by_index with events_path=None ----------------------------
 
 
@@ -1213,6 +1231,71 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
     assert result.exit_code == 0
     # _show_session_by_index called at least twice: initial '1' + auto-refresh
     assert len(show_detail_calls) >= 2
+
+
+def test_auto_refresh_detail_idx_none(tmp_path: Path, monkeypatch: Any) -> None:
+    """Auto-refresh after returning from detail view does not re-render detail.
+
+    When the user leaves detail view, detail_idx resets to None and view
+    changes to "home".  A subsequent auto-refresh must call _draw_home —
+    NOT _show_session_by_index — verifying the ``detail_idx is not None``
+    guard in the auto-refresh branch.
+    """
+    _write_session(tmp_path, "ar_dxn0-0000-0000-0000-000000000000", name="AutoDxNone")
+
+    import copilot_usage.cli as cli_mod
+
+    show_detail_calls: list[int] = []
+    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_show(*args: Any, **kwargs: Any) -> None:
+        show_detail_calls.append(1)
+        orig_show(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "_show_session_by_index", _tracking_show)
+
+    draw_home_calls: list[int] = []
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
+        draw_home_calls.append(1)
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw_home)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "1"  # enter detail view (detail_idx = 1)
+        if call_count == 2:
+            return ""  # go back → view="home", detail_idx=None
+        if call_count == 3:
+            # Trigger auto-refresh while detail_idx is None
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # _show_session_by_index called once (entering detail view), NOT during refresh
+    assert len(show_detail_calls) == 1
+    # _draw_home called for: initial render + going-back render + auto-refresh
+    assert len(draw_home_calls) >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -1738,6 +1821,98 @@ def test_session_prefilter_non_uuid_dirs_always_parsed(
     result = runner.invoke(main, ["session", "corrupt0"])
     assert result.exit_code == 0
     assert "corrupt0" in result.output
+
+
+def test_session_command_one_char_prefix_skips_prefilter(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A 1-character prefix bypasses the pre-filter and parses all sessions."""
+    uuids = [
+        "a1111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "a2222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "b3333333-cccc-cccc-cccc-cccccccccccc",
+    ]
+    for uid in uuids:
+        _write_session(tmp_path, uid, use_full_uuid_dir=True)
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        # Non-matching dir first to prove prefilter was skipped
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.parent.name,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+
+    parse_calls: list[Path] = []
+    original_parse = __import__(
+        "copilot_usage.parser", fromlist=["parse_events"]
+    ).parse_events
+
+    def _tracking_parse(events_path: Path) -> list[Any]:
+        parse_calls.append(events_path)
+        return original_parse(events_path)
+
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
+
+    runner = CliRunner()
+    # "a" is only 1 char — pre-filter must NOT skip anything
+    result = runner.invoke(main, ["session", "a"])
+    assert result.exit_code == 0
+
+    # Non-matching b3333… was parsed (no pre-filter applied)
+    parsed_dirs = {p.parent.name for p in parse_calls}
+    assert "b3333333-cccc-cccc-cccc-cccccccccccc" in parsed_dirs
+
+    # First match in discovery order (reverse-alpha: a2222222 before a1111111)
+    assert "a2222222" in result.output
+
+
+def test_session_command_three_char_prefix_skips_prefilter(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A 3-character prefix that matches nothing shows 'no session matching' + Available."""
+    uuids = [
+        "aa111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "bb222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    ]
+    for uid in uuids:
+        _write_session(tmp_path, uid, use_full_uuid_dir=True)
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.parent.name,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+
+    parse_calls: list[Path] = []
+    original_parse = __import__(
+        "copilot_usage.parser", fromlist=["parse_events"]
+    ).parse_events
+
+    def _tracking_parse(events_path: Path) -> list[Any]:
+        parse_calls.append(events_path)
+        return original_parse(events_path)
+
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
+
+    runner = CliRunner()
+    # "iii" is 3 chars and matches nothing — all sessions parsed, error shown
+    result = runner.invoke(main, ["session", "iii"])
+    assert result.exit_code == 1
+
+    # Pre-filter was skipped: both UUID dirs were fully parsed
+    assert len(parse_calls) == 2
+    parsed_dirs = {p.parent.name for p in parse_calls}
+    assert "aa111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in parsed_dirs
+    assert "bb222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in parsed_dirs
+
+    # Error + Available list
+    assert "no session matching" in result.output
+    assert "Available" in result.output
 
 
 # ---------------------------------------------------------------------------
