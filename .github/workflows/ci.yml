@@ -3,11 +3,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Git ref (branch or SHA) to run CI against"
-        required: true
-        type: string
 
 jobs:
   check:
@@ -15,7 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref || '' }}
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
       - run: uv sync

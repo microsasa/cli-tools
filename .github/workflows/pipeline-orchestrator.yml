@@ -215,7 +215,8 @@ jobs:
             CI_CONCLUSION=$(echo "$PR_DATA" | jq -r '
               .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
               | select(.name == "check")
-              | .conclusion // .status' 2>/dev/null || echo "UNKNOWN")
+              | .conclusion // .status' 2>/dev/null || echo "NO_CI_RESULT")
+            [ -z "$CI_CONCLUSION" ] && CI_CONCLUSION="NO_CI_RESULT"
 
             HAS_CI_FIX_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-ci-fix-attempted") then "yes" else "" end')
             HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-review-response-attempted") then "yes" else "" end')
@@ -238,11 +239,16 @@ jobs:
 
             # --- Step 2: CI still running or unknown ---
             if [[ "$CI_CONCLUSION" != "SUCCESS" && "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "NEUTRAL" && "$CI_CONCLUSION" != "neutral" ]]; then
-              # If CI is UNKNOWN, attempt to re-trigger via workflow_dispatch
-              if [[ "$CI_CONCLUSION" == "UNKNOWN" ]]; then
+              # If CI has no result, attempt to re-trigger via workflow_dispatch
+              if [[ "$CI_CONCLUSION" == "NO_CI_RESULT" ]]; then
                 COMMIT_DATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.commits.nodes[0].commit.committedDate // empty')
                 if [[ -n "$COMMIT_DATE" ]]; then
                   COMMIT_EPOCH=$(date -d "$COMMIT_DATE" +%s 2>/dev/null || echo "0")
+                  if [[ "$COMMIT_EPOCH" -eq 0 ]]; then
+                    echo "  ⚠️ PR #${PR}: Could not parse commit date. Skipping re-trigger."
+                    echo "::endgroup::"
+                    continue
+                  fi
                   NOW_EPOCH=$(date +%s)
                   AGE_MINUTES=$(( (NOW_EPOCH - COMMIT_EPOCH) / 60 ))
                   if [[ "$AGE_MINUTES" -ge 5 ]]; then
@@ -250,9 +256,9 @@ jobs:
                     RETRIGGER_COUNT=$(gh run list --workflow=ci.yml --event workflow_dispatch --branch="$BRANCH" \
                       --json headSha --jq "[.[] | select(.headSha == \"$HEAD_SHA\")] | length" 2>/dev/null || echo "0")
                     if [[ "$RETRIGGER_COUNT" -ge 2 ]]; then
-                      echo "  ❌ PR #${PR}: CI is UNKNOWN after $RETRIGGER_COUNT re-trigger attempts. Marking stuck."
+                      echo "  ❌ PR #${PR}: No CI result after $RETRIGGER_COUNT re-trigger attempts. Marking stuck."
                       gh pr edit "$PR" --add-label "aw-pr-stuck:ci"
-                      gh pr comment "$PR" --body "❌ Pipeline orchestrator: CI status remains UNKNOWN after $RETRIGGER_COUNT re-trigger attempts. Marking as stuck for human review."
+                      gh pr comment "$PR" --body "❌ Pipeline orchestrator: No CI result after $RETRIGGER_COUNT re-trigger attempts. Marking as stuck for human review."
                       echo "::endgroup::"
                       continue
                     fi
@@ -261,10 +267,10 @@ jobs:
                       --limit 1 --json createdAt --jq '
                       [.[] | select((now - (.createdAt | fromdateiso8601)) < 1800)] | length' 2>/dev/null || echo "0")
                     if [[ "$RECENT_CI" -eq 0 ]]; then
-                      echo "  🔄 PR #${PR}: CI is UNKNOWN and commit is ${AGE_MINUTES}m old. Re-triggering CI (attempt $((RETRIGGER_COUNT + 1))/2)."
-                      gh workflow run ci.yml -f ref="$BRANCH"
+                      echo "  🔄 PR #${PR}: No CI result, commit is ${AGE_MINUTES}m old. Re-triggering CI (attempt $((RETRIGGER_COUNT + 1))/2)."
+                      gh workflow run ci.yml --ref "$BRANCH"
                     else
-                      echo "  ⏳ PR #${PR}: CI is UNKNOWN — already re-triggered recently. Waiting."
+                      echo "  ⏳ PR #${PR}: No CI result — already re-triggered recently. Waiting."
                     fi
                     echo "::endgroup::"
                     continue
