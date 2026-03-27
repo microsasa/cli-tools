@@ -37,6 +37,7 @@ from copilot_usage.models import (
     SessionSummary,
     ToolExecutionData,
     ensure_aware,
+    total_output_tokens,
 )
 
 __all__ = ["render_session_detail"]
@@ -198,11 +199,9 @@ def _render_aggregate_stats(
     target_console: Console | None = None,
 ) -> None:
     """Print aggregate stats panel (model calls, user msgs, tokens, premium)."""
-    from copilot_usage.report import _total_output_tokens
-
     out = target_console or Console()
 
-    total_output = _total_output_tokens(summary)
+    total_output = total_output_tokens(summary)
 
     lines = [
         f"[green]{summary.model_calls}[/green] model calls   "

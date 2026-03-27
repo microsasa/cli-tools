@@ -340,3 +340,55 @@ class SessionSummary(BaseModel):
     active_model_calls: int = 0
     active_user_messages: int = 0
     active_output_tokens: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Session-level computed helpers (depend only on SessionSummary fields)
+# ---------------------------------------------------------------------------
+
+
+def shutdown_output_tokens(session: SessionSummary) -> int:
+    """Return shutdown-derived output tokens only (model_metrics baseline).
+
+    This deliberately excludes ``active_output_tokens`` so that historical /
+    shutdown-only views never include post-resume activity.
+    """
+    return sum(m.usage.outputTokens for m in session.model_metrics.values())
+
+
+def total_output_tokens(session: SessionSummary) -> int:
+    """Return total output tokens including post-resume active tokens.
+
+    For resumed sessions whose ``has_shutdown_metrics`` flag is ``True``,
+    the ``active_output_tokens`` field represents *additional* tokens
+    produced after the last shutdown and must be added to the historical
+    baseline.
+
+    When ``model_metrics`` is empty the baseline is zero, so the active
+    tokens are the only source and are included unconditionally.
+
+    Pure-active sessions (no shutdown data) already mirror
+    ``active_output_tokens`` inside ``model_metrics``, so adding them again
+    would double-count.
+    """
+    baseline = shutdown_output_tokens(session)
+    if (
+        has_active_period_stats(session) and session.has_shutdown_metrics
+    ) or not session.model_metrics:
+        return baseline + session.active_output_tokens
+    return baseline
+
+
+def has_active_period_stats(session: SessionSummary) -> bool:
+    """Return True when *session* has meaningful active-period stats.
+
+    A session has active-period stats when it was resumed (``last_resume_time``
+    is set) **or** any of its ``active_*`` counters are positive.  When this
+    returns ``False`` callers should fall back to the session totals.
+    """
+    return (
+        session.last_resume_time is not None
+        or session.active_user_messages > 0
+        or session.active_output_tokens > 0
+        or session.active_model_calls > 0
+    )
