@@ -65,7 +65,7 @@ steps:
         PAGE_COUNT=$((PAGE_COUNT + 1))
         echo "  Page ${PAGE_COUNT}: fetched $(echo "$PAGE_THREADS" | jq 'length') thread(s)"
 
-        if [ $PAGE_COUNT -ge 10 ]; then
+        if [ $PAGE_COUNT -ge 10 ] && [ "$HAS_NEXT_PAGE" = "true" ]; then
           echo "Warning: hit 10-page safety cap (1000+ threads). Stopping pagination."
           break
         fi
