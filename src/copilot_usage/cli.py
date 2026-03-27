@@ -41,6 +41,12 @@ type _View = Literal["home", "detail", "cost"]
 
 _DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
 
+_WATCHDOG_DEBOUNCE_SECS: float = 2.0  # Prevents rapid redraws during tool-use bursts
+
+_UUID_STR_LEN = 36
+_UUID_DASH_COUNT = 4
+_MIN_PREFIX_LEN_FOR_PREFILTER = 4
+
 console = Console()
 
 
@@ -155,7 +161,7 @@ class _FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
 
     def dispatch(self, event: object) -> None:
         now = time.monotonic()
-        if now - self._last_trigger > 2.0:  # debounce 2s
+        if now - self._last_trigger > _WATCHDOG_DEBOUNCE_SECS:
             self._last_trigger = now
             self._change_event.set()
 
@@ -408,8 +414,14 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     available: list[str] = []
     for events_path in event_paths:
         dir_name = events_path.parent.name
-        is_uuid_dir = len(dir_name) == 36 and dir_name.count("-") == 4
-        if len(session_id) >= 4 and is_uuid_dir and not dir_name.startswith(session_id):
+        is_uuid_dir = (
+            len(dir_name) == _UUID_STR_LEN and dir_name.count("-") == _UUID_DASH_COUNT
+        )
+        if (
+            len(session_id) >= _MIN_PREFIX_LEN_FOR_PREFILTER
+            and is_uuid_dir
+            and not dir_name.startswith(session_id)
+        ):
             available.append(dir_name[:8])
             continue
         try:
