@@ -1765,6 +1765,7 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=5,
             user_messages=3,
             active_model_calls=3,
@@ -1903,8 +1904,9 @@ class TestRenderCostView:
         # Output Tokens must include active_output_tokens: 1000 + 200 = 1200 → "1.2K"
         assert "1.2K" in output
 
-    def test_pure_active_session_no_metrics_shows_both_rows(self) -> None:
-        """Active session with no model_metrics shows placeholder row AND Since-last-shutdown row."""
+    def test_pure_active_session_no_metrics_shows_placeholder_row(self) -> None:
+        """Active session with no model_metrics shows placeholder row but NOT
+        a Since-last-shutdown row (no shutdown baseline exists)."""
         session = SessionSummary(
             session_id="pure-active-1234",
             name="Just Started",
@@ -1920,9 +1922,7 @@ class TestRenderCostView:
         output = _capture_cost_view([session])
         assert "Just Started" in output
         assert "—" in output  # placeholder row (no metrics)
-        assert "Since last shutdown" in output  # active row
-        # Premium Cost shows estimated cost (~2 = 2 calls × 1.0 multiplier)
-        assert "~2" in output
+        assert "Since last shutdown" not in output
 
     def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
         """Grand total output tokens includes active_output_tokens for no-metrics active session."""
@@ -2015,6 +2015,7 @@ class TestRenderCostView:
             model="gpt-5-mini",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=5,
             active_model_calls=5,
             active_output_tokens=1000,
@@ -2030,6 +2031,7 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=3,
             active_model_calls=3,
             active_output_tokens=500,
@@ -2079,8 +2081,8 @@ class TestRenderCostView:
             f"Grand Total output tokens should be 8.0K, got '{grand_cols[6]}'"
         )
 
-    def test_pure_active_never_shutdown_cost_falls_back(self) -> None:
-        """Cost view: pure-active session with active_*=0 uses totals for the active row.
+    def test_resumed_session_active_zero_cost_falls_back(self) -> None:
+        """Cost view: resumed session with active_*=0 uses totals for the active row.
 
         Regression test for issue #132.
         """
@@ -2090,6 +2092,7 @@ class TestRenderCostView:
             model="claude-sonnet-4",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=10,
             user_messages=8,
             active_model_calls=0,
@@ -2121,6 +2124,8 @@ class TestRenderCostView:
         assert "50.0K" in grand_cols[6], (
             f"Grand Total output tokens should be 50.0K, got '{grand_cols[6]}'"
         )
+
+    def test_resumed_session_active_model_calls_only(self) -> None:
         """Cost view: active_model_calls > 0 with user_messages/output_tokens=0.
 
         When last_resume_time is None and only active_model_calls is non-zero,
@@ -2132,6 +2137,7 @@ class TestRenderCostView:
             model="claude-sonnet-4",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=10,
             user_messages=8,
             last_resume_time=None,
@@ -2166,6 +2172,7 @@ class TestRenderCostView:
             model="experimental-model-42",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=4,
             user_messages=2,
             active_model_calls=2,
@@ -2178,6 +2185,61 @@ class TestRenderCostView:
         assert len(caught) == 0, (
             f"Expected no UserWarning, got {[str(w.message) for w in caught]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #419 — pure-active sessions must NOT show "↳ Since last shutdown"
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewPureActiveNoShutdownRow:
+    """Fix #419: the '↳ Since last shutdown' sub-row must only appear for
+    resumed sessions (is_active=True AND has_shutdown_metrics=True).
+    Pure-active sessions (never shut down) must not show it."""
+
+    def test_pure_active_no_shutdown_row(self) -> None:
+        """Pure-active session (has_shutdown_metrics=False) must NOT render
+        the '↳ Since last shutdown' sub-row."""
+        session = SessionSummary(
+            session_id="pure-active-419a",
+            name="Pure Active",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_output_tokens=1200,
+        )
+        output = _capture_cost_view([session])
+        assert "Pure Active" in output
+        assert "Since last shutdown" not in output
+
+    def test_resumed_session_shows_shutdown_row(self) -> None:
+        """Resumed session (has_shutdown_metrics=True) must render
+        the '↳ Since last shutdown' sub-row."""
+        session = SessionSummary(
+            session_id="resumed-419b",
+            name="Resumed Session",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            model_calls=10,
+            user_messages=6,
+            active_model_calls=4,
+            active_output_tokens=800,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=10),
+                    usage=TokenUsage(outputTokens=2000),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        assert "Resumed Session" in output
+        assert "Since last shutdown" in output
 
 
 # ---------------------------------------------------------------------------
@@ -3411,6 +3473,7 @@ class TestRenderCostViewActiveModelNone:
             session_id="no-model-active-1234",
             model=None,
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=2,
             active_model_calls=2,
             active_output_tokens=300,
