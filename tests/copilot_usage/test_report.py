@@ -3427,6 +3427,12 @@ class TestRenderCostViewActiveModelNone:
             model_calls=2,
             active_model_calls=2,
             active_output_tokens=300,
+            # Minimal non-empty shutdown baseline to mirror production behavior
+            model_metrics={
+                "baseline-model": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1),
+                ),
+            },
         )
         output = _capture_cost_view([session])
         assert "Since last shutdown" in output
