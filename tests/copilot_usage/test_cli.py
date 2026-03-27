@@ -367,11 +367,15 @@ def test_session_prefix_collision_returns_newest_by_mtime(
     """
     older_uuid = "ab111111-0000-0000-0000-000000000000"
     newer_uuid = "ab222222-0000-0000-0000-000000000000"
-    _write_session(tmp_path, older_uuid, name="OlderSession")
-    _write_session(tmp_path, newer_uuid, name="NewerSession")
+    older_dir = _write_session(tmp_path, older_uuid, name="OlderSession")
+    newer_dir = _write_session(tmp_path, newer_uuid, name="NewerSession")
+
+    # Set explicit mtimes so the newer session sorts first even on filesystems
+    # with coarse mtime resolution (avoids CI flakiness).
+    os.utime(older_dir / "events.jsonl", (1_000_000, 1_000_000))
+    os.utime(newer_dir / "events.jsonl", (2_000_000, 2_000_000))
 
     def _fake_discover(_base: Path | None = None) -> list[Path]:
-        # Simulate discover_sessions returning newer session first (higher mtime)
         paths = list(tmp_path.glob("*/events.jsonl"))
         return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
 
