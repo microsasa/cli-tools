@@ -3892,6 +3892,92 @@ class TestRenderCostViewResumed:
 
 
 # ---------------------------------------------------------------------------
+# Issue #409 — cost view model calls: shutdown-only on per-model row
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewModelCallsShutdownOnly:
+    """Regression tests for issue #409.
+
+    Per-model rows must show shutdown-only model calls (not the full session
+    total) so that visually summing the per-model row + the ↳ row equals the
+    grand total.
+    """
+
+    def test_resumed_session_shows_shutdown_only_model_calls(self) -> None:
+        """Per-model row shows 7, ↳ row shows 3, grand total shows 10."""
+        session = SessionSummary(
+            session_id="mc-resumed-409a",
+            name="Resumed MC",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_model_calls=3,
+            active_output_tokens=200,
+            active_user_messages=2,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = plain.splitlines()
+
+        # Find the per-model row (contains model name but not "Since last shutdown")
+        model_row = next(
+            line
+            for line in lines
+            if "claude-sonnet-4" in line and "Since last shutdown" not in line
+        )
+        # Should show shutdown-only calls (7), not total (10)
+        assert " 7 " in model_row
+
+        # Find the ↳ row
+        since_row = next(line for line in lines if "Since last shutdown" in line)
+        assert " 3 " in since_row
+
+        # Grand total row shows full session total (10)
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        assert " 10 " in grand_row
+
+    def test_completed_session_unchanged(self) -> None:
+        """Non-resumed session (active_model_calls=0) shows full model_calls."""
+        session = SessionSummary(
+            session_id="mc-completed-409b",
+            name="Completed MC",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            model_calls=10,
+            user_messages=5,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=20),
+                    usage=TokenUsage(outputTokens=800),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = plain.splitlines()
+
+        model_row = next(
+            line for line in lines if "gpt-4" in line and "Grand Total" not in line
+        )
+        assert " 10 " in model_row
+
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        assert " 10 " in grand_row
+
+
+# ---------------------------------------------------------------------------
 # Issue #276 — _shutdown_output_tokens and render_full_summary split-view
 # ---------------------------------------------------------------------------
 
