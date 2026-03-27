@@ -274,7 +274,17 @@ class TestLookupModelPricingEdgeCases:
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
         assert len(caught) == 1
-        assert "Unknown model" in str(caught[0].message)
+        assert "Empty model name" in str(caught[0].message)
+
+    def test_whitespace_only_warns_and_returns_standard(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("   ")
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert p.model_name == ""
+        assert len(caught) == 1
+        assert "Empty model name" in str(caught[0].message)
 
     def test_single_char_unknown_warns_and_returns_standard(self) -> None:
         with warnings.catch_warnings(record=True) as w:

@@ -112,6 +112,10 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
     before any comparison, so ``"Claude-Opus-4.6"`` and ``"claude-opus-4.6 "``
     resolve identically to ``"claude-opus-4.6"``.
 
+    The returned :class:`ModelPricing` always uses this normalized value for
+    ``model_name`` (including for partial matches and unknown models), so the
+    original input casing and surrounding whitespace are not preserved.
+
     Resolution order:
 
     1. Exact match in ``KNOWN_PRICING``.
@@ -121,6 +125,16 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
        :class:`UserWarning`.
     """
     normalized = model_name.lower().strip()
+
+    if not normalized:
+        warnings.warn(
+            "Empty model name; assuming 1× standard pricing.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return ModelPricing(
+            model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
+        )
 
     # 1. Exact
     if normalized in KNOWN_PRICING:
