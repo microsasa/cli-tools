@@ -1240,11 +1240,11 @@ def test_auto_refresh_render_crash_home_does_not_kill_loop(
     monkeypatch.setattr(cli_mod, "_draw_home", _crashing_draw_home)
 
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
 
-    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
         captured_event.append(change_event)
-        return orig_start_observer(session_path, change_event)
+        # Do not start the real filesystem observer here; tests only need the event.
+        return None
 
     monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
 
@@ -1298,11 +1298,11 @@ def test_auto_refresh_render_crash_cost_does_not_kill_loop(
     monkeypatch.setattr(cli_mod, "render_cost_view", _crashing_cost)
 
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
 
-    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        # Capture the change_event for the test without starting a real observer.
         captured_event.append(change_event)
-        return orig_start_observer(session_path, change_event)
+        return None
 
     monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
 
@@ -1355,11 +1355,22 @@ def test_auto_refresh_render_crash_detail_does_not_kill_loop(
     monkeypatch.setattr(cli_mod, "_show_session_by_index", _crashing_show)
 
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
 
-    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        # Capture the change_event for manual triggering in the test, but avoid
+        # starting a real filesystem observer thread to keep the test deterministic.
         captured_event.append(change_event)
-        return orig_start_observer(session_path, change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                """No-op stop to match the observer interface used by _stop_observer."""
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                """No-op join to match the observer interface used by _stop_observer."""
+                return
+
+        return _StubObserver()
 
     monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
 
@@ -1412,11 +1423,11 @@ def test_auto_refresh_get_all_sessions_crash_does_not_kill_loop(
     monkeypatch.setattr(cli_mod, "get_all_sessions", _crashing_get_all)
 
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
 
-    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
         captured_event.append(change_event)
-        return orig_start_observer(session_path, change_event)
+        # Do not start a real observer; test will manually trigger change_event.
+        return None
 
     monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
 

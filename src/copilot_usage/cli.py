@@ -256,6 +256,12 @@ def _interactive_loop(path: Path | None) -> None:
                     logger.opt(exception=True).warning(
                         "Auto-refresh render failed; will retry on next change"
                     )
+                    # Best-effort prompt write so the terminal remains usable
+                    try:
+                        prompt = _HOME_PROMPT if view == "home" else _BACK_PROMPT
+                        _write_prompt(prompt)
+                    except Exception:
+                        logger.debug("Best-effort prompt write also failed")
 
             # Non-blocking stdin read
             try:
