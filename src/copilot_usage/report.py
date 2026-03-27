@@ -45,12 +45,7 @@ __all__ = [
 
 
 def session_display_name(session: SessionSummary) -> str:
-    """Return the session name, falling back to a short ID or a placeholder.
-
-    Returns ``session.name`` when set, otherwise the first 12 characters of
-    ``session.session_id``, and finally the literal ``"(no id)"`` when both
-    are empty.
-    """
+    """Return session name, falling back to first 12 chars of ID, then "(no id)"."""
     return session.name or session.session_id[:12] or "(no id)"
 
 
