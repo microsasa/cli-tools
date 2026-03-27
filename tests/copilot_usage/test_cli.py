@@ -1457,6 +1457,115 @@ def test_auto_refresh_get_all_sessions_crash_does_not_kill_loop(
     assert gas_call_count[0] >= 3
 
 
+def test_auto_refresh_keyboard_interrupt_propagates(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """KeyboardInterrupt during auto-refresh re-raises (not swallowed by except Exception)."""
+    _write_session(tmp_path, "cr_kbi00-0000-0000-0000-000000000000", name="CrashKBI")
+
+    import copilot_usage.cli as cli_mod
+
+    call_count = [0]
+
+    def _interrupting_draw_home(console: Console, sessions: list[Any]) -> None:  # noqa: ARG001
+        call_count[0] += 1
+        if call_count[0] == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _interrupting_draw_home)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    # The outer except KeyboardInterrupt in _interactive_loop catches the
+    # re-raised interrupt and exits gracefully — the key assertion is that
+    # _draw_home was called exactly twice (initial + interrupted auto-refresh),
+    # proving the KeyboardInterrupt was NOT swallowed by except Exception.
+    assert result.exit_code == 0
+    assert call_count[0] == 2
+
+
+def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) -> None:
+    """When render AND best-effort prompt write both fail, the loop still survives."""
+    _write_session(tmp_path, "cr_pwr00-0000-0000-0000-000000000000", name="CrashPrompt")
+
+    import copilot_usage.cli as cli_mod
+
+    draw_call_count = [0]
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_draw_home(console: Console, sessions: list[Any]) -> None:
+        draw_call_count[0] += 1
+        if draw_call_count[0] == 2:
+            raise OSError("console write failure")
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _crashing_draw_home)
+
+    prompt_call_count = [0]
+    orig_write_prompt = cli_mod._write_prompt  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_prompt(prompt: str) -> None:
+        prompt_call_count[0] += 1
+        # Fail on the best-effort prompt write (4th call: initial + crash-handler)
+        if prompt_call_count[0] == 2:
+            raise OSError("prompt write failure")
+        orig_write_prompt(prompt)
+
+    monkeypatch.setattr(cli_mod, "_write_prompt", _crashing_prompt)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 2:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # Draw was called at least 3 times: initial + crash + recovery
+    assert draw_call_count[0] >= 3
+
+
 # ---------------------------------------------------------------------------
 # Issue #138 — fast pre-filter on directory name
 # ---------------------------------------------------------------------------
