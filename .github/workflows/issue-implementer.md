@@ -55,4 +55,4 @@ uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright &
 
 Fix any lint or type errors found by ruff/pyright before committing. Iterate until all checks pass cleanly.
 
-Open a pull request with the fix. The PR title should reference the issue number. Include tests as specified in the issue. The PR must NOT be a draft — open it as a regular PR ready for review.
+Open a pull request with the fix. The PR title should reference the issue number. The PR body MUST include `Closes #${{ github.event.inputs.issue_number }}` so GitHub auto-closes the issue when the PR merges. Include tests as specified in the issue. The PR must NOT be a draft — open it as a regular PR ready for review.
