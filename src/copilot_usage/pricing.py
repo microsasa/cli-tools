@@ -20,7 +20,6 @@ __all__: list[str] = [
     "PricingTier",
     "KNOWN_PRICING",
     "lookup_model_pricing",
-    "categorize_model",
 ]
 
 
@@ -147,8 +146,3 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
     return ModelPricing(
         model_name=model_name, multiplier=1.0, tier=PricingTier.STANDARD
     )
-
-
-def categorize_model(model_name: str) -> PricingTier:
-    """Return the pricing tier for *model_name*."""
-    return lookup_model_pricing(model_name).tier

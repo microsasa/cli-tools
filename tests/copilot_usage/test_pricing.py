@@ -11,7 +11,6 @@ from copilot_usage.pricing import (
     ModelPricing,
     PricingTier,
     _tier_from_multiplier,
-    categorize_model,
     lookup_model_pricing,
 )
 
@@ -136,28 +135,6 @@ class TestLookupModelPricing:
             warnings.simplefilter("always")
             p = lookup_model_pricing("mystery")
         assert p.model_name == "mystery"
-
-
-# ---------------------------------------------------------------------------
-# categorize_model
-# ---------------------------------------------------------------------------
-
-
-class TestCategorizeModel:
-    def test_premium(self) -> None:
-        assert categorize_model("claude-opus-4.6") == PricingTier.PREMIUM
-
-    def test_standard(self) -> None:
-        assert categorize_model("gpt-5.4") == PricingTier.STANDARD
-
-    def test_light(self) -> None:
-        assert categorize_model("claude-haiku-4.5") == PricingTier.LIGHT
-
-    def test_free(self) -> None:
-        assert categorize_model("gpt-5-mini") == PricingTier.FREE
-
-    def test_free_gpt_4_1(self) -> None:
-        assert categorize_model("gpt-4.1") == PricingTier.FREE
 
 
 # ---------------------------------------------------------------------------

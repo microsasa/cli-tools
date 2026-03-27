@@ -51,7 +51,7 @@ security: ## Security scan (bandit)
 # Tests with coverage
 test: ## Run unit + e2e tests with coverage
 	@printf "\n$(BOLD)$(CYAN)🧪 Testing...$(RESET)\n"
-	@COV=$$(uv run pytest tests/copilot_usage $(TEST_FLAGS) 2>&1); \
+	@COV=$$(uv run pytest tests/copilot_usage tests/test_docs.py $(TEST_FLAGS) 2>&1); \
 		if [ $$? -eq 0 ]; then \
 			COV_PCT=$$(echo "$$COV" | grep "^TOTAL" | awk '{print $$NF}' | tr -d '%'); \
 			printf "  $(GREEN)✅ unit tests ($${COV_PCT}%% coverage)$(RESET)\n"; \
