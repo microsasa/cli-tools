@@ -283,7 +283,7 @@ def _render_summary_header(
     call-sites (``render_summary`` and ``render_full_summary``) guard
     against the empty case before reaching here.
     """
-    assert sessions, "_render_summary_header requires non-empty sessions"  # noqa: S101
+    assert sessions, "_render_summary_header requires non-empty sessions"  # noqa: S101  # nosec B101
     start_times = [
         ensure_aware(s.start_time) for s in sessions if s.start_time is not None
     ]
