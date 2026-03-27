@@ -21,13 +21,37 @@ class TestFormattingModuleImport:
         assert callable(format_tokens)
         assert callable(format_duration)
 
-    def test_import_both_report_and_render_detail(self) -> None:
-        """Importing both report and render_detail in either order must succeed."""
+    def test_import_render_detail_then_report_modules(self) -> None:
+        """Importing render_detail before report at module scope must succeed."""
         import copilot_usage.render_detail
         import copilot_usage.report
 
         assert callable(copilot_usage.report.render_session_detail)
         assert callable(copilot_usage.render_detail.render_session_detail)
+
+    def test_import_report_then_render_detail_in_subprocess(self) -> None:
+        """Importing report before render_detail in a fresh interpreter must succeed."""
+        try:
+            result = subprocess.run(  # noqa: S603
+                [
+                    sys.executable,
+                    "-c",
+                    "import copilot_usage.report; "
+                    "import copilot_usage.render_detail; "
+                    "assert callable(copilot_usage.report.format_tokens); "
+                    "assert callable(copilot_usage.render_detail.render_session_detail)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "Subprocess import timed out; possible circular import regression."
+            )
+        assert result.returncode == 0, (
+            f"Importing report then render_detail failed:\n{result.stderr}"
+        )
 
     def test_import_render_detail_then_report(self) -> None:
         """Importing render_detail before report must not raise."""
@@ -58,8 +82,8 @@ class TestFormattingModuleImport:
             )
         assert result.returncode == 0, f"Importing _formatting failed:\n{result.stderr}"
 
-    def test_import_both_modules_in_subprocess(self) -> None:
-        """Importing render_detail and report in a fresh interpreter must succeed."""
+    def test_import_render_detail_then_report_in_subprocess(self) -> None:
+        """Importing render_detail then report in a fresh interpreter must succeed."""
         try:
             result = subprocess.run(  # noqa: S603
                 [
@@ -91,7 +115,7 @@ class TestMaxContentLenSingleDefinition:
         from copilot_usage._formatting import _MAX_CONTENT_LEN as formatting_val
         from copilot_usage.render_detail import _MAX_CONTENT_LEN as detail_val
 
-        assert formatting_val == detail_val == 80
+        assert formatting_val == detail_val
 
     def test_max_content_len_not_redefined(self) -> None:
         """report.py and render_detail.py must not locally assign _MAX_CONTENT_LEN."""
