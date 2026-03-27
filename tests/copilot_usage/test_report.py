@@ -3477,6 +3477,12 @@ class TestRenderCostViewActiveModelNone:
             model_calls=2,
             active_model_calls=2,
             active_output_tokens=300,
+            model_metrics={
+                "unknown": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=0),
+                ),
+            },
         )
         output = _capture_cost_view([session])
         assert "Since last shutdown" in output
