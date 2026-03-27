@@ -2009,6 +2009,8 @@ class TestRenderCostView:
         assert "2.8K" in grand_cols[6], (
             f"Grand Total output tokens should be 2.8K, got '{grand_cols[6]}'"
         )
+
+    def test_active_session_estimated_cost_free_model(self) -> None:
         """gpt-5-mini has 0× multiplier → estimated cost is 0."""
         session = SessionSummary(
             session_id="est-cost-free-mod",
@@ -4019,7 +4021,6 @@ class TestCostViewModelCallsShutdownOnly:
             active_user_messages=3,
             model_metrics={
                 "claude-sonnet-4": ModelMetrics(
-                    requests=RequestMetrics(count=5, cost=10),
                     usage=TokenUsage(outputTokens=300),
                 ),
             },

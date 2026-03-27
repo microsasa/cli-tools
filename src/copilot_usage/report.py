@@ -598,8 +598,9 @@ def render_cost_view(
     """Render per-session, per-model cost breakdown.
 
     Filters sessions by date range when *since* and/or *until* are given.
-    For active sessions, appends a "↳ Since last shutdown" row with an
-    estimated premium cost and the active model calls / output tokens.
+    For active sessions that have a shutdown baseline (``is_active`` *and*
+    ``has_shutdown_metrics``), appends a "↳ Since last shutdown" row with
+    an estimated premium cost and the active model calls / output tokens.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
