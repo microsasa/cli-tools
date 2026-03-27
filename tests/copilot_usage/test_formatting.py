@@ -137,9 +137,20 @@ class TestMaxContentLenSingleDefinition:
                                 "it must be imported from _formatting"
                             )
                 elif (
-                    isinstance(node, ast.AnnAssign)
-                    and isinstance(node.target, ast.Name)
-                    and node.target.id == "_MAX_CONTENT_LEN"
+                    (
+                        isinstance(node, ast.AnnAssign)
+                        and isinstance(node.target, ast.Name)
+                        and node.target.id == "_MAX_CONTENT_LEN"
+                    )
+                    or (
+                        isinstance(node, ast.AugAssign)
+                        and isinstance(node.target, ast.Name)
+                        and node.target.id == "_MAX_CONTENT_LEN"
+                    )
+                    or (
+                        isinstance(node, ast.NamedExpr)
+                        and node.target.id == "_MAX_CONTENT_LEN"
+                    )
                 ):
                     pytest.fail(
                         f"{module_name} redefines _MAX_CONTENT_LEN "
