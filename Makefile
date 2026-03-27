@@ -86,5 +86,5 @@ fix: ## Auto-fix lint and format issues
 # Diff coverage (useful in PRs to enforce new-code coverage)
 diff-cover: ## Show coverage of changed lines vs main branch
 	@printf "\n$(BOLD)$(CYAN)📊 Diff coverage...$(RESET)\n"
-	@uv run pytest tests/copilot_usage tests/test_docs.py --cov --cov-report=xml -q --no-header $(QUIET)
+	@uv run pytest tests/copilot_usage tests/test_docs.py $(TEST_FLAGS) --cov-report=xml
 	@uv run diff-cover coverage.xml --compare-branch=main $(QUIET) && printf "  $(GREEN)✅ diff-cover$(RESET)\n" || { printf "  $(RED)❌ diff-cover$(RESET)\n"; exit 1; }

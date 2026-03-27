@@ -35,18 +35,18 @@ from copilot_usage.models import (
 )
 from copilot_usage.pricing import lookup_model_pricing
 from copilot_usage.render_detail import (
-    _build_event_details as _build_event_details,  # pyright: ignore[reportPrivateUsage]
-    _event_type_label as _event_type_label,  # pyright: ignore[reportPrivateUsage]
-    _extract_tool_name as _extract_tool_name,  # pyright: ignore[reportPrivateUsage]
-    _format_detail_duration as _format_detail_duration,  # pyright: ignore[reportPrivateUsage]
-    _format_relative_time as _format_relative_time,  # pyright: ignore[reportPrivateUsage]
-    _render_aggregate_stats as _render_aggregate_stats,  # pyright: ignore[reportPrivateUsage]
-    _render_code_changes as _render_code_changes,  # pyright: ignore[reportPrivateUsage]
-    _render_header as _render_header,  # pyright: ignore[reportPrivateUsage]
-    _render_recent_events as _render_recent_events,  # pyright: ignore[reportPrivateUsage]
-    _render_shutdown_cycles as _render_shutdown_cycles,  # pyright: ignore[reportPrivateUsage]
-    _safe_event_data as _safe_event_data,  # pyright: ignore[reportPrivateUsage]
-    _truncate as _truncate,  # pyright: ignore[reportPrivateUsage]
+    _build_event_details as _build_event_details,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _event_type_label as _event_type_label,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _extract_tool_name as _extract_tool_name,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _format_detail_duration as _format_detail_duration,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _format_relative_time as _format_relative_time,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_aggregate_stats as _render_aggregate_stats,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_code_changes as _render_code_changes,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_header as _render_header,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_recent_events as _render_recent_events,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_shutdown_cycles as _render_shutdown_cycles,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _safe_event_data as _safe_event_data,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _truncate as _truncate,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
     render_session_detail as render_session_detail,
 )
 
