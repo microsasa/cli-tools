@@ -307,7 +307,7 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests):
+For active sessions, an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate:
 
 ```python
 if s.is_active:
@@ -323,7 +323,7 @@ if s.is_active:
     )
 ```
 
-The Requests column shows `N/A` because there's no shutdown data for the active period. The Premium Cost column shows an estimate (e.g. `~3`) derived from `_estimate_premium_cost()`, which multiplies the model's pricing multiplier by the number of model calls.
+The Requests column shows `N/A` because there's no shutdown data for the active period. The Premium Cost column shows an estimate (e.g. `~3`) derived from `_estimate_premium_cost()`, which multiplies the model's pricing multiplier by the number of model calls. If the model is `None`, the Premium Cost column shows `"—"` instead.
 
 ### Historical vs active sections in full summary
 

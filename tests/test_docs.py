@@ -80,9 +80,9 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
     # Extract the section starting from the "↳ Since last shutdown" heading/rows
     # up to the next heading (## or deeper).
     match = re.search(
-        r"(##+\s.*↳ Since last shutdown.+?)(?=\n##+\s|\Z)",
+        r"(^##+[^\n]*↳ Since last shutdown[^\n]*\n.*?)(?=^##+|\Z)",
         _IMPL_MD,
-        re.DOTALL,
+        re.MULTILINE | re.DOTALL,
     )
     assert match, (
         "Could not find '### ↳ Since last shutdown' section in implementation.md"
