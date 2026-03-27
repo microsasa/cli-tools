@@ -224,7 +224,7 @@ def _interactive_loop(path: Path | None) -> None:
     )
 
     view: _View = "home"
-    detail_idx: int | None = None
+    detail_session_id: str | None = None
 
     sessions = get_all_sessions(path)
     _draw_home(console, sessions)
@@ -245,11 +245,23 @@ def _interactive_loop(path: Path | None) -> None:
                         _print_version_header(console)
                         render_cost_view(sessions, target_console=console)
                         _write_prompt(_BACK_PROMPT)
-                    elif view == "detail" and detail_idx is not None:
-                        console.clear()
-                        _print_version_header(console)
-                        _show_session_by_index(console, sessions, detail_idx)
-                        _write_prompt(_BACK_PROMPT)
+                    elif view == "detail" and detail_session_id is not None:
+                        detail_session = next(
+                            (s for s in sessions if s.session_id == detail_session_id),
+                            None,
+                        )
+                        if detail_session is None:
+                            view = "home"
+                            detail_session_id = None
+                            _draw_home(console, sessions)
+                            _write_prompt(_HOME_PROMPT)
+                        else:
+                            console.clear()
+                            _print_version_header(console)
+                            _show_session_by_index(
+                                console, sessions, sessions.index(detail_session) + 1
+                            )
+                            _write_prompt(_BACK_PROMPT)
                 except KeyboardInterrupt:
                     raise
                 except Exception:
@@ -281,7 +293,7 @@ def _interactive_loop(path: Path | None) -> None:
             # Sub-view: any input returns home
             if view in ("detail", "cost"):
                 view = "home"
-                detail_idx = None
+                detail_session_id = None
                 sessions = get_all_sessions(path)
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
@@ -317,7 +329,9 @@ def _interactive_loop(path: Path | None) -> None:
                 continue
 
             view = "detail"
-            detail_idx = num
+            detail_session_id = (
+                sessions[num - 1].session_id if 1 <= num <= len(sessions) else None
+            )
             console.clear()
             _print_version_header(console)
             _show_session_by_index(console, sessions, num)
