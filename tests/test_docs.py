@@ -69,3 +69,27 @@ def test_tier_derivation_description_mentions_all_tiers() -> None:
             f"Tier derivation description in implementation.md "
             f"does not mention '{tier_name}'"
         )
+
+
+def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
+    """The '↳ Since last shutdown' section must not claim 'N/A' for premium cost.
+
+    The actual code uses ``_estimate_premium_cost()`` to produce a '~N' estimate
+    in the Premium Cost column.  This test prevents future drift on that detail.
+    """
+    # Extract the section starting from the "↳ Since last shutdown" heading/rows
+    # up to the next heading (##).
+    match = re.search(
+        r"(### .↳ Since last shutdown.+?)(?=\n###?\s|\Z)",
+        _IMPL_MD,
+        re.DOTALL,
+    )
+    assert match, (
+        "Could not find '### ↳ Since last shutdown' section in implementation.md"
+    )
+    section = match.group(1)
+    assert "_estimate_premium_cost" in section or "estimate" in section.lower(), (
+        "The '↳ Since last shutdown' section in implementation.md should "
+        "mention '_estimate_premium_cost' or 'estimate' — the Premium Cost "
+        "column is NOT 'N/A', it's an estimate."
+    )
