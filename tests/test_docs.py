@@ -88,8 +88,21 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
         "Could not find '### ↳ Since last shutdown' section in implementation.md"
     )
     section = match.group(1)
-    assert "_estimate_premium_cost" in section or "estimate" in section.lower(), (
+    # The docs should describe the actual implementation detail:
+    # `_estimate_premium_cost()` is used to compute a '~N' Premium Cost.
+    assert "_estimate_premium_cost" in section, (
         "The '↳ Since last shutdown' section in implementation.md should "
-        "mention '_estimate_premium_cost' or 'estimate' — the Premium Cost "
-        "column is NOT 'N/A', it's an estimate."
+        "mention '_estimate_premium_cost' — the Premium Cost column is "
+        "NOT 'N/A', it's an estimate."
+    )
+    # Guard against regressions to the old 'Premium Cost: N/A' wording.
+    # Match patterns where N/A is directly attributed to Premium Cost
+    # (e.g. "Premium Cost | N/A", "# Premium Cost — N/A") but not lines
+    # where N/A refers to a different column mentioned on the same line.
+    assert not re.search(
+        r"Premium Cost\s*(?:[\|:—=]|is|shows)\s*[`'\"]?N/A",
+        section,
+    ), (
+        "The '↳ Since last shutdown' section in implementation.md must not "
+        "claim 'N/A' for Premium Cost."
     )
