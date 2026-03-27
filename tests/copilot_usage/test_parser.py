@@ -3598,3 +3598,157 @@ class TestReadConfigModel:
         config = tmp_path / "config.json"
         config.write_bytes(b'\xff\xfe{"model": "gpt-5.1"}')
         assert _read_config_model(config) is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #418 — Gap 1: malformed session.start (ValidationError)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryMalformedSessionStart:
+    """Gap 1: malformed session.start → session_id='', start_time=None."""
+
+    def test_malformed_session_start_skipped(self, tmp_path: Path) -> None:
+        """Malformed session.start → session_id='', start_time=None, is_active=True."""
+        bad_start = json.dumps({"type": "session.start", "data": {}, "id": "ev-bad"})
+        assistant = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m1", "content": "hi", "outputTokens": 100},
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, bad_start, assistant)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.session_id == ""
+        assert summary.start_time is None
+        assert summary.is_active is True
+
+    def test_second_session_start_ignored_after_valid(self, tmp_path: Path) -> None:
+        """Second valid session.start after the first is silently ignored."""
+        second_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "second-id",
+                    "startTime": "2026-03-07T11:00:00.000Z",
+                    "context": {"cwd": "/other"},
+                },
+                "id": "ev-start-2",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, second_start, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        # First session.start wins
+        assert summary.session_id == "test-session-001"
+        assert summary.cwd == "/home/user/project"
+
+
+# ---------------------------------------------------------------------------
+# Issue #418 — Gap 2: active session, no model, has output tokens
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryActiveNoModelOutputTokens:
+    """Gap 2: output tokens accumulated but model is None."""
+
+    def test_active_no_model_output_tokens_preserved(self, tmp_path: Path) -> None:
+        """Active session: model is None → model_metrics={}, active_output_tokens set."""
+        assistant = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m1", "content": "hi", "outputTokens": 250},
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, assistant)
+        events = parse_events(p)
+        # No tool events and no config file → model stays None
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.model is None
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 250
+        assert summary.active_model_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #418 — Gap 3: multiple tool.execution_complete — first model wins
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSessionSummaryToolModelSelection:
+    """Gap 3: first non-None tool model wins; None falls through."""
+
+    def test_first_tool_model_wins(self, tmp_path: Path) -> None:
+        """When multiple tool events have models, first non-None model is used."""
+        tool1 = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": "claude-sonnet-4",
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool2 = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-2",
+                    "model": "gpt-5.1",
+                    "success": True,
+                },
+                "id": "ev-t2",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, tool1, tool2)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.model == "claude-sonnet-4"
+
+    def test_tool_model_none_falls_through_to_second(self, tmp_path: Path) -> None:
+        """First tool event has model=None → loop continues to second event."""
+        tool_no_model = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": None,
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool_with_model = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-2",
+                    "model": "gpt-5.1",
+                    "success": True,
+                },
+                "id": "ev-t2",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, tool_no_model, tool_with_model
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.model == "gpt-5.1"

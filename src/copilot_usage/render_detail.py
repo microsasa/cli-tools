@@ -289,10 +289,15 @@ def _render_recent_events(
     target_console: Console | None = None,
     max_events: int = 10,
 ) -> None:
-    """Show the most recent *max_events* events with timestamp, type, brief info."""
+    """Show the most recent *max_events* events with timestamp, type, brief info.
+
+    *max_events* must be positive.  Passing ``0`` (or a negative value) is
+    treated as "show nothing" so callers never accidentally render the full
+    list via the ``events[-0:]`` Python-slice quirk.
+    """
     out = target_console or Console()
 
-    if not events:
+    if not events or max_events <= 0:
         out.print("[dim]No events to display.[/dim]")
         return
 

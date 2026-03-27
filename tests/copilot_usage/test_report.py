@@ -4262,3 +4262,90 @@ class TestRenderSessionDetailReExport:
         assert result.returncode == 0, (
             f"Importing render_detail first failed:\n{result.stderr}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #418 — Gap 4: _format_relative_time negative delta clamped to zero
+# ---------------------------------------------------------------------------
+
+
+class TestFormatRelativeTimeNegativeDelta:
+    """Gap 4: negative timedelta → '+0:00' (clock skew)."""
+
+    def test_negative_delta_clamped_to_zero(self) -> None:
+        """Negative timedelta → '+0:00'."""
+        assert _format_relative_time(timedelta(seconds=-90)) == "+0:00"
+
+    def test_negative_fractional_clamped_to_zero(self) -> None:
+        """Negative fractional seconds → '+0:00'."""
+        assert _format_relative_time(timedelta(seconds=-0.5)) == "+0:00"
+
+    def test_zero_delta(self) -> None:
+        """Zero timedelta → '+0:00'."""
+        assert _format_relative_time(timedelta(seconds=0)) == "+0:00"
+
+
+class TestRenderSessionDetailEventBeforeSessionStart:
+    """Gap 4 integration: event timestamped before session_start shows '+0:00'."""
+
+    def test_event_before_session_start_renders_zero(self) -> None:
+        """Event with timestamp before session_start shows '+0:00', not an error."""
+        from copilot_usage.report import render_session_detail
+
+        start = datetime(2025, 1, 1, 0, 1, 0, tzinfo=UTC)
+        # Event is 5 seconds BEFORE session_start
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "early msg"},
+                timestamp=start - timedelta(seconds=5),
+            ),
+        ]
+        summary = _make_session(start_time=start, is_active=False)
+        output = _capture_console(render_session_detail, events, summary)
+        assert "+0:00" in output
+        assert "early msg" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #418 — Gap 5: _render_recent_events max_events=0 / max_events=1
+# ---------------------------------------------------------------------------
+
+
+class TestRenderRecentEventsMaxEventsBoundary:
+    """Gap 5: max_events=0 shows no events; max_events=1 shows only the last."""
+
+    def test_max_events_zero_shows_none(self) -> None:
+        """max_events=0 renders zero events (guard against events[-0:] quirk)."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": f"z-{i}"},
+                timestamp=start + timedelta(seconds=i * 10),
+            )
+            for i in range(5)
+        ]
+        output = _capture_console(_render_recent_events, events, start, max_events=0)
+        assert "No events to display" in output
+        for i in range(5):
+            assert f"z-{i}" not in output
+
+    def test_max_events_one_shows_last(self) -> None:
+        """max_events=1 renders only the last event."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": f"m-{i}"},
+                timestamp=start + timedelta(seconds=i * 10),
+            )
+            for i in range(4)
+        ]
+        output = _capture_console(_render_recent_events, events, start, max_events=1)
+        # Only the last event should appear
+        assert "m-3" in output
+        # Earlier events should not appear
+        for i in range(3):
+            assert f"m-{i}" not in output
+        assert output.count("user message") == 1
