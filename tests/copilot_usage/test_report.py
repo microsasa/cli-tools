@@ -4313,10 +4313,10 @@ class TestRenderSessionDetailEventBeforeSessionStart:
 
 
 class TestRenderRecentEventsMaxEventsBoundary:
-    """Gap 5: max_events=0 shows all events; max_events=1 shows only the last."""
+    """Gap 5: max_events=0 shows no events; max_events=1 shows only the last."""
 
-    def test_max_events_zero_shows_all(self) -> None:
-        """max_events=0 renders ALL events (Python slice: events[-0:] == events[:])."""
+    def test_max_events_zero_shows_none(self) -> None:
+        """max_events=0 renders zero events (guard against events[-0:] quirk)."""
         start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
         events = [
             _make_event(
@@ -4327,9 +4327,9 @@ class TestRenderRecentEventsMaxEventsBoundary:
             for i in range(5)
         ]
         output = _capture_console(_render_recent_events, events, start, max_events=0)
+        assert "No events to display" in output
         for i in range(5):
-            assert f"z-{i}" in output
-        assert output.count("user message") == 5
+            assert f"z-{i}" not in output
 
     def test_max_events_one_shows_last(self) -> None:
         """max_events=1 renders only the last event."""
