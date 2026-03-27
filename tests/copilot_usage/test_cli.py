@@ -1263,7 +1263,7 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
     assert len(show_detail_calls) >= 2
 
 
-def test_auto_refresh_detail_idx_none(tmp_path: Path, monkeypatch: Any) -> None:
+def test_auto_refresh_detail_session_id_none(tmp_path: Path, monkeypatch: Any) -> None:
     """Auto-refresh after returning from detail view does not re-render detail.
 
     When the user leaves detail view, detail_session_id resets to None and
@@ -1409,7 +1409,9 @@ def test_auto_refresh_detail_tracks_session_by_id(
                 name="SessionC",
                 start_time="2025-01-15T10:00:00Z",
             )
-            os.utime(sess_c_dir / "events.jsonl", (3000, 3000))
+            # Ensure SessionC's events file has a clearly newer mtime.
+            now_ts = datetime.now(UTC).timestamp()
+            os.utime(sess_c_dir / "events.jsonl", (now_ts, now_ts))
             # Trigger auto-refresh — list becomes [C, B, A].
             # Old index 2 would now point to B (wrong), but the fix
             # should still render A by tracking session_id.
