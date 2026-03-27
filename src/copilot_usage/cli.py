@@ -246,11 +246,15 @@ def _interactive_loop(path: Path | None) -> None:
                         render_cost_view(sessions, target_console=console)
                         _write_prompt(_BACK_PROMPT)
                     elif view == "detail" and detail_session_id is not None:
-                        detail_session = next(
-                            (s for s in sessions if s.session_id == detail_session_id),
+                        detail_idx = next(
+                            (
+                                i
+                                for i, s in enumerate(sessions)
+                                if s.session_id == detail_session_id
+                            ),
                             None,
                         )
-                        if detail_session is None:
+                        if detail_idx is None:
                             view = "home"
                             detail_session_id = None
                             _draw_home(console, sessions)
@@ -258,9 +262,7 @@ def _interactive_loop(path: Path | None) -> None:
                         else:
                             console.clear()
                             _print_version_header(console)
-                            _show_session_by_index(
-                                console, sessions, sessions.index(detail_session) + 1
-                            )
+                            _show_session_by_index(console, sessions, detail_idx + 1)
                             _write_prompt(_BACK_PROMPT)
                 except KeyboardInterrupt:
                     raise

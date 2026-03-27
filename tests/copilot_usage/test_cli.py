@@ -1351,15 +1351,12 @@ def test_auto_refresh_detail_tracks_session_by_id(
         name="SessionA",
         start_time="2025-01-15T08:00:00Z",
     )
-    sess_b_dir = _write_session(
+    _write_session(
         tmp_path,
         "bbbb0000-0000-0000-0000-000000000000",
         name="SessionB",
         start_time="2025-01-15T09:00:00Z",
     )
-    # Set explicit mtimes so sort order is deterministic (B newer than A).
-    os.utime(tmp_path / "aaaa0000", (1000, 1000))
-    os.utime(sess_b_dir, (2000, 2000))
 
     import copilot_usage.cli as cli_mod
 
@@ -1412,7 +1409,7 @@ def test_auto_refresh_detail_tracks_session_by_id(
                 name="SessionC",
                 start_time="2025-01-15T10:00:00Z",
             )
-            os.utime(sess_c_dir, (3000, 3000))
+            os.utime(sess_c_dir / "events.jsonl", (3000, 3000))
             # Trigger auto-refresh — list becomes [C, B, A].
             # Old index 2 would now point to B (wrong), but the fix
             # should still render A by tracking session_id.
