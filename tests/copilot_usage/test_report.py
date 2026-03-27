@@ -4229,6 +4229,10 @@ class TestSessionDisplayName:
         s = SessionSummary(session_id="abc", name=None)
         assert session_display_name(s) == "abc"
 
+    def test_empty_session_id_returns_fallback(self) -> None:
+        s = SessionSummary(session_id="", name=None)
+        assert session_display_name(s) == "(no id)"
+
 
 # ---------------------------------------------------------------------------
 # Issue #355 — _filter_sessions exact timestamp boundary semantics
