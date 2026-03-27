@@ -1068,6 +1068,23 @@ class TestRenderSummary:
         output = _capture_summary([s])
         assert output.count("2026-03-07") >= 2  # appears in both ends of range
 
+    def test_all_sessions_have_no_start_time_shows_dates_unavailable(self) -> None:
+        """Sessions with start_time=None produce 'dates unavailable', not 'no sessions'."""
+        session = SessionSummary(
+            session_id="abc123deadbeef",
+            start_time=None,
+            model="claude-sonnet-4",
+            total_premium_requests=2,
+        )
+        output = _capture_summary([session])
+        # Should NOT say "no sessions" — we have a session, just no start_time
+        assert "No sessions found" not in output
+        assert "no sessions" not in output.lower()
+        # Should use the "dates unavailable" fallback
+        assert "dates unavailable" in output
+        # Body should still render the session
+        assert "abc123deadbe" in output  # session_display_name truncates to 12 chars
+
     def test_render_summary_rejects_positional_since(self) -> None:
         """render_summary requires since/until as keyword-only arguments."""
         sessions: list[SessionSummary] = []
@@ -1280,10 +1297,10 @@ class TestReportCoverageGaps:
         assert "2025-01-01  →  2025-12-31" in output
 
     def test_summary_header_no_start_times(self) -> None:
-        """Sessions with no start_time → 'no sessions' subtitle (line 533)."""
+        """Sessions with no start_time → 'dates unavailable' subtitle."""
         session = SessionSummary(session_id="no-time", start_time=None)
         output = _capture_summary([session])
-        assert "no sessions" in output
+        assert "dates unavailable" in output
 
     def test_session_table_empty_sessions(self) -> None:
         """render_summary with sessions that all lack start_time still renders."""

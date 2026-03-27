@@ -308,6 +308,8 @@ def _render_summary_header(
         earliest = min(start_times).strftime("%Y-%m-%d")
         latest = max(start_times).strftime("%Y-%m-%d")
         subtitle = f"{earliest}  →  {latest}"
+    elif sessions:
+        subtitle = "dates unavailable"
     else:
         subtitle = "no sessions"
     console.print()
