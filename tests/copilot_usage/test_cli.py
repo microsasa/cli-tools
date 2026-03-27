@@ -1213,7 +1213,7 @@ def test_auto_refresh_cost_view(tmp_path: Path, monkeypatch: Any) -> None:
 
 
 def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
-    """change_event triggers re-render while on detail view with detail_idx set."""
+    """change_event triggers re-render while on detail view with detail_session_id set."""
     _write_session(tmp_path, "ar_det00-0000-0000-0000-000000000000", name="AutoDetail")
 
     show_detail_calls: list[int] = []
@@ -1263,12 +1263,12 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
     assert len(show_detail_calls) >= 2
 
 
-def test_auto_refresh_detail_idx_none(tmp_path: Path, monkeypatch: Any) -> None:
+def test_auto_refresh_detail_session_id_none(tmp_path: Path, monkeypatch: Any) -> None:
     """Auto-refresh after returning from detail view does not re-render detail.
 
-    When the user leaves detail view, detail_idx resets to None and view
-    changes to "home".  A subsequent auto-refresh must call _draw_home —
-    NOT _show_session_by_index — verifying the ``detail_idx is not None``
+    When the user leaves detail view, detail_session_id resets to None and
+    view changes to "home".  A subsequent auto-refresh must call _draw_home —
+    NOT _show_session_by_index — verifying the ``detail_session_id is not None``
     guard in the auto-refresh branch.
     """
     _write_session(tmp_path, "ar_dxn0-0000-0000-0000-000000000000", name="AutoDxNone")
@@ -1307,11 +1307,11 @@ def test_auto_refresh_detail_idx_none(tmp_path: Path, monkeypatch: Any) -> None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return "1"  # enter detail view (detail_idx = 1)
+            return "1"  # enter detail view (detail_session_id set)
         if call_count == 2:
-            return ""  # go back → view="home", detail_idx=None
+            return ""  # go back → view="home", detail_session_id=None
         if call_count == 3:
-            # Trigger auto-refresh while detail_idx is None
+            # Trigger auto-refresh while detail_session_id is None
             if captured_event:
                 captured_event[0].set()
             return None
@@ -1326,6 +1326,181 @@ def test_auto_refresh_detail_idx_none(tmp_path: Path, monkeypatch: Any) -> None:
     assert len(show_detail_calls) == 1
     # _draw_home called for: initial render + going-back render + auto-refresh
     assert len(draw_home_calls) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #441 — detail view tracks session by ID, not positional index
+# ---------------------------------------------------------------------------
+
+
+def test_auto_refresh_detail_tracks_session_by_id(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Auto-refresh in detail view still shows the same session after a new one appears.
+
+    Regression test for #441: when a new (newer) session is created while
+    viewing detail for session 2, the new session is prepended to the list
+    and the old index 2 now points to a different session.  The fix tracks
+    detail_session_id instead of a positional index, so the correct session
+    is always rendered.
+    """
+    # Create two initial sessions; session B is newer than session A.
+    _write_session(
+        tmp_path,
+        "aaaa0000-0000-0000-0000-000000000000",
+        name="SessionA",
+        start_time="2025-01-15T08:00:00Z",
+    )
+    _write_session(
+        tmp_path,
+        "bbbb0000-0000-0000-0000-000000000000",
+        name="SessionB",
+        start_time="2025-01-15T09:00:00Z",
+    )
+
+    import copilot_usage.cli as cli_mod
+
+    # Track which session_ids are rendered in _show_session_by_index
+    rendered_session_ids: list[str] = []
+    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_show(console: Console, sessions: list[Any], index: int) -> None:
+        if 1 <= index <= len(sessions):
+            rendered_session_ids.append(sessions[index - 1].session_id)
+        orig_show(console, sessions, index)
+
+    monkeypatch.setattr(cli_mod, "_show_session_by_index", _tracking_show)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(
+        session_path: Path,
+        change_event: threading.Event,  # noqa: ARG001
+    ) -> object:
+        captured_event.append(change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                return
+
+        return _StubObserver()
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+
+        if read_call == 1:
+            # Sessions are sorted newest-first: [B, A].
+            # Enter detail for session #2 → SessionA.
+            return "2"
+
+        if read_call == 2:
+            # Inject a new session C that is even newer than B.
+            sess_c_dir = _write_session(
+                tmp_path,
+                "cccc0000-0000-0000-0000-000000000000",
+                name="SessionC",
+                start_time="2025-01-15T10:00:00Z",
+            )
+            # Ensure SessionC's events file has a clearly newer mtime.
+            now_ts = datetime.now(UTC).timestamp()
+            os.utime(sess_c_dir / "events.jsonl", (now_ts, now_ts))
+            # Trigger auto-refresh — list becomes [C, B, A].
+            # Old index 2 would now point to B (wrong), but the fix
+            # should still render A by tracking session_id.
+            if captured_event:
+                captured_event[0].set()
+            return None
+
+        if read_call == 3:
+            return ""  # go back to home
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # Both renders (initial + auto-refresh) must show SessionA
+    assert len(rendered_session_ids) >= 2
+    assert all(
+        sid == "aaaa0000-0000-0000-0000-000000000000" for sid in rendered_session_ids
+    ), f"Expected SessionA every time, but rendered: {rendered_session_ids}"
+
+
+def test_auto_refresh_detail_session_deleted_falls_back_to_home(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When the viewed session is removed during auto-refresh, fall back to home."""
+    import shutil
+
+    sess_dir = _write_session(
+        tmp_path,
+        "del10000-0000-0000-0000-000000000000",
+        name="WillBeDeleted",
+    )
+
+    import copilot_usage.cli as cli_mod
+
+    draw_home_calls: list[int] = []
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
+        draw_home_calls.append(1)
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw_home)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(
+        session_path: Path,
+        change_event: threading.Event,  # noqa: ARG001
+    ) -> object:
+        captured_event.append(change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                return
+
+        return _StubObserver()
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            return "1"  # enter detail view
+        if read_call == 2:
+            # Delete the session directory, then trigger auto-refresh
+            shutil.rmtree(sess_dir)
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # After deletion, the auto-refresh should have fallen back to home view.
+    # draw_home calls: initial render + fallback after session deleted = at least 2
+    assert len(draw_home_calls) >= 2
 
 
 # ---------------------------------------------------------------------------
