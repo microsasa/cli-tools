@@ -283,3 +283,63 @@ class TestLookupModelPricingEdgeCases:
         assert p.multiplier == 1.0
         assert len(w) == 1
         assert "Unknown model" in str(w[0].message)
+
+
+# ---------------------------------------------------------------------------
+# Case-insensitive and whitespace-tolerant lookup (issue #431)
+# ---------------------------------------------------------------------------
+
+
+class TestLookupModelPricingCaseNormalization:
+    """lookup_model_pricing normalizes input with .lower().strip()."""
+
+    def test_mixed_case_premium_model_resolves_correctly(self) -> None:
+        """'Claude-Opus-4.6' resolves to the correct 3.0 multiplier."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("Claude-Opus-4.6")
+        assert len(caught) == 0
+        assert p.multiplier == 3.0
+        assert p.tier == PricingTier.PREMIUM
+
+    def test_whitespace_padded_model_resolves_correctly(self) -> None:
+        """Model name with trailing space resolves correctly."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("claude-opus-4.6 ")
+        assert len(caught) == 0
+        assert p.multiplier == 3.0
+        assert p.tier == PricingTier.PREMIUM
+
+    def test_uppercase_free_model_resolves_correctly(self) -> None:
+        """'GPT-5-mini' resolves to the FREE 0.0 multiplier."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("GPT-5-mini")
+        assert len(caught) == 0
+        assert p.multiplier == 0.0
+        assert p.tier == PricingTier.FREE
+
+    def test_all_uppercase_model_resolves(self) -> None:
+        """Fully uppercase model name resolves correctly."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("CLAUDE-SONNET-4")
+        assert len(caught) == 0
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+
+    def test_leading_and_trailing_whitespace_stripped(self) -> None:
+        """Leading and trailing whitespace is stripped before lookup."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = lookup_model_pricing("  gpt-5.4-mini  ")
+        assert len(caught) == 0
+        assert p.multiplier == 0.0
+        assert p.tier == PricingTier.FREE
+
+    def test_mixed_case_partial_match(self) -> None:
+        """Partial match works with mixed-case input."""
+        p = lookup_model_pricing("Claude-Opus-4.6-1M")
+        assert p.multiplier == 6.0
+        assert p.tier == PricingTier.PREMIUM
