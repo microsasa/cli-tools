@@ -1216,6 +1216,357 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #407 — auto-refresh render crash must not kill interactive loop
+# ---------------------------------------------------------------------------
+
+
+def test_auto_refresh_render_crash_home_does_not_kill_loop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """If _draw_home raises during auto-refresh, the interactive loop survives."""
+    _write_session(tmp_path, "cr_home0-0000-0000-0000-000000000000", name="CrashHome")
+
+    import copilot_usage.cli as cli_mod
+
+    call_count_home = [0]
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_draw_home(console: Console, sessions: list[Any]) -> None:
+        call_count_home[0] += 1
+        if call_count_home[0] == 2:
+            raise OSError("console write failure")
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _crashing_draw_home)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        # Do not start the real filesystem observer here; tests only need the event.
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            # Trigger first auto-refresh → crash on 2nd _draw_home call
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 2:
+            # Trigger second auto-refresh → should succeed (3rd call)
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # _draw_home called at least 3 times: initial + crash + recovery
+    assert call_count_home[0] >= 3
+
+
+def test_auto_refresh_render_crash_cost_does_not_kill_loop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """If render_cost_view raises during auto-refresh, the loop survives."""
+    _write_session(tmp_path, "cr_cost0-0000-0000-0000-000000000000", name="CrashCost")
+
+    import copilot_usage.cli as cli_mod
+
+    cost_call_count = [0]
+    orig_render_cost = cli_mod.render_cost_view
+
+    def _crashing_cost(*args: Any, **kwargs: Any) -> None:
+        cost_call_count[0] += 1
+        if cost_call_count[0] == 1:
+            # First call is the user 'c' command (not auto-refresh) — let it pass
+            orig_render_cost(*args, **kwargs)
+        elif cost_call_count[0] == 2:
+            raise RuntimeError("cost render failure")
+        else:
+            orig_render_cost(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "render_cost_view", _crashing_cost)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        # Capture the change_event for the test without starting a real observer.
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            return "c"  # navigate to cost view
+        if read_call == 2:
+            # Auto-refresh crash on cost view
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 3:
+            # Another auto-refresh that should succeed
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 4:
+            return ""  # go back home
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    assert cost_call_count[0] >= 3
+
+
+def test_auto_refresh_render_crash_detail_does_not_kill_loop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """If _show_session_by_index raises during auto-refresh, the loop survives."""
+    _write_session(tmp_path, "cr_det00-0000-0000-0000-000000000000", name="CrashDetail")
+
+    import copilot_usage.cli as cli_mod
+
+    detail_call_count = [0]
+    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_show(*args: Any, **kwargs: Any) -> None:
+        detail_call_count[0] += 1
+        if detail_call_count[0] == 2:
+            raise PermissionError("session file locked")
+        orig_show(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "_show_session_by_index", _crashing_show)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        # Capture the change_event for manual triggering in the test, but avoid
+        # starting a real filesystem observer thread to keep the test deterministic.
+        captured_event.append(change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                """No-op stop to match the observer interface used by _stop_observer."""
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                """No-op join to match the observer interface used by _stop_observer."""
+                return
+
+        return _StubObserver()
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            return "1"  # navigate to detail view
+        if read_call == 2:
+            # Auto-refresh crash on detail view
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 3:
+            # Another auto-refresh that should succeed
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 4:
+            return ""  # go back home
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    assert detail_call_count[0] >= 3
+
+
+def test_auto_refresh_get_all_sessions_crash_does_not_kill_loop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """If get_all_sessions raises during auto-refresh, the loop survives."""
+    _write_session(tmp_path, "cr_gas00-0000-0000-0000-000000000000", name="CrashGAS")
+
+    import copilot_usage.cli as cli_mod
+
+    gas_call_count = [0]
+    orig_get_all = cli_mod.get_all_sessions
+
+    def _crashing_get_all(*args: Any, **kwargs: Any) -> list[Any]:
+        gas_call_count[0] += 1
+        if gas_call_count[0] == 2:
+            raise PermissionError("session dir not readable")
+        return orig_get_all(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "get_all_sessions", _crashing_get_all)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        # Do not start a real observer; test will manually trigger change_event.
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            # Trigger auto-refresh that crashes on get_all_sessions
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 2:
+            # Trigger another auto-refresh that succeeds
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # get_all_sessions called at least 3 times: initial + crash + recovery
+    assert gas_call_count[0] >= 3
+
+
+def test_auto_refresh_keyboard_interrupt_propagates(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """KeyboardInterrupt during auto-refresh re-raises (not swallowed by except Exception)."""
+    _write_session(tmp_path, "cr_kbi00-0000-0000-0000-000000000000", name="CrashKBI")
+
+    import copilot_usage.cli as cli_mod
+
+    call_count = [0]
+
+    def _interrupting_draw_home(console: Console, sessions: list[Any]) -> None:  # noqa: ARG001
+        call_count[0] += 1
+        if call_count[0] == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _interrupting_draw_home)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    # The outer except KeyboardInterrupt in _interactive_loop catches the
+    # re-raised interrupt and exits gracefully — the key assertion is that
+    # _draw_home was called exactly twice (initial + interrupted auto-refresh),
+    # proving the KeyboardInterrupt was NOT swallowed by except Exception.
+    assert result.exit_code == 0
+    assert call_count[0] == 2
+
+
+def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) -> None:
+    """When render AND best-effort prompt write both fail, the loop still survives."""
+    _write_session(tmp_path, "cr_pwr00-0000-0000-0000-000000000000", name="CrashPrompt")
+
+    import copilot_usage.cli as cli_mod
+
+    draw_call_count = [0]
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_draw_home(console: Console, sessions: list[Any]) -> None:
+        draw_call_count[0] += 1
+        if draw_call_count[0] == 2:
+            raise OSError("console write failure")
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _crashing_draw_home)
+
+    prompt_call_count = [0]
+    orig_write_prompt = cli_mod._write_prompt  # pyright: ignore[reportPrivateUsage]
+
+    def _crashing_prompt(prompt: str) -> None:
+        prompt_call_count[0] += 1
+        # Fail on the first best-effort prompt write (2nd call: initial + crash-handler)
+        if prompt_call_count[0] == 2:
+            raise OSError("prompt write failure")
+        orig_write_prompt(prompt)
+
+    monkeypatch.setattr(cli_mod, "_write_prompt", _crashing_prompt)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:  # noqa: ARG001
+        captured_event.append(change_event)
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 2:
+            if captured_event:
+                captured_event[0].set()
+            return None
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # Draw was called at least 3 times: initial + crash + recovery
+    assert draw_call_count[0] >= 3
+
+
+# ---------------------------------------------------------------------------
 # Issue #138 — fast pre-filter on directory name
 # ---------------------------------------------------------------------------
 
