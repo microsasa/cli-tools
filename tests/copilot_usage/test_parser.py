@@ -2540,6 +2540,49 @@ class TestConfigModelReading:
         assert summary.model_metrics == {}
         assert summary.active_output_tokens == 250
 
+    def test_active_session_model_known_zero_tokens_has_empty_metrics(
+        self, tmp_path: Path
+    ) -> None:
+        """model resolved from tool event + zero assistant output → model_metrics empty, model field set."""
+        tool_exec_only = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-z",
+                    "model": "claude-sonnet-4",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool-z",
+                "timestamp": "2026-03-07T10:01:07.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_exec_only)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.is_active is True
+        assert summary.model == "claude-sonnet-4"
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 0
+
+    def test_active_session_config_model_zero_tokens_empty_metrics(
+        self, tmp_path: Path
+    ) -> None:
+        """model from config.json + no assistant messages → model_metrics empty, model field set."""
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"model": "claude-haiku-4.5"}), encoding="utf-8")
+        p = tmp_path / "s" / "events.jsonl"
+        # Session with only session.start + user.message (no assistant.message)
+        _write_events(p, _START_EVENT, _USER_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events, config_path=config)
+        assert summary.is_active is True
+        assert summary.model == "claude-haiku-4.5"
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 0
+
     def test_invalid_config_json(self, tmp_path: Path) -> None:
         """Malformed config.json → model stays None."""
         config = tmp_path / "config.json"
