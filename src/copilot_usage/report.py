@@ -623,7 +623,7 @@ def render_cost_view(
 
     for s in filtered:
         name = session_display_name(s)
-        if s.is_active:
+        if s.has_shutdown_metrics:
             shutdown_model_calls = s.model_calls - s.active_model_calls
         else:
             shutdown_model_calls = s.model_calls
@@ -658,7 +658,7 @@ def render_cost_view(
         grand_model_calls += s.model_calls
         grand_output += _total_output_tokens(s)
 
-        if s.is_active:
+        if s.is_active and s.has_shutdown_metrics:
             cost_stats = _effective_stats(s)
             cost_calls = cost_stats.model_calls
             cost_tokens = cost_stats.output_tokens

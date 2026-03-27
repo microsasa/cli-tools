@@ -1765,6 +1765,8 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
             model_calls=5,
             user_messages=3,
             active_model_calls=3,
@@ -1903,8 +1905,8 @@ class TestRenderCostView:
         # Output Tokens must include active_output_tokens: 1000 + 200 = 1200 → "1.2K"
         assert "1.2K" in output
 
-    def test_pure_active_session_no_metrics_shows_both_rows(self) -> None:
-        """Active session with no model_metrics shows placeholder row AND Since-last-shutdown row."""
+    def test_pure_active_session_no_metrics_no_shutdown_row(self) -> None:
+        """Active session with no model_metrics and no shutdown shows placeholder row only."""
         session = SessionSummary(
             session_id="pure-active-1234",
             name="Just Started",
@@ -1920,9 +1922,8 @@ class TestRenderCostView:
         output = _capture_cost_view([session])
         assert "Just Started" in output
         assert "—" in output  # placeholder row (no metrics)
-        assert "Since last shutdown" in output  # active row
-        # Premium Cost shows estimated cost (~2 = 2 calls × 1.0 multiplier)
-        assert "~2" in output
+        # Pure-active sessions without shutdown metrics do not show "↳" row
+        assert "Since last shutdown" not in output
 
     def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
         """Grand total output tokens includes active_output_tokens for no-metrics active session."""
@@ -2015,6 +2016,8 @@ class TestRenderCostView:
             model="gpt-5-mini",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
             model_calls=5,
             active_model_calls=5,
             active_output_tokens=1000,
@@ -2030,6 +2033,8 @@ class TestRenderCostView:
             model="claude-opus-4.6",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
             model_calls=3,
             active_model_calls=3,
             active_output_tokens=500,
@@ -2079,8 +2084,8 @@ class TestRenderCostView:
             f"Grand Total output tokens should be 8.0K, got '{grand_cols[6]}'"
         )
 
-    def test_pure_active_never_shutdown_cost_falls_back(self) -> None:
-        """Cost view: pure-active session with active_*=0 uses totals for the active row.
+    def test_resumed_session_cost_falls_back(self) -> None:
+        """Cost view: resumed session with active_*=0 uses totals for the active row.
 
         Regression test for issue #132.
         """
@@ -2090,6 +2095,7 @@ class TestRenderCostView:
             model="claude-sonnet-4",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=10,
             user_messages=8,
             active_model_calls=0,
@@ -2132,6 +2138,7 @@ class TestRenderCostView:
             model="claude-sonnet-4",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=10,
             user_messages=8,
             last_resume_time=None,
@@ -2166,6 +2173,8 @@ class TestRenderCostView:
             model="experimental-model-42",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
             model_calls=4,
             user_messages=2,
             active_model_calls=2,
@@ -3411,6 +3420,8 @@ class TestRenderCostViewActiveModelNone:
             session_id="no-model-active-1234",
             model=None,
             is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
             model_calls=2,
             active_model_calls=2,
             active_output_tokens=300,
@@ -3990,6 +4001,53 @@ class TestCostViewModelCallsShutdownOnly:
         grand_cols = [c.strip() for c in grand_row.split("│")]
         assert grand_cols[5] == "10", (
             f"Model Calls column in Grand Total should be 10, got '{grand_cols[5]}'"
+        )
+
+    def test_pure_active_session_no_subtraction(self) -> None:
+        """Pure-active session (no shutdown) shows full model_calls, no ↳ row."""
+        session = SessionSummary(
+            session_id="mc-pure-active-409c",
+            name="Pure Active MC",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_output_tokens=300,
+            active_user_messages=3,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = plain.splitlines()
+
+        # Per-model row should show full model_calls (5), not 0
+        model_row = next(
+            line
+            for line in lines
+            if "claude-sonnet-4" in line and "Since last shutdown" not in line
+        )
+        model_cols = [c.strip() for c in model_row.split("│")]
+        assert model_cols[5] == "5", (
+            f"Model Calls column should be 5 (all active), got '{model_cols[5]}'"
+        )
+
+        # No "↳ Since last shutdown" row for pure-active sessions
+        assert not any("Since last shutdown" in line for line in lines), (
+            "Pure-active session should not have a '↳ Since last shutdown' row"
+        )
+
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[5] == "5", (
+            f"Model Calls column in Grand Total should be 5, got '{grand_cols[5]}'"
         )
 
 
