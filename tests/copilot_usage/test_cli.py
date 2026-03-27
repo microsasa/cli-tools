@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
+from copilot_usage import __version__
 from copilot_usage.cli import (
     _normalize_until,  # pyright: ignore[reportPrivateUsage]
     _print_version_header,  # pyright: ignore[reportPrivateUsage]
@@ -135,7 +136,7 @@ def test_cli_version() -> None:
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
     assert "copilot-usage" in result.output
-    assert "0.0.1" in result.output
+    assert __version__ in result.output
 
 
 def test_summary_command(tmp_path: Path) -> None:

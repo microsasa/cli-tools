@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck security test test-unit test-e2e
+.PHONY: help check fix lint typecheck security test test-unit test-e2e diff-cover
 .DEFAULT_GOAL := help
 
 # Colors and symbols
@@ -82,3 +82,9 @@ fix: ## Auto-fix lint and format issues
 	@uv run ruff check --fix . 2>/dev/null; uv run ruff format . $(QUIET)
 	@printf "  $(GREEN)✅ ruff fix + format$(RESET)\n"
 	@printf "\n$(BOLD)$(CYAN)✨ All fixed!$(RESET)\n\n"
+
+# Diff coverage (useful in PRs to enforce new-code coverage)
+diff-cover: ## Show coverage of changed lines vs main branch
+	@printf "\n$(BOLD)$(CYAN)📊 Diff coverage...$(RESET)\n"
+	@uv run pytest tests/copilot_usage tests/test_docs.py $(TEST_FLAGS) --cov-report=xml
+	@uv run diff-cover coverage.xml --compare-branch=main $(QUIET) && printf "  $(GREEN)✅ diff-cover$(RESET)\n" || { printf "  $(RED)❌ diff-cover$(RESET)\n"; exit 1; }

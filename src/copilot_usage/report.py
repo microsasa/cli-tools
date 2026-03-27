@@ -28,9 +28,33 @@ from copilot_usage.models import (
     ModelMetrics,
     SessionSummary,
     ensure_aware,
+    has_active_period_stats,
     merge_model_metrics,
+    shutdown_output_tokens,
+    total_output_tokens,
 )
 from copilot_usage.pricing import lookup_model_pricing
+from copilot_usage.render_detail import (
+    _build_event_details as _build_event_details,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _event_type_label as _event_type_label,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _extract_tool_name as _extract_tool_name,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _format_detail_duration as _format_detail_duration,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _format_relative_time as _format_relative_time,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_aggregate_stats as _render_aggregate_stats,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_code_changes as _render_code_changes,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_header as _render_header,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_recent_events as _render_recent_events,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _render_shutdown_cycles as _render_shutdown_cycles,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _safe_event_data as _safe_event_data,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    _truncate as _truncate,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
+    render_session_detail as render_session_detail,
+)
+
+# Backward-compatible private aliases so existing internal call-sites and
+# tests that import the underscore-prefixed names keep working.
+_shutdown_output_tokens = shutdown_output_tokens
+_total_output_tokens = total_output_tokens
+_has_active_period_stats = has_active_period_stats
 
 __all__ = [
     "format_duration",
@@ -56,53 +80,6 @@ def _format_elapsed_since(start: datetime) -> str:
     """
     delta = datetime.now(tz=UTC) - ensure_aware(start)
     return _format_timedelta(delta)
-
-
-def _shutdown_output_tokens(session: SessionSummary) -> int:
-    """Return shutdown-derived output tokens only (model_metrics baseline).
-
-    This deliberately excludes ``active_output_tokens`` so that historical /
-    shutdown-only views never include post-resume activity.
-    """
-    return sum(m.usage.outputTokens for m in session.model_metrics.values())
-
-
-def _total_output_tokens(session: SessionSummary) -> int:
-    """Return total output tokens including post-resume active tokens.
-
-    For resumed sessions whose ``has_shutdown_metrics`` flag is ``True``,
-    the ``active_output_tokens`` field represents *additional* tokens
-    produced after the last shutdown and must be added to the historical
-    baseline.
-
-    When ``model_metrics`` is empty the baseline is zero, so the active
-    tokens are the only source and are included unconditionally.
-
-    Pure-active sessions (no shutdown data) already mirror
-    ``active_output_tokens`` inside ``model_metrics``, so adding them again
-    would double-count.
-    """
-    baseline = _shutdown_output_tokens(session)
-    if (
-        _has_active_period_stats(session) and session.has_shutdown_metrics
-    ) or not session.model_metrics:
-        return baseline + session.active_output_tokens
-    return baseline
-
-
-def _has_active_period_stats(session: SessionSummary) -> bool:
-    """Return True when *session* has meaningful active-period stats.
-
-    A session has active-period stats when it was resumed (``last_resume_time``
-    is set) **or** any of its ``active_*`` counters are positive.  When this
-    returns ``False`` callers should fall back to the session totals.
-    """
-    return (
-        session.last_resume_time is not None
-        or session.active_user_messages > 0
-        or session.active_output_tokens > 0
-        or session.active_model_calls > 0
-    )
 
 
 @dataclass(frozen=True)
@@ -300,7 +277,13 @@ def _render_summary_header(
     console: Console,
     sessions: list[SessionSummary],
 ) -> None:
-    """Print the report header with date range."""
+    """Print the report header with date range.
+
+    Must only be called with a non-empty *sessions* list — both
+    call-sites (``render_summary`` and ``render_full_summary``) guard
+    against the empty case before reaching here.
+    """
+    assert sessions, "_render_summary_header requires non-empty sessions"  # noqa: S101  # nosec B101
     start_times = [
         ensure_aware(s.start_time) for s in sessions if s.start_time is not None
     ]
@@ -308,10 +291,8 @@ def _render_summary_header(
         earliest = min(start_times).strftime("%Y-%m-%d")
         latest = max(start_times).strftime("%Y-%m-%d")
         subtitle = f"{earliest}  →  {latest}"
-    elif sessions:
-        subtitle = "dates unavailable"
     else:
-        subtitle = "no sessions"
+        subtitle = "dates unavailable"
     console.print()
     console.print(
         Text("Copilot Usage Summary", style="bold cyan"),
@@ -682,25 +663,3 @@ def render_cost_view(
     )
 
     console.print(table)
-
-
-# ---------------------------------------------------------------------------
-# Re-exports from render_detail — keeps the public (and test-used) API of
-# ``copilot_usage.report`` stable after the session-detail extraction.
-# ---------------------------------------------------------------------------
-
-from copilot_usage.render_detail import (  # noqa: E402
-    _build_event_details as _build_event_details,  # pyright: ignore[reportPrivateUsage]
-    _event_type_label as _event_type_label,  # pyright: ignore[reportPrivateUsage]
-    _extract_tool_name as _extract_tool_name,  # pyright: ignore[reportPrivateUsage]
-    _format_detail_duration as _format_detail_duration,  # pyright: ignore[reportPrivateUsage]
-    _format_relative_time as _format_relative_time,  # pyright: ignore[reportPrivateUsage]
-    _render_aggregate_stats as _render_aggregate_stats,  # pyright: ignore[reportPrivateUsage]
-    _render_code_changes as _render_code_changes,  # pyright: ignore[reportPrivateUsage]
-    _render_header as _render_header,  # pyright: ignore[reportPrivateUsage]
-    _render_recent_events as _render_recent_events,  # pyright: ignore[reportPrivateUsage]
-    _render_shutdown_cycles as _render_shutdown_cycles,  # pyright: ignore[reportPrivateUsage]
-    _safe_event_data as _safe_event_data,  # pyright: ignore[reportPrivateUsage]
-    _truncate as _truncate,  # pyright: ignore[reportPrivateUsage]
-    render_session_detail as render_session_detail,
-)
