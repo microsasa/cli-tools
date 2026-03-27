@@ -235,20 +235,27 @@ def _interactive_loop(path: Path | None) -> None:
             # Auto-refresh on file change
             if change_event.is_set():
                 change_event.clear()
-                sessions = get_all_sessions(path)
-                if view == "home":
-                    _draw_home(console, sessions)
-                    _write_prompt(_HOME_PROMPT)
-                elif view == "cost":
-                    console.clear()
-                    _print_version_header(console)
-                    render_cost_view(sessions, target_console=console)
-                    _write_prompt(_BACK_PROMPT)
-                elif view == "detail" and detail_idx is not None:
-                    console.clear()
-                    _print_version_header(console)
-                    _show_session_by_index(console, sessions, detail_idx)
-                    _write_prompt(_BACK_PROMPT)
+                try:
+                    sessions = get_all_sessions(path)
+                    if view == "home":
+                        _draw_home(console, sessions)
+                        _write_prompt(_HOME_PROMPT)
+                    elif view == "cost":
+                        console.clear()
+                        _print_version_header(console)
+                        render_cost_view(sessions, target_console=console)
+                        _write_prompt(_BACK_PROMPT)
+                    elif view == "detail" and detail_idx is not None:
+                        console.clear()
+                        _print_version_header(console)
+                        _show_session_by_index(console, sessions, detail_idx)
+                        _write_prompt(_BACK_PROMPT)
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Auto-refresh render failed; will retry on next change"
+                    )
 
             # Non-blocking stdin read
             try:
