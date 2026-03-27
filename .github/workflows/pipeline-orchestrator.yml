@@ -170,6 +170,7 @@ jobs:
                     mergeStateStatus
                     labels(first: 100) { nodes { name } }
                     commits(last: 1) { nodes { commit {
+                      committedDate
                       statusCheckRollup { state contexts(first: 30) { nodes {
                         ... on CheckRun { name conclusion status }
                       }}}
@@ -237,6 +238,39 @@ jobs:
 
             # --- Step 2: CI still running or unknown ---
             if [[ "$CI_CONCLUSION" != "SUCCESS" && "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "NEUTRAL" && "$CI_CONCLUSION" != "neutral" ]]; then
+              # If CI is UNKNOWN, attempt to re-trigger via workflow_dispatch
+              if [[ "$CI_CONCLUSION" == "UNKNOWN" ]]; then
+                COMMIT_DATE=$(echo "$PR_DATA" | jq -r '.data.repository.pullRequest.commits.nodes[0].commit.committedDate // empty')
+                if [[ -n "$COMMIT_DATE" ]]; then
+                  COMMIT_EPOCH=$(date -d "$COMMIT_DATE" +%s 2>/dev/null || echo "0")
+                  NOW_EPOCH=$(date +%s)
+                  AGE_MINUTES=$(( (NOW_EPOCH - COMMIT_EPOCH) / 60 ))
+                  if [[ "$AGE_MINUTES" -ge 5 ]]; then
+                    # Count re-triggers for the current head commit specifically
+                    RETRIGGER_COUNT=$(gh run list --workflow=ci.yml --event workflow_dispatch --branch="$BRANCH" \
+                      --json headSha --jq "[.[] | select(.headSha == \"$HEAD_SHA\")] | length" 2>/dev/null || echo "0")
+                    if [[ "$RETRIGGER_COUNT" -ge 2 ]]; then
+                      echo "  ❌ PR #${PR}: CI is UNKNOWN after $RETRIGGER_COUNT re-trigger attempts. Marking stuck."
+                      gh pr edit "$PR" --add-label "aw-pr-stuck:ci"
+                      gh pr comment "$PR" --body "❌ Pipeline orchestrator: CI status remains UNKNOWN after $RETRIGGER_COUNT re-trigger attempts. Marking as stuck for human review."
+                      echo "::endgroup::"
+                      continue
+                    fi
+                    # Check cooldown — skip if we already dispatched within last 30 min
+                    RECENT_CI=$(gh run list --workflow=ci.yml --event workflow_dispatch --branch="$BRANCH" \
+                      --limit 1 --json createdAt --jq '
+                      [.[] | select((now - (.createdAt | fromdateiso8601)) < 1800)] | length' 2>/dev/null || echo "0")
+                    if [[ "$RECENT_CI" -eq 0 ]]; then
+                      echo "  🔄 PR #${PR}: CI is UNKNOWN and commit is ${AGE_MINUTES}m old. Re-triggering CI (attempt $((RETRIGGER_COUNT + 1))/2)."
+                      gh workflow run ci.yml -f ref="$BRANCH"
+                    else
+                      echo "  ⏳ PR #${PR}: CI is UNKNOWN — already re-triggered recently. Waiting."
+                    fi
+                    echo "::endgroup::"
+                    continue
+                  fi
+                fi
+              fi
               echo "  ⏳ PR #${PR}: CI status is $CI_CONCLUSION. Waiting."
               echo "::endgroup::"
               continue
