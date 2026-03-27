@@ -422,7 +422,7 @@ From `pricing.py` — `_RAW_MULTIPLIERS` dict:
 
 Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, = 0.0 → Free, < 1.0 → Light, otherwise Standard.
 
-**Important:** `pricing.py` is **reference data only**. The multipliers are not used in any runtime calculations — premium request counts come exclusively from `session.shutdown` events. The pricing module exists for `categorize_model()` (tier lookup) and potential future use.
+**Note:** `pricing.py` multipliers are used **only for `~`-prefixed estimates** on live/active sessions (`render_live_sessions`, `render_cost_view`). Historical and shutdown-based views use exact API-provided premium request counts exclusively — the multipliers play no role there.
 
 ### Model resolution for active sessions
 
