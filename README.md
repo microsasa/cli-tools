@@ -165,15 +165,27 @@ For active sessions (no shutdown event yet), the tool sums individual message to
 
 GitHub Copilot charges different premium-request multipliers per model. This tool reports raw counts (model calls, user messages, exact premium requests from shutdown data) — not estimated billing. The multiplier table below is provided for reference only:
 
-| Model | Multiplier | Tier |
-|---|---|---|
-| `claude-opus-4.6` / `claude-opus-4.5` | 3× | Premium |
-| `claude-opus-4.6-1m` | 6× | Premium |
-| `claude-sonnet-4.6` / `claude-sonnet-4.5` / `claude-sonnet-4` | 1× | Standard |
-| `gpt-5.4` / `gpt-5.2` / `gpt-5.1` / `gpt-5.x-codex` / `gpt-5.1-codex-max` | 1× | Standard |
-| `gemini-3-pro-preview` | 1× | Standard |
-| `claude-haiku-4.5` / `gpt-5.1-codex-mini` | 0.33× | Light |
-| `gpt-5-mini` / `gpt-4.1` / `gpt-5.4-mini` | 0× | Free/Included |
+| Model                  | Multiplier | Tier     |
+|------------------------|------------|----------|
+| `claude-sonnet-4.6`    | 1×         | Standard |
+| `claude-sonnet-4.5`    | 1×         | Standard |
+| `claude-sonnet-4`      | 1×         | Standard |
+| `claude-opus-4.6`      | 3×         | Premium  |
+| `claude-opus-4.6-1m`   | 6×         | Premium  |
+| `claude-opus-4.5`      | 3×         | Premium  |
+| `claude-haiku-4.5`     | 0.33×      | Light    |
+| `gpt-5.4`              | 1×         | Standard |
+| `gpt-5.2`              | 1×         | Standard |
+| `gpt-5.1`              | 1×         | Standard |
+| `gpt-5.1-codex`        | 1×         | Standard |
+| `gpt-5.2-codex`        | 1×         | Standard |
+| `gpt-5.3-codex`        | 1×         | Standard |
+| `gpt-5.1-codex-max`    | 1×         | Standard |
+| `gpt-5.1-codex-mini`   | 0.33×      | Light    |
+| `gpt-5.4-mini`         | 0×         | Free     |
+| `gpt-5-mini`           | 0×         | Free     |
+| `gpt-4.1`              | 0×         | Free     |
+| `gemini-3-pro-preview` | 1×         | Standard |
 
 ## Development
 
