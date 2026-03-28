@@ -6,14 +6,12 @@ aggregates.
 """
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 from pydantic import ValidationError
 
 from copilot_usage.models import (
-    EPOCH,
     CodeChanges,
     EventType,
     ModelMetrics,
@@ -21,8 +19,8 @@ from copilot_usage.models import (
     SessionShutdownData,
     SessionSummary,
     TokenUsage,
-    ensure_aware,
     merge_model_metrics,
+    session_sort_key,
 )
 
 _DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
@@ -423,9 +421,5 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         summary.events_path = events_path
         summaries.append(summary)
 
-    def _sort_key(s: SessionSummary) -> datetime:
-        """Return an aware start_time for sorting, falling back to EPOCH."""
-        return ensure_aware(s.start_time) if s.start_time is not None else EPOCH
-
-    summaries.sort(key=_sort_key, reverse=True)
+    summaries.sort(key=session_sort_key, reverse=True)
     return summaries

@@ -558,3 +558,43 @@ class TestEnsureAwareOpt:
         aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
         result = ensure_aware_opt(aware)
         assert result is aware
+
+
+# ---------------------------------------------------------------------------
+# Issue #446 — Cleanup 2: session_sort_key
+# ---------------------------------------------------------------------------
+
+
+class TestSessionSortKey:
+    """Tests for the session_sort_key helper."""
+
+    def test_importable_from_models(self) -> None:
+        """session_sort_key is importable from copilot_usage.models."""
+        from copilot_usage.models import session_sort_key as fn
+
+        assert callable(fn)
+
+    def test_returns_aware_start_time(self) -> None:
+        """session_sort_key returns the aware start_time when set."""
+        from copilot_usage.models import session_sort_key
+
+        t = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+        session = SessionSummary(session_id="s", start_time=t)
+        assert session_sort_key(session) == t
+
+    def test_naive_start_time_becomes_aware(self) -> None:
+        """session_sort_key converts a naive start_time to aware."""
+        from copilot_usage.models import session_sort_key
+
+        naive = datetime(2026, 6, 15, 12, 0, 0)
+        session = SessionSummary(session_id="s", start_time=naive)
+        result = session_sort_key(session)
+        assert result.tzinfo == UTC
+        assert result.replace(tzinfo=None) == naive
+
+    def test_none_start_time_returns_epoch(self) -> None:
+        """session_sort_key returns EPOCH when start_time is None."""
+        from copilot_usage.models import session_sort_key
+
+        session = SessionSummary(session_id="s", start_time=None)
+        assert session_sort_key(session) == EPOCH
