@@ -93,21 +93,21 @@ Each `session.shutdown` event represents the metrics for **one lifecycle** (star
 
 ### The code path
 
-In `build_session_summary()` (in `parser.py`):
+`build_session_summary()` (in `parser.py`) delegates to four focused helpers:
 
-**Phase 1 — Collect all shutdowns** (in `parser.py`):
+**`_first_pass(events)` → `_FirstPassResult`** — single pass collecting all shutdowns:
 ```python
-all_shutdowns: list[tuple[int, SessionShutdownData, str | None]] = []
+all_shutdowns: list[tuple[int, SessionShutdownData]] = []
 # ...
 elif ev.type == EventType.SESSION_SHUTDOWN:
     # ... validate, extract data ...
-    all_shutdowns.append((idx, data, current_model))
+    all_shutdowns.append((idx, data))
 ```
-Each tuple stores `(event_index, shutdown_data, resolved_model)`.
+Each tuple stores `(event_index, shutdown_data)`. The model is resolved inline and stored on `_FirstPassResult.model`.
 
-**Phase 2 — Sum across all shutdowns** (in `parser.py`):
+**`_build_completed_summary(fp, name, resume)` → `SessionSummary`** — sums across all shutdowns:
 ```python
-for _idx, sd, _m in all_shutdowns:
+for _idx, sd in fp.all_shutdowns:
     total_premium += sd.totalPremiumRequests
     total_api_duration += sd.totalApiDurationMs
     # ... merge model_metrics ...
@@ -144,23 +144,20 @@ The model name for a shutdown is resolved in priority order (in `parser.py`):
 
 ### Detection logic
 
-After collecting all shutdowns, `build_session_summary()` scans events after the last shutdown index (in `parser.py`):
+After the first pass, `build_session_summary()` calls `_detect_resume(events, fp.all_shutdowns)` (in `parser.py`) which scans events after the last shutdown index:
 
 ```python
-_RESUME_INDICATOR_TYPES: frozenset[str] = frozenset({
-    EventType.SESSION_RESUME,
-    EventType.USER_MESSAGE,
-    EventType.ASSISTANT_MESSAGE,
-})
+def _detect_resume(events, all_shutdowns):
+    # ...
+    last_shutdown_idx = all_shutdowns[-1][0]
 
-last_shutdown_idx = all_shutdowns[-1][0] if all_shutdowns else -1
-
-if all_shutdowns and last_shutdown_idx >= 0:
     for ev in events[last_shutdown_idx + 1:]:
         if ev.type in _RESUME_INDICATOR_TYPES:
             session_resumed = True
         # ... count post-shutdown tokens, messages, model calls ...
 ```
+
+The helper includes a defensive guard for empty `all_shutdowns` (returns empty `_ResumeInfo`), making it safe to call independently.
 
 The presence of **any** `session.resume`, `user.message`, or `assistant.message` event after the last shutdown triggers `session_resumed = True`.
 
@@ -368,7 +365,7 @@ Two levels of protection against files disappearing between discovery and read:
 
 Events with types not in `EventType` still parse successfully — `SessionEvent.type` is `str`, not the enum. `parse_data()` returns `GenericEventData(extra="allow")` for unknown types, accepting any fields.
 
-In `build_session_summary()`, unknown types are simply ignored — the `for idx, ev in enumerate(events)` loop only has branches for known types, with no `else` clause needed.
+In `_first_pass()` (in `parser.py`), unknown types are simply ignored — the loop only has branches for known types, with no `else` clause needed.
 
 ### Unknown models in pricing
 
@@ -426,7 +423,7 @@ Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, = 0.0
 
 ### Model resolution for active sessions
 
-When no shutdown data exists, the model is resolved in `build_session_summary()` (in `parser.py`):
+When no shutdown data exists, the model is resolved in `_build_active_summary()` (in `parser.py`):
 
-1. Scan `tool.execution_complete` events for a `model` field (in `parser.py`)
+1. Scan `tool.execution_complete` events for a `model` field
 2. Fall back to `~/.copilot/config.json` → `data.model` field (`_read_config_model()` in `parser.py`)

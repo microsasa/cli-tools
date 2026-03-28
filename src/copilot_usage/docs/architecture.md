@@ -34,25 +34,25 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | Module | Responsibility |
 |--------|---------------|
 | `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Also contains the interactive loop (invoked when no subcommand is given) with watchdog-based auto-refresh (2-second debounce). |
-| `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session. Counts raw events (model calls via assistant.turn_start, user messages). |
+| `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session via focused helpers: `_first_pass()` (extract identity/shutdowns/counters), `_detect_resume()` (post-shutdown scan), `_build_completed_summary()`, `_build_active_summary()`. |
 | `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
-| `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), session detail, live view, premium request breakdown. Shows raw counts and `~`-prefixed premium cost estimates for live/active sessions; historical post-shutdown views display exact API-provided numbers. |
+| `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), live view, premium request breakdown. Shows raw counts and `~`-prefixed premium cost estimates for live/active sessions; historical post-shutdown views display exact API-provided numbers. |
+| `render_detail.py` | Session detail rendering — extracted from report.py. Displays event timeline, per-event metadata, and session-level aggregates. |
+| `_formatting.py` | Shared formatting utilities — `format_duration()` and `format_tokens()` with doctest-verified examples. Used by report.py and render_detail.py. |
 | `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers are used for `~`-prefixed cost estimates in live/active views (`render_live_sessions`, `render_cost_view`); historical post-shutdown views use exact API-provided numbers exclusively. |
-| `logging_config.py` | Loguru setup — stderr warnings only, no file output. Called once from CLI entry point. |
+| `logging_config.py` | Loguru setup — stderr warnings only, no file output. `loguru` module import guarded behind `TYPE_CHECKING` for the `"loguru.Record"` type annotation. Called once from CLI entry point. |
 
 ### Event Processing Pipeline
 
 1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
 2. **Parsing** — `parse_events()` reads each line as JSON, creates `SessionEvent` objects via Pydantic validation. Malformed lines are skipped with a warning.
 3. **Typed dispatch** — `SessionEvent.parse_data()` uses match/case on event type to return the correct typed data model (`SessionStartData`, `AssistantMessageData`, etc.)
-4. **Summarization** — `build_session_summary()` walks the event list:
-   - Extracts session metadata from `session.start`
-   - Counts raw events: model calls (assistant.turn_start count), user messages (user.message count)
-   - For completed sessions: uses `session.shutdown` aggregate metrics directly — **sums all shutdown events** (shutdown metrics are per-lifecycle, not cumulative)
-   - For active/resumed sessions: sums `outputTokens` from individual `assistant.message` events
-   - Detects resumed sessions: if events exist after `session.shutdown`, marks `is_active = True`
-   - Tracks `last_resume_time` from `session.resume` events — used to calculate "Running" duration for active sessions
-   - Reports exact premium requests from shutdown data; multiplier-based `~` estimates are used only in live/active views
+4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
+   - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
+   - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`)
+   - `_build_completed_summary()`: merges all shutdown cycles (metrics, premium requests, code changes) into a SessionSummary. Sets `is_active=True` if resumed.
+   - `_build_active_summary()`: for sessions with no shutdowns — infers model from `tool.execution_complete` events or `~/.copilot/config.json`, builds synthetic metrics from output tokens
+   - Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between helpers
 5. **Rendering** — Report functions receive `SessionSummary` objects and render Rich output
 
 ### Key Design Decisions
@@ -75,14 +75,19 @@ tests/
 │   ├── test_models.py          Pydantic model creation and validation
 │   ├── test_parser.py          Event parsing, session summary building, edge cases
 │   ├── test_pricing.py         Pricing lookups, cost estimation
-│   ├── test_report.py          Rich output formatting, rendering functions
+│   ├── test_report.py          Rich output & session-detail rendering
+│   ├── test_formatting.py      Formatting helpers and string utilities
+│   ├── test_logging_config.py  Loguru configuration
 │   └── test_cli.py             Click command invocation via CliRunner
+├── test_packaging.py           Wheel build test — verifies docs excluded from distribution
+├── test_docs.py                Documentation tests
 └── e2e/                        E2e tests — real CLI commands against fixture data
-    ├── fixtures/               Anonymized events from real Copilot sessions (9 fixtures)
+    ├── fixtures/               Anonymized events from real Copilot sessions
     └── test_e2e.py             Full pipeline: CLI → parser → models → report → output
 ```
 
-- **Unit tests**: 96% coverage, test individual functions with synthetic data
-- **E2e tests**: Run actual CLI commands against 9 anonymized fixture sessions, assert on output content
+- **Unit tests**: 99% coverage, test individual functions with synthetic data
+- **Doctests**: `_formatting.py` functions have `>>>` examples executed via `--doctest-modules`
+- **E2e tests**: Run actual CLI commands against anonymized fixture sessions, assert on output content
 - Test counts grow regularly — run `make test` to see the current numbers
 - Coverage is measured on unit tests only (e2e coverage would be misleading)
