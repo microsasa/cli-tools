@@ -4075,9 +4075,9 @@ class TestRenderSessionTableTokenFn:
             token_fn=shutdown_output_tokens,
         )
         output = buf.getvalue()
-        assert "500" in output
+        assert format_tokens(500) in output
         # Must NOT contain the total (700 = 500 + 200)
-        assert "700" not in output
+        assert format_tokens(700) not in output
 
     def test_total_output_tokens_via_token_fn(self) -> None:
         """token_fn=total_output_tokens uses total tokens (500 + 200 = 700)."""
@@ -4091,7 +4091,7 @@ class TestRenderSessionTableTokenFn:
             token_fn=total_output_tokens,
         )
         output = buf.getvalue()
-        assert "700" in output
+        assert format_tokens(700) in output
 
 
 class TestRenderCostViewResumed:
