@@ -253,12 +253,9 @@ def _render_summary_header(
 ) -> None:
     """Print the report header with date range.
 
-    Must only be called with a non-empty *sessions* list — both
-    call-sites (``render_summary`` and ``render_full_summary``) guard
-    against the empty case before reaching here.
+    *sessions* must be non-empty — callers are responsible for the
+    empty-list check.
     """
-    if not sessions:
-        raise ValueError("_render_summary_header requires non-empty sessions")
     start_times = [
         ensure_aware(s.start_time) for s in sessions if s.start_time is not None
     ]

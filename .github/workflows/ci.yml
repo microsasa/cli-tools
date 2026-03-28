@@ -17,6 +17,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pyright
       - run: uv run bandit -r src/
-      - run: uv run pytest --cov --cov-report=xml -v
+      - run: uv run pytest --ignore=tests/e2e --cov --cov-report=xml -v
+      - run: uv run pytest tests/e2e -v
       - name: Check diff coverage (new/changed lines ≥ 90%)
         run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
