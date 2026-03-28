@@ -28,7 +28,10 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _build_active_summary,
+    _detect_resume,
     _extract_session_name,
+    _first_pass,
     _infer_model_from_metrics,
     _read_config_model,
     _safe_int_tokens,
@@ -3755,3 +3758,226 @@ class TestBuildSessionSummaryToolModelSelection:
         events = parse_events(p)
         summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
         assert summary.model == "gpt-5.1"
+
+
+# ---------------------------------------------------------------------------
+# Issue #470 — _first_pass direct unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestFirstPassDirect:
+    """Direct unit tests for _first_pass covering untested branches."""
+
+    def test_second_session_start_ignored(self, tmp_path: Path) -> None:
+        """Only the first SESSION_START's identity is used."""
+        t1 = "2026-03-07T10:00:00.000Z"
+        t2 = "2026-03-07T11:00:00.000Z"
+        start1 = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "first",
+                    "startTime": t1,
+                    "context": {"cwd": "/a"},
+                },
+                "id": "ev-s1",
+                "timestamp": t1,
+            }
+        )
+        start2 = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "second",
+                    "startTime": t2,
+                    "context": {"cwd": "/b"},
+                },
+                "id": "ev-s2",
+                "timestamp": t2,
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, start1, start2, _USER_MSG)
+        events = parse_events(p)
+        result = _first_pass(events)
+        assert result.session_id == "first"
+        assert result.start_time == datetime(2026, 3, 7, 10, 0, tzinfo=UTC)
+
+    def test_invalid_session_start_skipped(self, tmp_path: Path) -> None:
+        """A malformed SESSION_START (ValidationError) is skipped without crash."""
+        bad_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {"bad": "data"},
+                "id": "ev-bad",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, bad_start, _USER_MSG)
+        events = parse_events(p)
+        result = _first_pass(events)
+        assert result.session_id == ""
+        assert result.start_time is None
+
+    def test_invalid_shutdown_skipped(self, tmp_path: Path) -> None:
+        """A malformed SESSION_SHUTDOWN is skipped; session proceeds without it."""
+        bad_shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {"totalPremiumRequests": "not-a-number"},
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, bad_shutdown)
+        events = parse_events(p)
+        result = _first_pass(events)
+        assert result.all_shutdowns == []
+        assert result.session_id == "test-session-001"
+
+
+# ---------------------------------------------------------------------------
+# Issue #470 — _detect_resume direct unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeDirect:
+    """Direct unit tests for _detect_resume covering untested branches."""
+
+    def test_empty_shutdowns_returns_zeroed(self) -> None:
+        """No shutdowns → zeroed _ResumeInfo."""
+        result = _detect_resume(events=[], all_shutdowns=[])
+        assert result.session_resumed is False
+        assert result.post_shutdown_output_tokens == 0
+        assert result.post_shutdown_turn_starts == 0
+        assert result.post_shutdown_user_messages == 0
+        assert result.last_resume_time is None
+
+    def test_captures_resume_timestamp(self, tmp_path: Path) -> None:
+        """SESSION_RESUME timestamp is captured into last_resume_time."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, _RESUME_EVENT)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _detect_resume(events, fp.all_shutdowns)
+        assert result.session_resumed is True
+        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+
+    def test_accumulates_post_shutdown_tokens(self, tmp_path: Path) -> None:
+        """Post-shutdown assistant messages accumulate output tokens."""
+        asst1 = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "a",
+                    "toolRequests": [],
+                    "interactionId": "i1",
+                    "outputTokens": 100,
+                },
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        asst2 = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m2",
+                    "content": "b",
+                    "toolRequests": [],
+                    "interactionId": "i2",
+                    "outputTokens": 50,
+                },
+                "id": "ev-a2",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst1, asst2)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _detect_resume(events, fp.all_shutdowns)
+        assert result.post_shutdown_output_tokens == 150
+
+    def test_counts_user_messages_and_turn_starts(self, tmp_path: Path) -> None:
+        """Post-shutdown user messages and turn starts are counted separately."""
+        user1 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "u1"},
+                "id": "ev-u1",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        user2 = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "u2"},
+                "id": "ev-u2",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        turn1 = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t1"},
+                "id": "ev-ts1",
+                "timestamp": "2026-03-07T12:01:30.000Z",
+            }
+        )
+        turn2 = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t2"},
+                "id": "ev-ts2",
+                "timestamp": "2026-03-07T12:02:30.000Z",
+            }
+        )
+        turn3 = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t3"},
+                "id": "ev-ts3",
+                "timestamp": "2026-03-07T12:03:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _SHUTDOWN_EVENT,
+            user1,
+            user2,
+            turn1,
+            turn2,
+            turn3,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _detect_resume(events, fp.all_shutdowns)
+        assert result.post_shutdown_user_messages == 2
+        assert result.post_shutdown_turn_starts == 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #470 — _build_active_summary model from config.json fallback
+# ---------------------------------------------------------------------------
+
+
+class TestBuildActiveSummaryConfigFallback:
+    """Direct test for _build_active_summary config.json model fallback."""
+
+    def test_model_from_config_fallback(self, tmp_path: Path) -> None:
+        """When no tool events exist, model is read from config.json."""
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"model": "gpt-4o"}), encoding="utf-8")
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _build_active_summary(fp, name=None, events=events, config_path=config)
+        assert result.model == "gpt-4o"
