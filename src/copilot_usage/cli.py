@@ -419,9 +419,9 @@ def summary(
     path: Path | None,
 ) -> None:
     """Show usage summary across all sessions."""
-    _print_version_header()
     path = path or ctx.obj.get("path")
     aware_since, aware_until = _validate_since_until(since, until)
+    _print_version_header()
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
@@ -525,9 +525,9 @@ def cost(
     path: Path | None,
 ) -> None:
     """Show premium request costs from shutdown data."""
-    _print_version_header()
     path = path or ctx.obj.get("path")
     aware_since, aware_until = _validate_since_until(since, until)
+    _print_version_header()
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
