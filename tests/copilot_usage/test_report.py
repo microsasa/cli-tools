@@ -3989,6 +3989,141 @@ class TestRenderCostViewResumed:
 
 
 # ---------------------------------------------------------------------------
+# Issue #409 — per-model row shows shutdown-only model calls
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewModelCallsConsistency:
+    """Issue #409 — per-model row must show shutdown-only model calls."""
+
+    def test_resumed_session_per_model_row_shows_shutdown_calls(self) -> None:
+        """Per-model row shows shutdown-only model calls (7), not total (10)."""
+        session = SessionSummary(
+            session_id="calls-resumed-409",
+            name="Resumed 409",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_model_calls=3,
+            active_user_messages=2,
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        # Find the per-model row (contains "gpt-4" and the session name)
+        model_row = [ln for ln in lines if "gpt-4" in ln and "Resumed 409" in ln]
+        assert model_row, "Expected a per-model row with session name"
+        # Shutdown-only model calls = 10 - 3 = 7; must appear on model row
+        assert " 7 " in model_row[0]
+
+        # The ↳ row shows active-period model calls (3)
+        since_row = [ln for ln in lines if "Since last shutdown" in ln]
+        assert since_row, "Expected a ↳ Since last shutdown row"
+        assert " 3 " in since_row[0]
+
+        # Grand total shows the full session total (10)
+        grand_row = [ln for ln in lines if "Grand Total" in ln]
+        assert grand_row, "Expected a Grand Total row"
+        assert " 10 " in grand_row[0]
+
+    def test_completed_session_no_regression(self) -> None:
+        """Completed session (active_model_calls=0) still shows full model_calls."""
+        session = SessionSummary(
+            session_id="calls-complete-409",
+            name="Completed 409",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            has_shutdown_metrics=True,
+            model_calls=10,
+            user_messages=5,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=20),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        # Per-model row shows full model calls (10 - 0 = 10)
+        model_row = [ln for ln in lines if "gpt-4" in ln and "Completed 409" in ln]
+        assert model_row, "Expected a per-model row with session name"
+        assert " 10 " in model_row[0]
+
+        # No ↳ row for completed sessions
+        since_row = [ln for ln in lines if "Since last shutdown" in ln]
+        assert not since_row, "Completed session should not have a ↳ row"
+
+        # Grand total also shows 10
+        grand_row = [ln for ln in lines if "Grand Total" in ln]
+        assert grand_row
+        assert " 10 " in grand_row[0]
+
+    def test_resumed_session_visual_sum_matches_grand_total(self) -> None:
+        """Summing per-model row + ↳ row model calls equals grand total."""
+        session = SessionSummary(
+            session_id="calls-sum-409",
+            name="Sum Check",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_model_calls=3,
+            active_user_messages=2,
+            active_output_tokens=100,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=200),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        # Extract model calls from the per-model, ↳, and grand total rows
+        model_row = [ln for ln in lines if "gpt-4" in ln and "Sum Check" in ln]
+        since_row = [ln for ln in lines if "Since last shutdown" in ln]
+        grand_row = [ln for ln in lines if "Grand Total" in ln]
+        assert model_row and since_row and grand_row
+
+        # Extract numbers from each row
+        def extract_ints(line: str) -> list[int]:
+            return [int(x) for x in re.findall(r"\b\d+\b", line)]
+
+        model_nums = extract_ints(model_row[0])
+        since_nums = extract_ints(since_row[0])
+        grand_nums = extract_ints(grand_row[0])
+
+        # 7 should be in model row numbers and 3 in since row numbers
+        assert 7 in model_nums, f"Expected 7 in model row: {model_nums}"
+        assert 3 in since_nums, f"Expected 3 in since row: {since_nums}"
+        assert 10 in grand_nums, f"Expected 10 in grand total: {grand_nums}"
+
+
+# ---------------------------------------------------------------------------
 # Issue #276 — shutdown_output_tokens and render_full_summary split-view
 # ---------------------------------------------------------------------------
 
