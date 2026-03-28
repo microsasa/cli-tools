@@ -392,3 +392,8 @@ def has_active_period_stats(session: SessionSummary) -> bool:
         or session.active_output_tokens > 0
         or session.active_model_calls > 0
     )
+
+
+def session_sort_key(session: SessionSummary) -> datetime:
+    """Return an aware start_time for sorting; sessions without one sort last."""
+    return ensure_aware(session.start_time) if session.start_time is not None else EPOCH

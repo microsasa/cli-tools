@@ -24,12 +24,12 @@ from copilot_usage._formatting import (
     format_tokens,
 )
 from copilot_usage.models import (
-    EPOCH,
     ModelMetrics,
     SessionSummary,
     ensure_aware,
     has_active_period_stats,
     merge_model_metrics,
+    session_sort_key,
     shutdown_output_tokens,
     total_output_tokens,
 )
@@ -263,7 +263,8 @@ def _render_summary_header(
     call-sites (``render_summary`` and ``render_full_summary``) guard
     against the empty case before reaching here.
     """
-    assert sessions, "_render_summary_header requires non-empty sessions"  # noqa: S101  # nosec B101
+    if not sessions:
+        raise ValueError("_render_summary_header requires non-empty sessions")
     start_times = [
         ensure_aware(s.start_time) for s in sessions if s.start_time is not None
     ]
@@ -352,7 +353,7 @@ def _render_session_table(
 
     sorted_sessions = sorted(
         sessions,
-        key=lambda s: ensure_aware(s.start_time) if s.start_time is not None else EPOCH,
+        key=session_sort_key,
         reverse=True,
     )
 

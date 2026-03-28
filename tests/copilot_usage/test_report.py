@@ -4450,3 +4450,31 @@ class TestRenderRecentEventsMaxEventsBoundary:
         for i in range(3):
             assert f"m-{i}" not in output
         assert output.count("user message") == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #446 — Cleanup 1: _render_summary_header ValueError guard
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSummaryHeaderValueError:
+    """Cleanup 1: _render_summary_header raises ValueError on empty sessions."""
+
+    def test_empty_sessions_raises_value_error(self) -> None:
+        """Calling _render_summary_header with [] must raise ValueError."""
+        from copilot_usage.report import _render_summary_header
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=120)
+        with pytest.raises(ValueError, match="non-empty sessions"):
+            _render_summary_header(console, [])
+
+    def test_render_summary_guards_empty_sessions(self) -> None:
+        """render_summary returns early for empty list, never hitting ValueError."""
+        output = _capture_summary([])
+        assert "No sessions found" in output
+
+    def test_render_full_summary_guards_empty_sessions(self) -> None:
+        """render_full_summary returns early for empty list, never hitting ValueError."""
+        output = _capture_full_summary([])
+        assert "No sessions found" in output
