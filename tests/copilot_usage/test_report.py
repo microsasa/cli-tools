@@ -1377,6 +1377,38 @@ class TestReportCoverageGaps:
         # Ensure the files-modified metric specifically shows a count of 2.
         assert re.search(r"Files?\s+modified[^\n]*\b2\b", output)
 
+    def test_code_changes_additions_only_renders(self) -> None:
+        """linesAdded>0, linesRemoved=0, no files → Code Changes section IS shown."""
+        from copilot_usage.report import render_session_detail
+
+        summary = SessionSummary(
+            session_id="add-only",
+            code_changes=CodeChanges(
+                filesModified=[],
+                linesAdded=5,
+                linesRemoved=0,
+            ),
+        )
+        output = _capture_console(render_session_detail, [], summary)
+        assert "Code Changes" in output
+        assert "+5" in output
+
+    def test_code_changes_removals_only_renders(self) -> None:
+        """linesRemoved>0, linesAdded=0, no files → Code Changes section IS shown."""
+        from copilot_usage.report import render_session_detail
+
+        summary = SessionSummary(
+            session_id="rem-only",
+            code_changes=CodeChanges(
+                filesModified=[],
+                linesAdded=0,
+                linesRemoved=7,
+            ),
+        )
+        output = _capture_console(render_session_detail, [], summary)
+        assert "Code Changes" in output
+        assert "-7" in output
+
     def test_summary_header_shows_date_range(self) -> None:
         """_render_summary_header date range: earliest date → latest date."""
         s1 = _make_summary_session(
