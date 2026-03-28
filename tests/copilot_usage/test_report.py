@@ -4141,6 +4141,38 @@ class TestRenderCostViewModelCallsConsistency:
             f"to equal total ({total_calls})"
         )
 
+    def test_negative_shutdown_model_calls_clamped_to_zero(self) -> None:
+        """When active_model_calls > model_calls, shutdown calls clamp to 0."""
+        session = SessionSummary(
+            session_id="calls-negative-409",
+            name="Negative Guard",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=3,
+            user_messages=5,
+            active_model_calls=5,
+            active_user_messages=2,
+            active_output_tokens=250,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=4),
+                    usage=TokenUsage(outputTokens=100),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        model_row = [ln for ln in lines if "gpt-4" in ln and "Negative Guard" in ln]
+        assert model_row, "Expected a per-model row with session name"
+        model_cols = [col.strip() for col in model_row[0].split("│")]
+        # shutdown_model_calls = 3 - 5 = -2, clamped to 0
+        assert model_cols[5] == "0"
+
 
 # ---------------------------------------------------------------------------
 # Issue #276 — shutdown_output_tokens and render_full_summary split-view
