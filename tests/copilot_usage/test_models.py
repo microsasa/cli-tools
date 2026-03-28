@@ -22,7 +22,10 @@ from copilot_usage.models import (
     UserMessageData,
     ensure_aware,
     ensure_aware_opt,
+    has_active_period_stats,
     merge_model_metrics,
+    shutdown_output_tokens,
+    total_output_tokens,
 )
 
 # ---------------------------------------------------------------------------
@@ -640,3 +643,178 @@ class TestSessionSummaryCallCountInvariant:
         s = SessionSummary(session_id="zero")
         assert s.model_calls == 0
         assert s.active_model_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# shutdown_output_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownOutputTokens:
+    """Direct unit tests for shutdown_output_tokens()."""
+
+    def test_sums_model_metrics_only(self) -> None:
+        """Active tokens are excluded — only model_metrics outputTokens count."""
+        session = SessionSummary(
+            session_id="s1",
+            model_metrics={
+                "model-a": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                    requests=RequestMetrics(count=1),
+                ),
+            },
+            active_output_tokens=999,
+            model_calls=1,
+        )
+        assert shutdown_output_tokens(session) == 100
+
+    def test_empty_metrics(self) -> None:
+        """Empty model_metrics returns 0 regardless of active_output_tokens."""
+        session = SessionSummary(
+            session_id="s2",
+            model_metrics={},
+            active_output_tokens=50,
+        )
+        assert shutdown_output_tokens(session) == 0
+
+    def test_multiple_models(self) -> None:
+        """Output tokens from multiple models are summed."""
+        session = SessionSummary(
+            session_id="s3",
+            model_metrics={
+                "model-a": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                    requests=RequestMetrics(count=1),
+                ),
+                "model-b": ModelMetrics(
+                    usage=TokenUsage(outputTokens=200),
+                    requests=RequestMetrics(count=2),
+                ),
+            },
+            model_calls=3,
+        )
+        assert shutdown_output_tokens(session) == 300
+
+
+# ---------------------------------------------------------------------------
+# total_output_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestTotalOutputTokens:
+    """Direct unit tests for total_output_tokens() — all four logical cases."""
+
+    def test_case_a_resumed_with_shutdown_metrics(self) -> None:
+        """Resumed session with shutdown metrics: baseline + active."""
+        session = SessionSummary(
+            session_id="case-a",
+            model_metrics={
+                "m": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                    requests=RequestMetrics(count=1),
+                ),
+            },
+            has_shutdown_metrics=True,
+            active_output_tokens=50,
+            last_resume_time=datetime(2026, 1, 1, tzinfo=UTC),
+            model_calls=2,
+            active_model_calls=1,
+        )
+        assert total_output_tokens(session) == 150
+
+    def test_case_b_active_no_shutdown_metrics(self) -> None:
+        """Active-period stats True but no shutdown metrics: only baseline."""
+        session = SessionSummary(
+            session_id="case-b",
+            model_metrics={
+                "m": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                    requests=RequestMetrics(count=1),
+                ),
+            },
+            has_shutdown_metrics=False,
+            active_output_tokens=50,
+            active_user_messages=1,
+            model_calls=1,
+        )
+        assert total_output_tokens(session) == 100
+
+    def test_case_c_shutdown_no_active_stats(self) -> None:
+        """Shutdown metrics but no active-period indicators: only baseline."""
+        session = SessionSummary(
+            session_id="case-c",
+            model_metrics={
+                "m": ModelMetrics(
+                    usage=TokenUsage(outputTokens=100),
+                    requests=RequestMetrics(count=1),
+                ),
+            },
+            has_shutdown_metrics=True,
+            active_output_tokens=0,
+            last_resume_time=None,
+            active_user_messages=0,
+            active_model_calls=0,
+            model_calls=1,
+        )
+        assert total_output_tokens(session) == 100
+
+    def test_case_d_pure_active_empty_metrics(self) -> None:
+        """Empty model_metrics: only active tokens (no double-count risk)."""
+        session = SessionSummary(
+            session_id="case-d",
+            model_metrics={},
+            has_shutdown_metrics=False,
+            active_output_tokens=75,
+        )
+        assert total_output_tokens(session) == 75
+
+
+# ---------------------------------------------------------------------------
+# has_active_period_stats
+# ---------------------------------------------------------------------------
+
+
+class TestHasActivePeriodStats:
+    """Direct unit tests for has_active_period_stats()."""
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("last_resume_time", datetime(2026, 1, 1, tzinfo=UTC)),
+            ("active_user_messages", 1),
+            ("active_output_tokens", 1),
+            ("active_model_calls", 1),
+        ],
+        ids=[
+            "last_resume_time",
+            "active_user_messages",
+            "active_output_tokens",
+            "active_model_calls",
+        ],
+    )
+    def test_each_condition_sufficient(self, field: str, value: object) -> None:
+        """Each OR condition alone must be sufficient to return True."""
+        kwargs: dict[str, object] = {
+            "session_id": "test",
+            "last_resume_time": None,
+            "active_user_messages": 0,
+            "active_output_tokens": 0,
+            "active_model_calls": 0,
+            field: value,
+        }
+        # active_model_calls must be <= model_calls
+        if field == "active_model_calls":
+            kwargs["model_calls"] = value
+        session = SessionSummary(**kwargs)  # type: ignore[arg-type]
+        assert has_active_period_stats(session) is True
+
+    def test_all_zero_is_false(self) -> None:
+        """All zero/None fields must return False."""
+        session = SessionSummary(
+            session_id="zero",
+            last_resume_time=None,
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,
+        )
+        assert has_active_period_stats(session) is False
