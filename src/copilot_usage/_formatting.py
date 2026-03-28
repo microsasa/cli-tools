@@ -37,6 +37,17 @@ def format_duration(ms: int) -> str:
 
     Returns compact strings such as ``"6m 29s"``, ``"5s"``, or
     ``"1h 1m 1s"``.
+
+    >>> format_duration(389114)
+    '6m 29s'
+    >>> format_duration(5000)
+    '5s'
+    >>> format_duration(0)
+    '0s'
+    >>> format_duration(3661000)
+    '1h 1m 1s'
+    >>> format_duration(60000)
+    '1m'
     """
     return _format_timedelta(timedelta(milliseconds=ms))
 
@@ -46,6 +57,15 @@ def format_tokens(n: int) -> str:
 
     Returns ``"1.6M"`` for 1 627 935, ``"16.7K"`` for 16 655, or the
     raw integer string for values below 1 000.
+
+    >>> format_tokens(1627935)
+    '1.6M'
+    >>> format_tokens(16655)
+    '16.7K'
+    >>> format_tokens(500)
+    '500'
+    >>> format_tokens(0)
+    '0'
     """
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"

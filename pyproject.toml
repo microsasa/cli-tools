@@ -4,6 +4,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/copilot_usage"]
+exclude = ["src/copilot_usage/docs"]
 
 [project]
 name = "cli-tools"
@@ -73,8 +74,8 @@ pythonVersion = "3.12"
 reportUnusedFunction = "warning"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --strict-markers --tb=short"
+testpaths = ["tests", "src"]
+addopts = "-v --strict-markers --tb=short --doctest-modules"
 
 [tool.coverage.run]
 source = ["src/copilot_usage"]
