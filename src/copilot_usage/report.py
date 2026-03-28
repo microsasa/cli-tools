@@ -4,8 +4,8 @@ Uses Rich tables and panels to display session information in
 the terminal.
 
 Session-detail rendering (``render_session_detail`` and its private
-helpers) lives in :mod:`copilot_usage.render_detail` and is re-exported
-here so that external callers see no change.
+helpers) lives in :mod:`copilot_usage.render_detail`; only the public
+entry-point is re-exported here so that external callers see no change.
 """
 
 import warnings
@@ -34,27 +34,7 @@ from copilot_usage.models import (
     total_output_tokens,
 )
 from copilot_usage.pricing import lookup_model_pricing
-from copilot_usage.render_detail import (
-    _build_event_details as _build_event_details,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _event_type_label as _event_type_label,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _extract_tool_name as _extract_tool_name,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _format_detail_duration as _format_detail_duration,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _format_relative_time as _format_relative_time,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _render_aggregate_stats as _render_aggregate_stats,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _render_code_changes as _render_code_changes,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _render_header as _render_header,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _render_recent_events as _render_recent_events,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _render_shutdown_cycles as _render_shutdown_cycles,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _safe_event_data as _safe_event_data,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    _truncate as _truncate,  # pyright: ignore[reportPrivateUsage]  # noqa: F401
-    render_session_detail as render_session_detail,
-)
-
-# Backward-compatible private aliases so existing internal call-sites and
-# tests that import the underscore-prefixed names keep working.
-_shutdown_output_tokens = shutdown_output_tokens
-_total_output_tokens = total_output_tokens
-_has_active_period_stats = has_active_period_stats
+from copilot_usage.render_detail import render_session_detail
 
 __all__ = [
     "format_duration",
@@ -93,7 +73,7 @@ class _EffectiveStats:
 
 def _effective_stats(session: SessionSummary) -> _EffectiveStats:
     """Return active-period stats if available, otherwise session totals."""
-    if _has_active_period_stats(session):
+    if has_active_period_stats(session):
         return _EffectiveStats(
             model_calls=session.active_model_calls,
             user_messages=session.active_user_messages,
@@ -102,7 +82,7 @@ def _effective_stats(session: SessionSummary) -> _EffectiveStats:
     return _EffectiveStats(
         model_calls=session.model_calls,
         user_messages=session.user_messages,
-        output_tokens=_total_output_tokens(session),
+        output_tokens=total_output_tokens(session),
     )
 
 
@@ -121,13 +101,13 @@ class _SessionTotals:
 def _compute_session_totals(
     sessions: list[SessionSummary],
     *,
-    token_fn: Callable[[SessionSummary], int] = _total_output_tokens,
+    token_fn: Callable[[SessionSummary], int] = total_output_tokens,
 ) -> _SessionTotals:
     """Compute aggregated totals across *sessions*.
 
     *token_fn* controls how output tokens are counted per session.  Defaults
-    to :func:`_total_output_tokens` (includes active tokens for resumed
-    sessions).  Pass :func:`_shutdown_output_tokens` for shutdown-only views.
+    to :func:`total_output_tokens` (includes active tokens for resumed
+    sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
     """
     return _SessionTotals(
         premium=sum(s.total_premium_requests for s in sessions),
@@ -364,7 +344,7 @@ def _render_session_table(
     """Render the per-session table sorted by start time (newest first).
 
     When *include_active_tokens* is ``False`` the table uses
-    :func:`_shutdown_output_tokens` so that only shutdown-derived metrics
+    :func:`shutdown_output_tokens` so that only shutdown-derived metrics
     appear (appropriate for historical / "Shutdown Data" views).
     """
     if not sessions:
@@ -390,7 +370,7 @@ def _render_session_table(
         model = s.model or "—"
 
         token_fn = (
-            _total_output_tokens if include_active_tokens else _shutdown_output_tokens
+            total_output_tokens if include_active_tokens else shutdown_output_tokens
         )
         output_tokens = token_fn(s)
 
@@ -472,7 +452,7 @@ def _render_historical_section(
         return
 
     # Totals panel — shutdown-only tokens for the historical view
-    totals = _compute_session_totals(historical, token_fn=_shutdown_output_tokens)
+    totals = _compute_session_totals(historical, token_fn=shutdown_output_tokens)
 
     lines = [
         f"[green]{totals.premium}[/green] premium requests   "
@@ -636,7 +616,7 @@ def render_cost_view(
             )
 
         grand_model_calls += s.model_calls
-        grand_output += _total_output_tokens(s)
+        grand_output += total_output_tokens(s)
 
         if s.is_active and s.has_shutdown_metrics:
             cost_stats = _effective_stats(s)
