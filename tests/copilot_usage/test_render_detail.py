@@ -56,23 +56,26 @@ class TestRenderCodeChanges:
 
     def test_none_produces_no_output(self) -> None:
         """code_changes=None → returns immediately without printing."""
-        console = Console(file=io.StringIO(), force_terminal=True)
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True)
         _render_code_changes(None, target_console=console)
-        assert console.file.getvalue() == ""  # type: ignore[union-attr]
+        assert buf.getvalue() == ""
 
     def test_all_zero_produces_no_output(self) -> None:
         """All fields zero/empty → returns without printing."""
-        console = Console(file=io.StringIO(), force_terminal=True)
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True)
         changes = CodeChanges(linesAdded=0, linesRemoved=0, filesModified=[])
         _render_code_changes(changes, target_console=console)
-        assert console.file.getvalue() == ""  # type: ignore[union-attr]
+        assert buf.getvalue() == ""
 
     def test_with_data_shows_table(self) -> None:
         """Non-zero code changes → renders a table with stats."""
-        console = Console(file=io.StringIO(), force_terminal=True)
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True)
         changes = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
         _render_code_changes(changes, target_console=console)
-        output = console.file.getvalue()  # type: ignore[union-attr]
+        output = buf.getvalue()
         assert "Files modified" in output
         assert "+10" in output
         assert "-2" in output
