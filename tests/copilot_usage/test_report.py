@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 from rich.console import Console
 
 from copilot_usage._formatting import (
@@ -301,6 +302,7 @@ class TestRenderLiveSessions:
             last_resume_time=now - timedelta(minutes=10),
             # Historical totals (from shutdown events)
             user_messages=263,
+            model_calls=275,
             model_metrics={
                 "claude-sonnet-4": ModelMetrics(
                     usage=TokenUsage(outputTokens=200_000),
@@ -333,6 +335,7 @@ class TestRenderLiveSessions:
             start_time=now - timedelta(hours=2),
             # Historical totals accumulated before the current active period
             user_messages=263,
+            model_calls=275,
             model_metrics={
                 "claude-sonnet-4": ModelMetrics(
                     usage=TokenUsage(outputTokens=200_000),
@@ -1626,6 +1629,7 @@ class TestRenderFullSummary:
             name="Empty",
             start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
             is_active=True,
+            model_calls=1,
             active_model_calls=1,
             active_user_messages=1,
             active_output_tokens=100,
@@ -3174,6 +3178,7 @@ class TestHasActivePeriodStats:
         session = SessionSummary(
             session_id="active-calls-1234",
             is_active=True,
+            model_calls=3,
             active_user_messages=0,
             active_output_tokens=0,
             active_model_calls=3,
@@ -3247,6 +3252,7 @@ class TestEffectiveStats:
         """_EffectiveStats instances are immutable."""
         session = SessionSummary(
             session_id="frozen-test-1234",
+            model_calls=1,
             active_model_calls=1,
         )
         stats = _effective_stats(session)
@@ -3708,6 +3714,7 @@ class TestTotalOutputTokens:
         session = SessionSummary(
             session_id="no-metrics-active",
             is_active=True,
+            model_calls=3,
             active_model_calls=3,
             active_output_tokens=500,
             model_metrics={},
@@ -4303,37 +4310,29 @@ class TestRenderCostViewModelCallsConsistency:
             f"to equal total ({total_calls})"
         )
 
-    def test_negative_shutdown_model_calls_clamped_to_zero(self) -> None:
-        """When active_model_calls > model_calls, shutdown calls clamp to 0."""
-        session = SessionSummary(
-            session_id="calls-negative-409",
-            name="Negative Guard",
-            model="gpt-4",
-            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
-            is_active=True,
-            has_shutdown_metrics=True,
-            last_resume_time=datetime.now(tz=UTC),
-            model_calls=3,
-            user_messages=5,
-            active_model_calls=5,
-            active_user_messages=2,
-            active_output_tokens=250,
-            model_metrics={
-                "gpt-4": ModelMetrics(
-                    requests=RequestMetrics(count=2, cost=4),
-                    usage=TokenUsage(outputTokens=100),
-                ),
-            },
-        )
-        output = _capture_cost_view([session])
-        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        lines = clean.splitlines()
-
-        model_row = [ln for ln in lines if "gpt-4" in ln and "Negative Guard" in ln]
-        assert model_row, "Expected a per-model row with session name"
-        model_cols = [col.strip() for col in model_row[0].split("│")]
-        # shutdown_model_calls = 3 - 5 = -2, clamped to 0
-        assert model_cols[5] == "0"
+    def test_negative_shutdown_model_calls_rejected_by_validator(self) -> None:
+        """active_model_calls > model_calls is rejected by the model validator."""
+        with pytest.raises(ValidationError):
+            SessionSummary(
+                session_id="calls-negative-409",
+                name="Negative Guard",
+                model="gpt-4",
+                start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+                is_active=True,
+                has_shutdown_metrics=True,
+                last_resume_time=datetime.now(tz=UTC),
+                model_calls=3,
+                user_messages=5,
+                active_model_calls=5,
+                active_user_messages=2,
+                active_output_tokens=250,
+                model_metrics={
+                    "gpt-4": ModelMetrics(
+                        requests=RequestMetrics(count=2, cost=4),
+                        usage=TokenUsage(outputTokens=100),
+                    ),
+                },
+            )
 
 
 # ---------------------------------------------------------------------------
