@@ -32,6 +32,8 @@ Analyze the entire codebase for cleanup opportunities and open issues for anythi
 
 ## Instructions
 
+Read `.github/CODING_GUIDELINES.md`. Flag any violations of those standards in existing code as cleanup opportunities.
+
 Read all files in the repository. Read all open issues in the repository. Identify genuine cleanup opportunities — refactoring, dead code, inconsistencies, stale docs, dependency hygiene, or anything else that would make the codebase meaningfully better.
 
 For each finding, open an issue with root cause analysis and a clear spec for resolving it. Each issue must include a testing requirement — regression tests for bugs, coverage for new functionality. Prefix each issue title with `[aw][code health]` and label each issue with `aw` and `code-health`.

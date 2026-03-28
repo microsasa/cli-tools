@@ -22,8 +22,9 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - **No `getattr` / `hasattr`.** Access attributes directly through typed
   references.
-- **No `isinstance` checks as a substitute for proper typing.** If the type
-  system cannot express the constraint, refactor so it can.
+- **No `isinstance` checks in business logic.** Use static typing and data
+  models instead.  `isinstance` is allowed at I/O boundaries when coercing
+  untyped external data (e.g., JSON values) into typed models.
 - **No `assert` for type validation.** Assertions are stripped in optimised
   builds and are not a control-flow mechanism.
 
@@ -39,8 +40,11 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 ### Defaults and Factories
 
-- Use `default_factory=lambda: []` (not `default_factory=list`) for mutable
-  defaults — this avoids a known pyright false-positive.
+- In `dataclasses.field`, use `default_factory=lambda: []` (not
+  `default_factory=list`) for mutable defaults — this avoids a known pyright
+  false-positive.
+- In Pydantic `Field`, `default_factory=list` is fine — Pydantic handles
+  the typing correctly.
 
 ## Naming and Structure
 

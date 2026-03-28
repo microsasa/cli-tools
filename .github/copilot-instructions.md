@@ -9,7 +9,8 @@ Read and follow [`.github/CODING_GUIDELINES.md`](CODING_GUIDELINES.md) for
 all code changes. Key points:
 
 - **pyright strict** — every parameter and return value must be annotated.
-- **No duck typing** — no `getattr`, `hasattr`, or runtime type interrogation.
+- **No duck typing** — no `getattr`, `hasattr`, or runtime type interrogation
+  in business logic. `isinstance` is allowed at I/O boundaries only.
 - **No `assert` for validation** — assertions are not control flow.
 - **Pydantic at the boundary**, frozen dataclasses internally.
 - **loguru** for logging, not stdlib `logging`.
