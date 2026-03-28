@@ -826,14 +826,23 @@ class TestRenderSessionDetail:
 
         summary = _make_session(model=None, is_active=False, output_tokens=0)
         output = _capture_console(render_session_detail, [], summary)
-        assert "—" in output
+        # Ensure the Model header shows an em dash placeholder (and not "None")
+        model_lines = [line for line in output.splitlines() if "Model:" in line]
+        assert model_lines, "Model header not found in output"
+        assert any("—" in line for line in model_lines)
+        assert all("None" not in line for line in model_lines)
 
     def test_header_start_time_none_shows_dash(self) -> None:
         from copilot_usage.report import render_session_detail
 
         summary = _make_session(start_time=None, is_active=False)
         output = _capture_console(render_session_detail, [], summary)
-        assert "—" in output
+        assert "Started: —" in output
+        # Ensure the dash is not coming from the model field.
+        model_line = next(
+            (line for line in output.splitlines() if "Model:" in line), ""
+        )
+        assert "claude-sonnet-4" in model_line
 
 
 class TestRenderActivePeriodDirect:
@@ -872,12 +881,21 @@ class TestRenderHeaderDirect:
     def test_model_none_shows_dash(self) -> None:
         summary = _make_session(model=None, is_active=False, output_tokens=0)
         output = _capture_console(_render_header, summary)
-        assert "—" in output
+        model_line = next(
+            (line for line in output.splitlines() if "Model:" in line), ""
+        )
+        assert "—" in model_line
+        assert "None" not in model_line
 
     def test_start_time_none_shows_dash(self) -> None:
         summary = _make_session(start_time=None, is_active=False)
         output = _capture_console(_render_header, summary)
-        assert "—" in output
+        assert "Started: —" in output
+        # Ensure the dash is not coming from the model field.
+        model_line = next(
+            (line for line in output.splitlines() if "Model:" in line), ""
+        )
+        assert "claude-sonnet-4" in model_line
 
     def test_model_present_shows_model(self) -> None:
         summary = _make_session(model="gpt-4o", is_active=False)
