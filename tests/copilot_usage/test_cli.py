@@ -2831,3 +2831,64 @@ class TestSummaryUntilDateOnly:
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
         assert "No sessions" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #454 — reversed --since/--until emits click.UsageError
+# ---------------------------------------------------------------------------
+
+
+class TestReversedSinceUntilCliError:
+    """CLI-level test: reversed --since/--until exits non-zero with a readable error."""
+
+    def test_summary_reversed_range_exits_nonzero(self, tmp_path: Path) -> None:
+        """summary --since 2026-12-31 --until 2026-01-01 exits with non-zero code."""
+        _write_session(
+            tmp_path,
+            "aaaa1111-0000-0000-0000-000000000000",
+            name="SomeSession",
+            start_time="2026-06-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "summary",
+                "--path",
+                str(tmp_path),
+                "--since",
+                "2026-12-31",
+                "--until",
+                "2026-01-01",
+            ],
+        )
+        assert result.exit_code != 0
+        output = _strip_ansi(result.output)
+        assert "--since" in output
+        assert "after" in output
+
+    def test_cost_reversed_range_exits_nonzero(self, tmp_path: Path) -> None:
+        """cost --since 2026-12-31 --until 2026-01-01 exits with non-zero code."""
+        _write_session(
+            tmp_path,
+            "bbbb2222-0000-0000-0000-000000000000",
+            name="SomeSession",
+            start_time="2026-06-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "cost",
+                "--path",
+                str(tmp_path),
+                "--since",
+                "2026-12-31",
+                "--until",
+                "2026-01-01",
+            ],
+        )
+        assert result.exit_code != 0
+        output = _strip_ansi(result.output)
+        assert "--since" in output
+        assert "after" in output

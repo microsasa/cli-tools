@@ -2805,13 +2805,13 @@ class TestRenderTotalsSingularLabels:
 
 
 # ---------------------------------------------------------------------------
-# Issue #161 — _filter_sessions reversed date range warning
+# Issue #161 / #454 — _filter_sessions reversed date range (silent, no warning)
 # ---------------------------------------------------------------------------
 
 
 class TestFilterSessionsReversedDateRange:
-    def test_reversed_since_until_warns(self) -> None:
-        """Passing since > until emits a UserWarning."""
+    def test_reversed_since_until_returns_empty(self) -> None:
+        """Passing since > until silently returns empty (no UserWarning)."""
         session = SessionSummary(
             session_id="s1",
             start_time=datetime(2026, 6, 15, tzinfo=UTC),
@@ -2822,20 +2822,17 @@ class TestFilterSessionsReversedDateRange:
             warnings.simplefilter("always")
             result = _filter_sessions([session], since=since, until=until)
         assert result == []
-        assert len(caught) == 1
-        assert "--since" in str(caught[0].message)
-        assert "after" in str(caught[0].message)
+        assert len(caught) == 0
 
-    def test_reversed_range_warns_on_empty_list(self) -> None:
-        """Warning fires even with an empty sessions list (short-circuit)."""
+    def test_reversed_range_returns_empty_on_empty_list(self) -> None:
+        """Reversed range returns empty with no warning even for empty input."""
         since = datetime(2026, 12, 31, tzinfo=UTC)
         until = datetime(2026, 1, 1, tzinfo=UTC)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = _filter_sessions([], since=since, until=until)
         assert result == []
-        assert len(caught) == 1
-        assert "--since" in str(caught[0].message)
+        assert len(caught) == 0
 
     def test_normal_range_no_warning(self) -> None:
         """Passing since < until does NOT emit a warning."""
@@ -4383,15 +4380,13 @@ class TestHms:
 
 
 # ---------------------------------------------------------------------------
-# Issue #308 — _filter_sessions stacklevel points at caller
+# Issue #308 / #454 — reversed range no longer emits a warning
 # ---------------------------------------------------------------------------
 
 
-class TestFilterSessionsStacklevel:
-    def test_warning_frame_points_at_caller(self) -> None:
-        """stacklevel=2 should attribute the warning to _filter_sessions' caller."""
-        import inspect
-
+class TestReversedRangeNoWarningFromRenderSummary:
+    def test_reversed_range_no_warning_from_render_summary(self) -> None:
+        """After issue #454, reversed range no longer emits a warning."""
         session = SessionSummary(
             session_id="s1",
             start_time=datetime(2026, 6, 15, tzinfo=UTC),
@@ -4399,23 +4394,11 @@ class TestFilterSessionsStacklevel:
         since = datetime(2026, 12, 31, tzinfo=UTC)
         until = datetime(2026, 1, 1, tzinfo=UTC)
 
-        # Derive the expected file and line of the _filter_sessions call
-        # inside render_summary so the test actually verifies stacklevel=2.
-        src_lines, start_lineno = inspect.getsourcelines(render_summary)
-        call_offset = next(
-            i for i, line in enumerate(src_lines) if "_filter_sessions(" in line
-        )
-        expected_lineno = start_lineno + call_offset
-
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             render_summary([session], since=since, until=until)
 
-        assert len(caught) == 1
-        # With stacklevel=2 the warning should be attributed to the
-        # _filter_sessions(...) call site inside render_summary.
-        assert caught[0].lineno == expected_lineno
-        assert "report" in caught[0].filename
+        assert len(caught) == 0
 
 
 # ---------------------------------------------------------------------------

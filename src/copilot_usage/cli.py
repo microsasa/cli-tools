@@ -67,6 +67,26 @@ def _normalize_until(dt: datetime | None) -> datetime | None:
     return aware
 
 
+def _validate_since_until(
+    since: datetime | None,
+    until: datetime | None,
+) -> tuple[datetime | None, datetime | None]:
+    """Normalize and validate --since/--until, raising on reversed range."""
+    aware_since = ensure_aware_opt(since)
+    aware_until = _normalize_until(until)
+    if (
+        aware_since is not None
+        and aware_until is not None
+        and aware_since > aware_until
+    ):
+        raise click.UsageError(
+            f"--since ({aware_since.isoformat(sep=' ', timespec='seconds')}) "
+            f"is after --until ({aware_until.isoformat(sep=' ', timespec='seconds')}); "
+            "no sessions will match."
+        )
+    return aware_since, aware_until
+
+
 def _print_version_header(target: Console | None = None) -> None:
     """Print 'Copilot Usage' left-aligned with version right-aligned."""
     c = target or console
@@ -399,16 +419,15 @@ def summary(
     path: Path | None,
 ) -> None:
     """Show usage summary across all sessions."""
-    _print_version_header()
     path = path or ctx.obj.get("path")
+    aware_since, aware_until = _validate_since_until(since, until)
+    _print_version_header()
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
-    render_summary(
-        sessions, since=ensure_aware_opt(since), until=_normalize_until(until)
-    )
+    render_summary(sessions, since=aware_since, until=aware_until)
 
 
 # ---------------------------------------------------------------------------
@@ -506,19 +525,16 @@ def cost(
     path: Path | None,
 ) -> None:
     """Show premium request costs from shutdown data."""
-    _print_version_header()
     path = path or ctx.obj.get("path")
+    aware_since, aware_until = _validate_since_until(since, until)
+    _print_version_header()
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
 
-    render_cost_view(
-        sessions,
-        since=ensure_aware_opt(since),
-        until=_normalize_until(until),
-    )
+    render_cost_view(sessions, since=aware_since, until=aware_until)
 
 
 # ---------------------------------------------------------------------------
