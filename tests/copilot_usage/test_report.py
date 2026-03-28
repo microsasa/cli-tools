@@ -2129,6 +2129,8 @@ class TestRenderCostView:
         assert "50.0K" in grand_cols[6], (
             f"Grand Total output tokens should be 50.0K, got '{grand_cols[6]}'"
         )
+
+    def test_resumed_session_active_model_calls_only(self) -> None:
         """Cost view: active_model_calls > 0 with user_messages/output_tokens=0.
 
         When last_resume_time is None and only active_model_calls is non-zero,
