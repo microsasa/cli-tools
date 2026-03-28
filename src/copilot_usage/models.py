@@ -395,5 +395,11 @@ def has_active_period_stats(session: SessionSummary) -> bool:
 
 
 def session_sort_key(session: SessionSummary) -> datetime:
-    """Return an aware start_time for sorting; sessions without one sort last."""
+    """Return an aware start_time for sorting; use with reverse=True to place unknown start_time last.
+
+    When ``session.start_time`` is ``None``, this returns the ``EPOCH`` sentinel
+    (``datetime.min`` in UTC). This means that in an ascending sort, sessions
+    without a start time will appear first; to have them appear last, callers
+    should sort with ``reverse=True``.
+    """
     return ensure_aware(session.start_time) if session.start_time is not None else EPOCH
