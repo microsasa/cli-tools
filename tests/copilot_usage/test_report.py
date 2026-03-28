@@ -53,6 +53,7 @@ from copilot_usage.report import (
     _format_elapsed_since,
     _format_session_running_time,
     _render_model_table,
+    _render_session_table,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -4034,6 +4035,63 @@ class TestRenderSessionTableResumed:
         output = _capture_summary([session])
         # Total should be 600 (350 + 250), displayed as "600"
         assert "600" in output
+
+
+class TestRenderSessionTableTokenFn:
+    """Issue #459 — _render_session_table uses token_fn Callable instead of bool flag."""
+
+    def _build_resumed_session(self) -> SessionSummary:
+        """Return a resumed session with distinct shutdown vs total token counts."""
+        return SessionSummary(
+            session_id="token-fn-test-1234",
+            name="TokenFn Session",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=8,
+            user_messages=4,
+            active_output_tokens=200,
+            active_model_calls=2,
+            active_user_messages=1,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=6, cost=12),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+
+    def test_shutdown_output_tokens_via_token_fn(self) -> None:
+        """token_fn=shutdown_output_tokens uses shutdown-only tokens (500)."""
+        session = self._build_resumed_session()
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=120)
+        _render_session_table(
+            console,
+            [session],
+            title="Shutdown Only",
+            token_fn=shutdown_output_tokens,
+        )
+        output = buf.getvalue()
+        assert format_tokens(500) in output
+        # Must NOT contain the total (700 = 500 + 200)
+        assert format_tokens(700) not in output
+
+    def test_total_output_tokens_via_token_fn(self) -> None:
+        """token_fn=total_output_tokens uses total tokens (500 + 200 = 700)."""
+        session = self._build_resumed_session()
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=120)
+        _render_session_table(
+            console,
+            [session],
+            title="Total Tokens",
+            token_fn=total_output_tokens,
+        )
+        output = buf.getvalue()
+        assert format_tokens(700) in output
 
 
 class TestRenderCostViewResumed:

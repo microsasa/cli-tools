@@ -334,13 +334,13 @@ def _render_session_table(
     sessions: list[SessionSummary],
     *,
     title: str = "Sessions",
-    include_active_tokens: bool = True,
+    token_fn: Callable[[SessionSummary], int] = total_output_tokens,
 ) -> None:
     """Render the per-session table sorted by start time (newest first).
 
-    When *include_active_tokens* is ``False`` the table uses
-    :func:`shutdown_output_tokens` so that only shutdown-derived metrics
-    appear (appropriate for historical / "Shutdown Data" views).
+    *token_fn* controls how output tokens are counted per session.  Defaults
+    to :func:`total_output_tokens` (includes active tokens for resumed
+    sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
     """
     if not sessions:
         return
@@ -364,9 +364,6 @@ def _render_session_table(
         name = session_display_name(s)
         model = s.model or "—"
 
-        token_fn = (
-            total_output_tokens if include_active_tokens else shutdown_output_tokens
-        )
         output_tokens = token_fn(s)
 
         if s.is_active:
@@ -468,7 +465,7 @@ def _render_historical_section(
         console,
         historical,
         title="Sessions (Shutdown Data)",
-        include_active_tokens=False,
+        token_fn=shutdown_output_tokens,
     )
 
 
