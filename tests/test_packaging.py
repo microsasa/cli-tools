@@ -1,5 +1,6 @@
 """Verify wheel packaging excludes developer-only docs."""
 
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -7,8 +8,10 @@ from pathlib import Path
 
 def test_wheel_excludes_docs(tmp_path: Path) -> None:
     """copilot_usage/docs/ must not be shipped in the wheel."""
-    result = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+    uv_executable = shutil.which("uv")
+    assert uv_executable is not None, "'uv' executable not found in PATH"
+    result = subprocess.run(  # noqa: S603
+        [uv_executable, "build", "--wheel", "--out-dir", str(tmp_path)],
         capture_output=True,
         cwd=Path(__file__).parents[0].parent,
     )
