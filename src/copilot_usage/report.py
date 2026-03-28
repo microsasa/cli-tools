@@ -588,7 +588,16 @@ def render_cost_view(
 
     for s in filtered:
         name = session_display_name(s)
-        model_calls_display = str(s.model_calls)
+        # For sessions with shutdown metrics and active-period stats,
+        # show shutdown-only model calls so this column aligns with the
+        # shutdown-only model_metrics data. Otherwise, display total calls.
+        if s.has_shutdown_metrics and has_active_period_stats(s):
+            shutdown_model_calls = s.model_calls - s.active_model_calls
+            if shutdown_model_calls < 0:
+                shutdown_model_calls = 0
+            model_calls_display = str(shutdown_model_calls)
+        else:
+            model_calls_display = str(s.model_calls)
 
         if s.model_metrics:
             for model_name in sorted(s.model_metrics):
