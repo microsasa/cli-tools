@@ -2805,7 +2805,7 @@ class TestRenderTotalsSingularLabels:
 
 
 # ---------------------------------------------------------------------------
-# Issue #161 — _filter_sessions reversed date range warning
+# Issue #161 / #454 — _filter_sessions reversed date range (silent, no warning)
 # ---------------------------------------------------------------------------
 
 
@@ -4380,11 +4380,11 @@ class TestHms:
 
 
 # ---------------------------------------------------------------------------
-# Issue #308 — _filter_sessions stacklevel points at caller
+# Issue #308 / #454 — reversed range no longer emits a warning
 # ---------------------------------------------------------------------------
 
 
-class TestFilterSessionsStacklevel:
+class TestReversedRangeNoWarningFromRenderSummary:
     def test_reversed_range_no_warning_from_render_summary(self) -> None:
         """After issue #454, reversed range no longer emits a warning."""
         session = SessionSummary(

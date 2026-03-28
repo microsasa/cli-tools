@@ -2842,7 +2842,7 @@ class TestReversedSinceUntilCliError:
     """CLI-level test: reversed --since/--until exits non-zero with a readable error."""
 
     def test_summary_reversed_range_exits_nonzero(self, tmp_path: Path) -> None:
-        """summary --since 2026-12-31 --until 2026-01-01 exits with code 2."""
+        """summary --since 2026-12-31 --until 2026-01-01 exits with non-zero code."""
         _write_session(
             tmp_path,
             "aaaa1111-0000-0000-0000-000000000000",
@@ -2868,7 +2868,7 @@ class TestReversedSinceUntilCliError:
         assert "after" in output
 
     def test_cost_reversed_range_exits_nonzero(self, tmp_path: Path) -> None:
-        """cost --since 2026-12-31 --until 2026-01-01 exits with code 2."""
+        """cost --since 2026-12-31 --until 2026-01-01 exits with non-zero code."""
         _write_session(
             tmp_path,
             "bbbb2222-0000-0000-0000-000000000000",
