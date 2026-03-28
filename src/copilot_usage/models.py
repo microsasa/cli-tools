@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Defensive alias for the built-in ``type`` to avoid shadowing by the
 # Pydantic field ``type: str`` defined on SessionEvent (and any future
@@ -340,6 +340,15 @@ class SessionSummary(BaseModel):
     active_model_calls: int = 0
     active_user_messages: int = 0
     active_output_tokens: int = 0
+
+    @model_validator(mode="after")
+    def _check_call_counts(self) -> "SessionSummary":
+        if self.active_model_calls > self.model_calls:
+            raise ValueError(
+                f"active_model_calls ({self.active_model_calls}) must be <= "
+                f"model_calls ({self.model_calls})"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------

@@ -598,3 +598,45 @@ class TestSessionSortKey:
 
         session = SessionSummary(session_id="s", start_time=None)
         assert session_sort_key(session) == EPOCH
+
+
+# ---------------------------------------------------------------------------
+# Issue #460 — Validate active_model_calls <= model_calls
+# ---------------------------------------------------------------------------
+
+
+class TestSessionSummaryCallCountInvariant:
+    """Tests for the model_calls >= active_model_calls invariant."""
+
+    def test_rejects_active_calls_exceeding_total(self) -> None:
+        """SessionSummary must reject active_model_calls > model_calls."""
+        with pytest.raises(ValidationError):
+            SessionSummary(
+                session_id="inv",
+                model_calls=3,
+                active_model_calls=5,
+            )
+
+    def test_accepts_active_calls_equal_to_total(self) -> None:
+        """SessionSummary allows active_model_calls == model_calls."""
+        s = SessionSummary(
+            session_id="eq",
+            model_calls=5,
+            active_model_calls=5,
+        )
+        assert s.active_model_calls == s.model_calls
+
+    def test_accepts_active_calls_less_than_total(self) -> None:
+        """SessionSummary allows active_model_calls < model_calls."""
+        s = SessionSummary(
+            session_id="lt",
+            model_calls=10,
+            active_model_calls=3,
+        )
+        assert s.active_model_calls < s.model_calls
+
+    def test_accepts_zero_calls(self) -> None:
+        """SessionSummary allows both counts at zero (defaults)."""
+        s = SessionSummary(session_id="zero")
+        assert s.model_calls == 0
+        assert s.active_model_calls == 0

@@ -584,8 +584,6 @@ def render_cost_view(
         # shutdown-only model_metrics data. Otherwise, display total calls.
         if s.has_shutdown_metrics and has_active_period_stats(s):
             shutdown_model_calls = s.model_calls - s.active_model_calls
-            if shutdown_model_calls < 0:
-                shutdown_model_calls = 0
             model_calls_display = str(shutdown_model_calls)
         else:
             model_calls_display = str(s.model_calls)
