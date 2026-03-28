@@ -5,7 +5,9 @@ Discovers session directories, parses ``events.jsonl`` files into typed
 aggregates.
 """
 
+import dataclasses
 import json
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -183,7 +185,256 @@ def _extract_session_name(session_dir: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Summary builder
+# Summary builder — internal data carriers
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _FirstPassResult:
+    """Accumulated state from a single pass over the event list."""
+
+    session_id: str
+    start_time: datetime | None
+    end_time: datetime | None
+    cwd: str | None
+    model: str | None
+    all_shutdowns: list[tuple[int, SessionShutdownData]]
+    user_message_count: int
+    total_output_tokens: int
+    total_turn_starts: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ResumeInfo:
+    """Results of scanning for post-shutdown activity."""
+
+    session_resumed: bool
+    post_shutdown_output_tokens: int
+    post_shutdown_turn_starts: int
+    post_shutdown_user_messages: int
+    last_resume_time: datetime | None
+
+
+# ---------------------------------------------------------------------------
+# Summary builder — helpers
+# ---------------------------------------------------------------------------
+
+
+def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
+    """Iterate *events* once, extracting identity, shutdown data, and counters."""
+    session_id = ""
+    start_time = None
+    end_time = None
+    cwd: str | None = None
+    model: str | None = None
+    seen_session_start = False
+    all_shutdowns: list[tuple[int, SessionShutdownData]] = []
+    user_message_count = 0
+    total_output_tokens = 0
+    total_turn_starts = 0
+
+    for idx, ev in enumerate(events):
+        if ev.type == EventType.SESSION_START:
+            try:
+                data = ev.as_session_start()
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx,
+                    ev.type,
+                    exc.error_count(),
+                )
+                continue
+            if not seen_session_start:
+                seen_session_start = True
+                session_id = data.sessionId
+                start_time = data.startTime
+                cwd = data.context.cwd
+
+        elif ev.type == EventType.SESSION_SHUTDOWN:
+            try:
+                data = ev.as_session_shutdown()
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx,
+                    ev.type,
+                    exc.error_count(),
+                )
+                continue
+            current_model = ev.currentModel or data.currentModel
+            if not current_model and data.modelMetrics:
+                current_model = _infer_model_from_metrics(data.modelMetrics)
+            all_shutdowns.append((idx, data))
+            end_time = ev.timestamp
+            model = current_model
+
+        elif ev.type == EventType.USER_MESSAGE:
+            user_message_count += 1
+
+        elif ev.type == EventType.ASSISTANT_TURN_START:
+            total_turn_starts += 1
+
+        elif ev.type == EventType.ASSISTANT_MESSAGE:
+            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
+                total_output_tokens += tokens
+
+    return _FirstPassResult(
+        session_id=session_id,
+        start_time=start_time,
+        end_time=end_time,
+        cwd=cwd,
+        model=model,
+        all_shutdowns=all_shutdowns,
+        user_message_count=user_message_count,
+        total_output_tokens=total_output_tokens,
+        total_turn_starts=total_turn_starts,
+    )
+
+
+def _detect_resume(
+    events: list[SessionEvent],
+    all_shutdowns: list[tuple[int, SessionShutdownData]],
+) -> _ResumeInfo:
+    """Scan events after the last shutdown for resume indicators."""
+    if not all_shutdowns:
+        return _ResumeInfo(
+            session_resumed=False,
+            post_shutdown_output_tokens=0,
+            post_shutdown_turn_starts=0,
+            post_shutdown_user_messages=0,
+            last_resume_time=None,
+        )
+
+    last_shutdown_idx = all_shutdowns[-1][0]
+    session_resumed = False
+    post_shutdown_output_tokens = 0
+    post_shutdown_turn_starts = 0
+    post_shutdown_user_messages = 0
+    last_resume_time = None
+
+    for ev in events[last_shutdown_idx + 1 :]:
+        if ev.type in _RESUME_INDICATOR_TYPES:
+            session_resumed = True
+        if ev.type == EventType.SESSION_RESUME and ev.timestamp is not None:
+            last_resume_time = ev.timestamp
+        if (
+            ev.type == EventType.ASSISTANT_MESSAGE
+            and (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None
+        ):
+            post_shutdown_output_tokens += tokens
+        if ev.type == EventType.ASSISTANT_TURN_START:
+            post_shutdown_turn_starts += 1
+        if ev.type == EventType.USER_MESSAGE:
+            post_shutdown_user_messages += 1
+
+    return _ResumeInfo(
+        session_resumed=session_resumed,
+        post_shutdown_output_tokens=post_shutdown_output_tokens,
+        post_shutdown_turn_starts=post_shutdown_turn_starts,
+        post_shutdown_user_messages=post_shutdown_user_messages,
+        last_resume_time=last_resume_time,
+    )
+
+
+def _build_completed_summary(
+    fp: _FirstPassResult,
+    name: str | None,
+    resume: _ResumeInfo,
+) -> SessionSummary:
+    """Build a :class:`SessionSummary` for a session that has shutdown data."""
+    total_premium = 0
+    total_api_duration = 0
+    merged_metrics: dict[str, ModelMetrics] = {}
+    last_code_changes: CodeChanges | None = None
+
+    for _idx, sd in fp.all_shutdowns:
+        total_premium += sd.totalPremiumRequests
+        total_api_duration += sd.totalApiDurationMs
+        if sd.codeChanges is not None:
+            last_code_changes = sd.codeChanges
+        merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
+
+    return SessionSummary(
+        session_id=fp.session_id,
+        start_time=fp.start_time,
+        end_time=None if resume.session_resumed else fp.end_time,
+        name=name,
+        cwd=fp.cwd,
+        model=fp.model,
+        total_premium_requests=total_premium,
+        total_api_duration_ms=total_api_duration,
+        model_metrics=merged_metrics,
+        code_changes=last_code_changes,
+        model_calls=fp.total_turn_starts,
+        user_messages=fp.user_message_count,
+        is_active=resume.session_resumed,
+        has_shutdown_metrics=bool(merged_metrics),
+        last_resume_time=resume.last_resume_time,
+        active_model_calls=resume.post_shutdown_turn_starts,
+        active_user_messages=resume.post_shutdown_user_messages,
+        active_output_tokens=resume.post_shutdown_output_tokens,
+    )
+
+
+def _build_active_summary(
+    fp: _FirstPassResult,
+    name: str | None,
+    events: list[SessionEvent],
+    config_path: Path | None,
+) -> SessionSummary:
+    """Build a :class:`SessionSummary` for a session with no shutdown data."""
+    model = fp.model
+
+    # Try to determine model from tool.execution_complete events
+    for idx_tool, ev in enumerate(events):
+        if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
+            try:
+                parsed = ev.as_tool_execution()
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx_tool,
+                    ev.type,
+                    exc.error_count(),
+                )
+                continue
+            if parsed.model:
+                model = parsed.model
+                break
+
+    # Fall back to ~/.copilot/config.json for active sessions
+    if model is None:
+        model = _read_config_model(config_path)
+
+    active_metrics: dict[str, ModelMetrics] = {}
+    if model and fp.total_output_tokens:
+        active_metrics[model] = ModelMetrics(
+            usage=TokenUsage(outputTokens=fp.total_output_tokens),
+        )
+
+    return SessionSummary(
+        session_id=fp.session_id,
+        start_time=fp.start_time,
+        end_time=fp.end_time,
+        name=name,
+        cwd=fp.cwd,
+        model=model,
+        total_premium_requests=0,
+        total_api_duration_ms=0,
+        model_metrics=active_metrics,
+        code_changes=None,
+        model_calls=fp.total_turn_starts,
+        user_messages=fp.user_message_count,
+        is_active=True,
+        active_model_calls=fp.total_turn_starts,
+        active_user_messages=fp.user_message_count,
+        active_output_tokens=fp.total_output_tokens,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Summary builder — public API
 # ---------------------------------------------------------------------------
 
 
@@ -219,181 +470,14 @@ def build_session_summary(
     If *session_dir* is given the session name is extracted from
     ``plan.md`` when present.
     """
-    session_id = ""
-    start_time = None
-    end_time = None
-    cwd: str | None = None
-    model: str | None = None
-    seen_session_start = False
-    all_shutdowns: list[tuple[int, SessionShutdownData, str | None]] = []
-    user_message_count = 0
-    total_output_tokens = 0
-    total_turn_starts = 0
-
-    for idx, ev in enumerate(events):
-        # -- session.start ------------------------------------------------
-        if ev.type == EventType.SESSION_START:
-            try:
-                data = ev.as_session_start()
-            except ValidationError as exc:
-                logger.debug(
-                    "event {} — could not parse {} event ({}), skipping",
-                    idx,
-                    ev.type,
-                    exc.error_count(),
-                )
-                continue
-            # First valid session.start wins — subsequent ones are ignored
-            # so that duplicate events don't silently overwrite identity.
-            if not seen_session_start:
-                seen_session_start = True
-                session_id = data.sessionId
-                start_time = data.startTime
-                cwd = data.context.cwd
-
-        # -- session.shutdown ---------------------------------------------
-        elif ev.type == EventType.SESSION_SHUTDOWN:
-            try:
-                data = ev.as_session_shutdown()
-            except ValidationError as exc:
-                logger.debug(
-                    "event {} — could not parse {} event ({}), skipping",
-                    idx,
-                    ev.type,
-                    exc.error_count(),
-                )
-                continue
-            current_model = ev.currentModel or data.currentModel
-            if not current_model and data.modelMetrics:
-                current_model = _infer_model_from_metrics(data.modelMetrics)
-            all_shutdowns.append((idx, data, current_model))
-            end_time = ev.timestamp
-            model = current_model
-
-        # -- user.message -------------------------------------------------
-        elif ev.type == EventType.USER_MESSAGE:
-            user_message_count += 1
-
-        # -- assistant.turn_start -----------------------------------------
-        elif ev.type == EventType.ASSISTANT_TURN_START:
-            total_turn_starts += 1
-
-        # -- assistant.message --------------------------------------------
-        elif ev.type == EventType.ASSISTANT_MESSAGE:
-            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
-                total_output_tokens += tokens
-
-    # Derive name
+    fp = _first_pass(events)
     name = _extract_session_name(session_dir) if session_dir else None
 
-    # --- Detect resumed session (events after last shutdown) --------------
-    session_resumed = False
-    post_shutdown_output_tokens = 0
-    post_shutdown_turn_starts = 0
-    post_shutdown_user_messages = 0
-    last_resume_time = None
+    if fp.all_shutdowns:
+        resume = _detect_resume(events, fp.all_shutdowns)
+        return _build_completed_summary(fp, name, resume)
 
-    last_shutdown_idx = all_shutdowns[-1][0] if all_shutdowns else -1
-
-    if all_shutdowns:
-        for ev in events[last_shutdown_idx + 1 :]:
-            if ev.type in _RESUME_INDICATOR_TYPES:
-                session_resumed = True
-            if ev.type == EventType.SESSION_RESUME and ev.timestamp is not None:
-                last_resume_time = ev.timestamp
-            if (
-                ev.type == EventType.ASSISTANT_MESSAGE
-                and (tokens := _safe_int_tokens(ev.data.get("outputTokens")))
-                is not None
-            ):
-                post_shutdown_output_tokens += tokens
-            if ev.type == EventType.ASSISTANT_TURN_START:
-                post_shutdown_turn_starts += 1
-            if ev.type == EventType.USER_MESSAGE:
-                post_shutdown_user_messages += 1
-
-    # --- completed or resumed session ------------------------------------
-    if all_shutdowns:
-        # Sum across ALL shutdown cycles
-        total_premium = 0
-        total_api_duration = 0
-        merged_metrics: dict[str, ModelMetrics] = {}
-        last_code_changes: CodeChanges | None = None
-
-        for _idx, sd, _m in all_shutdowns:
-            total_premium += sd.totalPremiumRequests
-            total_api_duration += sd.totalApiDurationMs
-            if sd.codeChanges is not None:
-                last_code_changes = sd.codeChanges
-            merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
-
-        return SessionSummary(
-            session_id=session_id,
-            start_time=start_time,
-            end_time=None if session_resumed else end_time,
-            name=name,
-            cwd=cwd,
-            model=model,
-            total_premium_requests=total_premium,
-            total_api_duration_ms=total_api_duration,
-            model_metrics=merged_metrics,
-            code_changes=last_code_changes,
-            model_calls=total_turn_starts,
-            user_messages=user_message_count,
-            is_active=session_resumed,
-            has_shutdown_metrics=bool(merged_metrics),
-            last_resume_time=last_resume_time,
-            active_model_calls=post_shutdown_turn_starts,
-            active_user_messages=post_shutdown_user_messages,
-            active_output_tokens=post_shutdown_output_tokens,
-        )
-
-    # --- active session (no shutdown) ------------------------------------
-    # Try to determine model from tool.execution_complete events
-    for idx_tool, ev in enumerate(events):
-        if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
-            try:
-                parsed = ev.as_tool_execution()
-            except ValidationError as exc:
-                logger.debug(
-                    "event {} — could not parse {} event ({}), skipping",
-                    idx_tool,
-                    ev.type,
-                    exc.error_count(),
-                )
-                continue
-            if parsed.model:
-                model = parsed.model
-                break
-
-    # Fall back to ~/.copilot/config.json for active sessions
-    if model is None:
-        model = _read_config_model(config_path)
-
-    active_metrics: dict[str, ModelMetrics] = {}
-    if model and total_output_tokens:
-        active_metrics[model] = ModelMetrics(
-            usage=TokenUsage(outputTokens=total_output_tokens),
-        )
-
-    return SessionSummary(
-        session_id=session_id,
-        start_time=start_time,
-        end_time=end_time,
-        name=name,
-        cwd=cwd,
-        model=model,
-        total_premium_requests=0,
-        total_api_duration_ms=0,
-        model_metrics=active_metrics,
-        code_changes=None,
-        model_calls=total_turn_starts,
-        user_messages=user_message_count,
-        is_active=True,
-        active_model_calls=total_turn_starts,
-        active_user_messages=user_message_count,
-        active_output_tokens=total_output_tokens,
-    )
+    return _build_active_summary(fp, name, events, config_path)
 
 
 # ---------------------------------------------------------------------------
