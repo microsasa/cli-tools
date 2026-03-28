@@ -1,6 +1,62 @@
 # CLI Tools — Changelog
 
 Append-only history of what was planned and delivered, PR by PR. Newest entries first.
+Manual work only — autonomous agent pipeline PRs are not tracked here.
+
+---
+
+## refactor: split build_session_summary into focused helpers — 2026-03-28
+
+**PR**: #451 — Closes #224
+
+**Plan**: Break the ~200-line `build_session_summary` monolith into focused private helpers while preserving identical behavior.
+
+**Done**:
+- Extracted 4 helpers: `_first_pass()`, `_detect_resume()`, `_build_completed_summary()`, `_build_active_summary()`
+- Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between phases
+- `build_session_summary` is now a 6-line coordinator
+- Public API unchanged — all ~90 existing tests pass without modification
+- Addressed Copilot review: removed unused `seen_session_start` field, dropped unused `current_model` from shutdown tuple
+
+---
+
+## fix: three protected-files code health issues — 2026-03-28
+
+**PR**: #449 — Closes #291, #330, #352
+
+**Plan**: Fix three `aw-protected-files` issues that autonomous agents cannot touch.
+
+**Done**:
+- **#291**: Wrapped bare `import loguru` in `TYPE_CHECKING` guard in `logging_config.py`
+- **#330**: Added `exclude = ["src/copilot_usage/docs"]` to hatchling wheel config; created `tests/test_packaging.py` using `shutil.which("uv")` for S607 compliance
+- **#352**: Restored doctest examples in `_formatting.py`, enabled `--doctest-modules` with `testpaths = ["tests", "src"]`
+- Updated Makefile: unit test targets use `--ignore=tests/e2e` instead of explicit paths, letting `pyproject.toml` `testpaths` guide collection
+
+---
+
+## fix: implementer missing Closes keyword in PR body — 2026-03-28
+
+**PR**: #439 — Closes #435
+
+**Plan**: Issues stayed open after their PRs merged because the implementer LLM non-deterministically omitted `Closes #NNN` from PR bodies.
+
+**Done**:
+- Added explicit instruction to `.github/workflows/issue-implementer.md` (line 58): PR body MUST include `Closes #${{ github.event.inputs.issue_number }}`
+- No lock file change needed — implementer uses `runtime-import`
+
+---
+
+## fix: CI re-trigger for dropped workflow_dispatch events — 2026-03-28
+
+**PR**: #414 — Closes #412
+
+**Plan**: Fix 4 bugs found during Copilot code review of the CI re-trigger mechanism.
+
+**Done**:
+- Removed `inputs.ref` from CI checkout — default `github.ref` is correct for both `pull_request` and `workflow_dispatch` triggers
+- Normalized empty `CI_CONCLUSION` to `NO_CI_RESULT` instead of silently proceeding
+- Changed `-f ref="$BRANCH"` to `--ref "$BRANCH"` in orchestrator dispatch (these are completely different: `-f` passes an input parameter, `--ref` sets the git ref)
+- Made date parse bail on failure instead of computing garbage age (~29M minutes from epoch)
 
 ---
 
