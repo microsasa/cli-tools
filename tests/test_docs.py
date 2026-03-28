@@ -7,18 +7,23 @@ _IMPL_MD = (
     Path(__file__).parents[1] / "src/copilot_usage/docs/implementation.md"
 ).read_text(encoding="utf-8")
 
+_README = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+
 
 def test_implementation_md_has_no_line_number_citations() -> None:
     matches = re.findall(r"\.py:\d+(?:-\d+)?", _IMPL_MD)
     assert not matches, f"Found stale line-number citations: {matches}"
 
 
-def _parse_pricing_table(doc: str) -> dict[str, str]:
+def _parse_pricing_table(
+    doc: str,
+    section_heading: str = r"Model Multiplier Reference|Model Pricing",
+) -> dict[str, str]:
     """Return {model_name: tier_string} from the Markdown pricing table."""
-    # Restrict parsing to the "Model Multiplier Reference" section to avoid
-    # accidentally picking up rows from unrelated tables earlier in the doc.
+    # Restrict parsing to the matching section to avoid accidentally picking
+    # up rows from unrelated tables earlier in the doc.
     section_match = re.search(
-        r"^##\s+Model Multiplier Reference\b.*$",
+        rf"^#+\s+(?:{section_heading})\b.*$",
         doc,
         re.MULTILINE,
     )
@@ -47,6 +52,22 @@ def test_pricing_table_matches_known_pricing() -> None:
         )
         assert table[model_name] == pricing.tier.value, (
             f"Tier mismatch for '{model_name}': "
+            f"doc says '{table[model_name]}', "
+            f"pricing.py says '{pricing.tier.value}'"
+        )
+
+
+def test_readme_pricing_table_lists_all_known_models() -> None:
+    """Every model in KNOWN_PRICING must appear explicitly in README.md's
+    pricing table and use the correct tier string."""
+    table = _parse_pricing_table(_README)
+    for model_name, pricing in KNOWN_PRICING.items():
+        assert model_name in table, (
+            f"Model '{model_name}' from KNOWN_PRICING is missing "
+            f"from the pricing table in README.md"
+        )
+        assert table[model_name] == pricing.tier.value, (
+            f"Tier mismatch for '{model_name}' in README.md: "
             f"doc says '{table[model_name]}', "
             f"pricing.py says '{pricing.tier.value}'"
         )
