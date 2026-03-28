@@ -40,7 +40,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | `render_detail.py` | Session detail rendering — extracted from report.py. Displays event timeline, per-event metadata, and session-level aggregates. |
 | `_formatting.py` | Shared formatting utilities — `format_duration()` and `format_tokens()` with doctest-verified examples. Used by report.py and render_detail.py. |
 | `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers are used for `~`-prefixed cost estimates in live/active views (`render_live_sessions`, `render_cost_view`); historical post-shutdown views use exact API-provided numbers exclusively. |
-| `logging_config.py` | Loguru setup — stderr warnings only, no file output. `loguru` module import guarded behind `TYPE_CHECKING` for the `"loguru.Record"` type annotation. Called once from CLI entry point. |
+| `logging_config.py` | Loguru setup — stderr warnings only, no file output. Runtime `import loguru` for pyright to resolve the `"loguru.Record"` string annotation. Called once from CLI entry point. |
 
 ### Event Processing Pipeline
 

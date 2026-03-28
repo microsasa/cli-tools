@@ -32,8 +32,9 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 ### Pydantic at the Boundary, Plain Python Internally
 
-- External data (JSON files, API responses, CLI arguments) is validated with
-  **Pydantic** models.
+- External data (JSON files, API responses) is validated with
+  **Pydantic** models.  CLI arguments are validated by **Click** at the
+  boundary.
 - Internal intermediate state uses **frozen `dataclasses`** with `slots=True`.
 - Prefer `dataclasses.dataclass(frozen=True, slots=True)` for immutable value
   objects that never touch I/O.
@@ -68,6 +69,9 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - Catch **specific** exception types. Never use bare `except:` or
   `except Exception:` unless re-raising.
+- **Exception:** Top-level event loops (e.g., TUI render loops) may catch
+  `Exception` without re-raising when crash recovery is intentional, provided
+  `KeyboardInterrupt` is handled separately.
 - Prefer early returns to reduce nesting.
 
 ## Logging
@@ -105,5 +109,5 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 ## Verification Before Merge
 
 - Run `make check` (lint → typecheck → security → test) locally before
-  pushing. CI mirrors this exactly.
+  pushing. CI runs these checks plus diff-coverage on changed lines.
 - All existing tests must pass. Coverage must remain ≥ 80 %.
