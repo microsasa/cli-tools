@@ -35,6 +35,9 @@ from copilot_usage.render_detail import (
     _event_type_label,
     _format_detail_duration,
     _format_relative_time,
+    _render_active_period,
+    _render_aggregate_stats,
+    _render_header,
     _render_recent_events,
     _render_shutdown_cycles,
     _safe_event_data,
@@ -680,10 +683,13 @@ class TestRenderSessionDetail:
             user_messages=7,
             is_active=False,
         )
+        summary.total_api_duration_ms = 60_000
         output = _capture_console(render_session_detail, [], summary)
         assert "Aggregate Stats" in output
         assert "10" in output  # model_calls
         assert "7" in output  # user_messages
+        assert "5.0K" in output  # format_tokens(5000)
+        assert "1m" in output  # format_duration(60000)
 
     def test_renders_no_shutdown_cycles_message(self) -> None:
         from copilot_usage.report import render_session_detail
@@ -776,6 +782,9 @@ class TestRenderSessionDetail:
         summary.active_output_tokens = 500
         output = _capture_console(render_session_detail, [], summary)
         assert "Active Period" in output
+        assert "3 model calls" in output
+        assert "2 user messages" in output
+        assert "500" in output
 
     def test_completed_session_no_active_period(self) -> None:
         from copilot_usage.report import render_session_detail
@@ -811,6 +820,86 @@ class TestRenderSessionDetail:
         summary = _make_session(name=None, is_active=False)
         output = _capture_console(render_session_detail, [], summary)
         assert "unnamed" in output
+
+    def test_header_model_none_shows_dash(self) -> None:
+        from copilot_usage.report import render_session_detail
+
+        summary = _make_session(model=None, is_active=False, output_tokens=0)
+        output = _capture_console(render_session_detail, [], summary)
+        assert "—" in output
+
+    def test_header_start_time_none_shows_dash(self) -> None:
+        from copilot_usage.report import render_session_detail
+
+        summary = _make_session(start_time=None, is_active=False)
+        output = _capture_console(render_session_detail, [], summary)
+        assert "—" in output
+
+
+class TestRenderActivePeriodDirect:
+    """Direct unit tests for _render_active_period values."""
+
+    def test_active_period_renders_counts(self) -> None:
+        summary = _make_session(is_active=True)
+        summary.active_model_calls = 3
+        summary.active_user_messages = 2
+        summary.active_output_tokens = 500
+        output = _capture_console(_render_active_period, summary)
+        assert "3 model calls" in output
+        assert "2 user messages" in output
+        assert "500" in output
+
+    def test_active_period_format_tokens_large(self) -> None:
+        summary = _make_session(is_active=True)
+        summary.active_model_calls = 1
+        summary.active_user_messages = 1
+        summary.active_output_tokens = 1500
+        output = _capture_console(_render_active_period, summary)
+        assert "1.5K" in output
+
+    def test_inactive_session_no_output(self) -> None:
+        summary = _make_session(is_active=False)
+        summary.active_model_calls = 3
+        summary.active_user_messages = 2
+        summary.active_output_tokens = 500
+        output = _capture_console(_render_active_period, summary)
+        assert output.strip() == ""
+
+
+class TestRenderHeaderDirect:
+    """Direct unit tests for _render_header fallback values."""
+
+    def test_model_none_shows_dash(self) -> None:
+        summary = _make_session(model=None, is_active=False, output_tokens=0)
+        output = _capture_console(_render_header, summary)
+        assert "—" in output
+
+    def test_start_time_none_shows_dash(self) -> None:
+        summary = _make_session(start_time=None, is_active=False)
+        output = _capture_console(_render_header, summary)
+        assert "—" in output
+
+    def test_model_present_shows_model(self) -> None:
+        summary = _make_session(model="gpt-4o", is_active=False)
+        output = _capture_console(_render_header, summary)
+        assert "gpt-4o" in output
+
+
+class TestRenderAggregateStatsDirect:
+    """Direct unit tests for _render_aggregate_stats data values."""
+
+    def test_output_tokens_formatted(self) -> None:
+        summary = _make_session(
+            output_tokens=5000, model_calls=10, user_messages=7, is_active=False
+        )
+        output = _capture_console(_render_aggregate_stats, summary)
+        assert "5.0K" in output
+
+    def test_api_duration_formatted(self) -> None:
+        summary = _make_session(is_active=False)
+        summary.total_api_duration_ms = 60_000
+        output = _capture_console(_render_aggregate_stats, summary)
+        assert "1m" in output
 
 
 # ---------------------------------------------------------------------------
