@@ -1864,6 +1864,32 @@ class TestRenderCostView:
         output = _capture_cost_view([])
         assert "No sessions found" in output
 
+    def test_all_sessions_filtered_by_since_shows_no_sessions_found(self) -> None:
+        """Non-empty session list, all fall before --since → 'No sessions found'."""
+        session = SessionSummary(
+            session_id="early-0000-aaaaaa",
+            name="Old Session",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=5,
+        )
+        output = _capture_cost_view([session], since=datetime(2026, 1, 1, tzinfo=UTC))
+        assert "No sessions found" in output
+        assert "Cost Breakdown" not in output
+
+    def test_all_sessions_filtered_by_until_shows_no_sessions_found(self) -> None:
+        """Non-empty session list, all fall after --until → 'No sessions found'."""
+        session = SessionSummary(
+            session_id="future-1111-bbbbbb",
+            name="Future Session",
+            start_time=datetime(2030, 6, 1, tzinfo=UTC),
+            is_active=False,
+            total_premium_requests=3,
+        )
+        output = _capture_cost_view([session], until=datetime(2025, 1, 1, tzinfo=UTC))
+        assert "No sessions found" in output
+        assert "Cost Breakdown" not in output
+
     def test_completed_session_cost(self) -> None:
         session = SessionSummary(
             session_id="cost-1111-abcdef",
