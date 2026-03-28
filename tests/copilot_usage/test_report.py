@@ -4025,18 +4025,21 @@ class TestRenderCostViewModelCallsConsistency:
         # Find the per-model row (contains "gpt-4" and the session name)
         model_row = [ln for ln in lines if "gpt-4" in ln and "Resumed 409" in ln]
         assert model_row, "Expected a per-model row with session name"
-        # Shutdown-only model calls = 10 - 3 = 7; must appear on model row
-        assert " 7 " in model_row[0]
+        # Shutdown-only model calls = 10 - 3 = 7; must appear in the Model Calls column
+        model_cols = [col.strip() for col in model_row[0].split("│")]
+        assert model_cols[5] == "7"
 
         # The ↳ row shows active-period model calls (3)
         since_row = [ln for ln in lines if "Since last shutdown" in ln]
         assert since_row, "Expected a ↳ Since last shutdown row"
-        assert " 3 " in since_row[0]
+        since_cols = [col.strip() for col in since_row[0].split("│")]
+        assert since_cols[5] == "3"
 
         # Grand total shows the full session total (10)
         grand_row = [ln for ln in lines if "Grand Total" in ln]
         assert grand_row, "Expected a Grand Total row"
-        assert " 10 " in grand_row[0]
+        grand_cols = [col.strip() for col in grand_row[0].split("│")]
+        assert grand_cols[5] == "10"
 
     def test_completed_session_no_regression(self) -> None:
         """Completed session (active_model_calls=0) still shows full model_calls."""
@@ -4063,19 +4066,25 @@ class TestRenderCostViewModelCallsConsistency:
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
         lines = clean.splitlines()
 
+        # Locate the Model Calls column index from a data row (split on │).
+        # Rich tables use │ for data rows; Model Calls is at column index 5.
+        model_calls_idx = 5
+
         # Per-model row shows full model calls (10 - 0 = 10)
         model_row = [ln for ln in lines if "gpt-4" in ln and "Completed 409" in ln]
         assert model_row, "Expected a per-model row with session name"
-        assert " 10 " in model_row[0]
+        model_cols = [col.strip() for col in model_row[0].split("│")]
+        assert model_cols[model_calls_idx] == "10"
 
         # No ↳ row for completed sessions
         since_row = [ln for ln in lines if "Since last shutdown" in ln]
         assert not since_row, "Completed session should not have a ↳ row"
 
-        # Grand total also shows 10
+        # Grand total also shows 10 in the Model Calls column
         grand_row = [ln for ln in lines if "Grand Total" in ln]
         assert grand_row
-        assert " 10 " in grand_row[0]
+        grand_cols = [col.strip() for col in grand_row[0].split("│")]
+        assert grand_cols[model_calls_idx] == "10"
 
     def test_resumed_session_visual_sum_matches_grand_total(self) -> None:
         """Summing per-model row + ↳ row model calls equals grand total."""
@@ -4109,18 +4118,28 @@ class TestRenderCostViewModelCallsConsistency:
         grand_row = [ln for ln in lines if "Grand Total" in ln]
         assert model_row and since_row and grand_row
 
-        # Extract numbers from each row
-        def extract_ints(line: str) -> list[int]:
-            return [int(x) for x in re.findall(r"\b\d+\b", line)]
+        # Rich data rows use │ separators; Model Calls is at column index 5.
+        model_calls_idx = 5
 
-        model_nums = extract_ints(model_row[0])
-        since_nums = extract_ints(since_row[0])
-        grand_nums = extract_ints(grand_row[0])
+        def get_model_calls(line: str) -> int:
+            cols = [col.strip() for col in line.split("│")]
+            cell = cols[model_calls_idx]
+            match = re.search(r"\d+", cell)
+            assert match is not None, f"No integer model calls found in cell: {cell!r}"
+            return int(match.group(0))
 
-        # 7 should be in model row numbers and 3 in since row numbers
-        assert 7 in model_nums, f"Expected 7 in model row: {model_nums}"
-        assert 3 in since_nums, f"Expected 3 in since row: {since_nums}"
-        assert 10 in grand_nums, f"Expected 10 in grand total: {grand_nums}"
+        shutdown_calls = get_model_calls(model_row[0])
+        active_calls = get_model_calls(since_row[0])
+        total_calls = get_model_calls(grand_row[0])
+
+        # Check individual expected values and the visual sum invariant
+        assert shutdown_calls == 7, f"Expected 7 shutdown calls, got {shutdown_calls}"
+        assert active_calls == 3, f"Expected 3 active calls, got {active_calls}"
+        assert total_calls == 10, f"Expected 10 total calls, got {total_calls}"
+        assert shutdown_calls + active_calls == total_calls, (
+            f"Expected shutdown ({shutdown_calls}) + active ({active_calls}) "
+            f"to equal total ({total_calls})"
+        )
 
 
 # ---------------------------------------------------------------------------
