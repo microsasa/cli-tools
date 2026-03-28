@@ -25,29 +25,31 @@ from copilot_usage.models import (
     SessionEvent,
     SessionSummary,
     TokenUsage,
+    has_active_period_stats,
+    shutdown_output_tokens,
+    total_output_tokens,
 )
 from copilot_usage.parser import build_session_summary, parse_events
+from copilot_usage.render_detail import (
+    _build_event_details,
+    _event_type_label,
+    _format_detail_duration,
+    _format_relative_time,
+    _render_recent_events,
+    _render_shutdown_cycles,
+    _safe_event_data,
+    _truncate,
+)
 from copilot_usage.report import (
     _aggregate_model_metrics,
-    _build_event_details,
     _compute_session_totals,
     _effective_stats,
     _EffectiveStats,
     _estimate_premium_cost,
-    _event_type_label,
     _filter_sessions,
-    _format_detail_duration,
     _format_elapsed_since,
-    _format_relative_time,
     _format_session_running_time,
-    _has_active_period_stats,
     _render_model_table,
-    _render_recent_events,
-    _render_shutdown_cycles,
-    _safe_event_data,
-    _shutdown_output_tokens,
-    _total_output_tokens,
-    _truncate,
     format_duration,
     format_tokens,
     render_cost_view,
@@ -2849,7 +2851,7 @@ class TestRenderModelTable:
 
 
 # ---------------------------------------------------------------------------
-# _has_active_period_stats
+# has_active_period_stats
 # ---------------------------------------------------------------------------
 
 
@@ -3023,7 +3025,7 @@ class TestBuildEventDetailsCatchAll:
 
 
 class TestHasActivePeriodStats:
-    """Tests for the _has_active_period_stats helper."""
+    """Tests for the has_active_period_stats helper."""
 
     def test_returns_true_with_last_resume_time(self) -> None:
         """Resumed session with last_resume_time set returns True."""
@@ -3038,7 +3040,7 @@ class TestHasActivePeriodStats:
             active_output_tokens=0,
             active_model_calls=0,
         )
-        assert _has_active_period_stats(session) is True
+        assert has_active_period_stats(session) is True
 
     def test_returns_true_with_active_user_messages(self) -> None:
         """Session with positive active_user_messages returns True."""
@@ -3049,7 +3051,7 @@ class TestHasActivePeriodStats:
             active_output_tokens=0,
             active_model_calls=0,
         )
-        assert _has_active_period_stats(session) is True
+        assert has_active_period_stats(session) is True
 
     def test_returns_true_with_active_output_tokens(self) -> None:
         """Session with positive active_output_tokens returns True."""
@@ -3060,7 +3062,7 @@ class TestHasActivePeriodStats:
             active_output_tokens=1000,
             active_model_calls=0,
         )
-        assert _has_active_period_stats(session) is True
+        assert has_active_period_stats(session) is True
 
     def test_returns_true_with_active_model_calls(self) -> None:
         """Session with positive active_model_calls returns True."""
@@ -3071,7 +3073,7 @@ class TestHasActivePeriodStats:
             active_output_tokens=0,
             active_model_calls=3,
         )
-        assert _has_active_period_stats(session) is True
+        assert has_active_period_stats(session) is True
 
     def test_returns_false_for_pure_active_never_shutdown(self) -> None:
         """Pure-active session with no shutdown and all active_* counters zero returns False."""
@@ -3085,7 +3087,7 @@ class TestHasActivePeriodStats:
             active_output_tokens=0,
             active_model_calls=0,
         )
-        assert _has_active_period_stats(session) is False
+        assert has_active_period_stats(session) is False
 
 
 class TestEffectiveStats:
@@ -3133,7 +3135,7 @@ class TestEffectiveStats:
         assert isinstance(stats, _EffectiveStats)
         assert stats.model_calls == 12
         assert stats.user_messages == 8
-        # Falls back to _total_output_tokens which sums model_metrics
+        # Falls back to total_output_tokens which sums model_metrics
         assert stats.output_tokens == 4200
 
     def test_frozen_dataclass(self) -> None:
@@ -3533,12 +3535,12 @@ class TestRenderCostViewActiveModelNone:
 
 
 # ---------------------------------------------------------------------------
-# Issue #276 — _total_output_tokens and resumed-session token accounting
+# Issue #276 — total_output_tokens and resumed-session token accounting
 # ---------------------------------------------------------------------------
 
 
 class TestTotalOutputTokens:
-    """Tests for the _total_output_tokens helper (issue #276)."""
+    """Tests for the total_output_tokens helper (issue #276)."""
 
     def test_non_resumed_session(self) -> None:
         """A normal session returns model_metrics output tokens only."""
@@ -3551,7 +3553,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        assert _total_output_tokens(session) == 500
+        assert total_output_tokens(session) == 500
 
     def test_resumed_session_includes_active_tokens(self) -> None:
         """Resumed session with shutdown data adds active_output_tokens."""
@@ -3568,7 +3570,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        assert _total_output_tokens(session) == 600  # 350 + 250
+        assert total_output_tokens(session) == 600  # 350 + 250
 
     def test_pure_active_session_no_double_count(self) -> None:
         """Pure-active session (no shutdown data) does not double-count."""
@@ -3586,7 +3588,7 @@ class TestTotalOutputTokens:
             },
         )
         # has_shutdown_metrics=False → should NOT add active tokens
-        assert _total_output_tokens(session) == 400
+        assert total_output_tokens(session) == 400
 
     def test_empty_model_metrics(self) -> None:
         """Session with no model_metrics and no active tokens returns 0."""
@@ -3594,7 +3596,7 @@ class TestTotalOutputTokens:
             session_id="empty-1234",
             model_metrics={},
         )
-        assert _total_output_tokens(session) == 0
+        assert total_output_tokens(session) == 0
 
     def test_empty_model_metrics_with_active_tokens(self) -> None:
         """Active session with no model_metrics uses active_output_tokens."""
@@ -3605,7 +3607,7 @@ class TestTotalOutputTokens:
             active_output_tokens=500,
             model_metrics={},
         )
-        assert _total_output_tokens(session) == 500
+        assert total_output_tokens(session) == 500
 
     def test_multiple_models_resumed(self) -> None:
         """Resumed session sums across models and adds active tokens."""
@@ -3626,7 +3628,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        assert _total_output_tokens(session) == 600  # 200 + 300 + 100
+        assert total_output_tokens(session) == 600  # 200 + 300 + 100
 
     # -- Issue #351 regression tests --
 
@@ -3649,7 +3651,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        assert _total_output_tokens(session) == 400
+        assert total_output_tokens(session) == 400
 
     def test_resumed_session_with_shutdown_adds_active_tokens(self) -> None:
         """Resumed session with has_shutdown_metrics=True adds active tokens.
@@ -3672,7 +3674,7 @@ class TestTotalOutputTokens:
                 ),
             },
         )
-        assert _total_output_tokens(session) == shutdown_tokens + active_tokens
+        assert total_output_tokens(session) == shutdown_tokens + active_tokens
 
     def test_completed_session_empty_metrics_via_parser(self, tmp_path: Path) -> None:
         """Parser→report integration: shutdown with modelMetrics={} → 0 tokens."""
@@ -3713,7 +3715,7 @@ class TestTotalOutputTokens:
         events = parse_events(p)
         summary = build_session_summary(events, session_dir=p.parent)
         assert summary.model_metrics == {}
-        assert _total_output_tokens(summary) == 0
+        assert total_output_tokens(summary) == 0
 
     def test_resumed_session_empty_shutdown_metrics_via_parser(
         self, tmp_path: Path
@@ -3797,7 +3799,7 @@ class TestTotalOutputTokens:
         assert summary.is_active is True
         assert summary.model_metrics == {}
         assert summary.active_output_tokens == 400
-        assert _total_output_tokens(summary) == 400
+        assert total_output_tokens(summary) == 400
 
 
 class TestRenderAggregateStatsResumedTokens:
@@ -3807,7 +3809,7 @@ class TestRenderAggregateStatsResumedTokens:
         self,
     ) -> None:
         """Output tokens in Aggregate Stats panel include active_output_tokens for resumed sessions."""
-        from copilot_usage.report import _render_aggregate_stats
+        from copilot_usage.render_detail import _render_aggregate_stats
 
         session = SessionSummary(
             session_id="agg-resumed-1234",
@@ -3827,7 +3829,7 @@ class TestRenderAggregateStatsResumedTokens:
             },
         )
 
-        expected_total = _total_output_tokens(session)  # 350 + 250 = 600
+        expected_total = total_output_tokens(session)  # 350 + 250 = 600
         assert expected_total == 600
 
         output = _capture_console(_render_aggregate_stats, session)
@@ -3987,12 +3989,12 @@ class TestRenderCostViewResumed:
 
 
 # ---------------------------------------------------------------------------
-# Issue #276 — _shutdown_output_tokens and render_full_summary split-view
+# Issue #276 — shutdown_output_tokens and render_full_summary split-view
 # ---------------------------------------------------------------------------
 
 
 class TestShutdownOutputTokens:
-    """Tests for the _shutdown_output_tokens helper."""
+    """Tests for the shutdown_output_tokens helper."""
 
     def test_returns_baseline_only(self) -> None:
         """Shutdown helper returns model_metrics total without active tokens."""
@@ -4009,14 +4011,14 @@ class TestShutdownOutputTokens:
                 ),
             },
         )
-        assert _shutdown_output_tokens(session) == 350
-        # Contrast with _total_output_tokens which includes active
-        assert _total_output_tokens(session) == 600
+        assert shutdown_output_tokens(session) == 350
+        # Contrast with total_output_tokens which includes active
+        assert total_output_tokens(session) == 600
 
     def test_empty_metrics(self) -> None:
         """Empty model_metrics returns 0."""
         session = SessionSummary(session_id="empty-shut", model_metrics={})
-        assert _shutdown_output_tokens(session) == 0
+        assert shutdown_output_tokens(session) == 0
 
 
 class TestRenderFullSummaryResumedSplitView:
