@@ -675,23 +675,24 @@ class TestCostDateFilterE2E:
         premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
         assert premium_cost_col == "537"
 
-    def test_cost_inverted_date_range_shows_no_sessions(self) -> None:
-        """--since after --until emits a warning and shows no sessions."""
-        with pytest.warns(UserWarning, match="."):
-            result = CliRunner().invoke(
-                main,
-                [
-                    "cost",
-                    "--path",
-                    str(FIXTURES),
-                    "--since",
-                    "2026-12-01",
-                    "--until",
-                    "2026-01-01",
-                ],
-            )
-        assert result.exit_code == 0
-        assert "No sessions found" in result.output
+    def test_cost_inverted_date_range_shows_error(self) -> None:
+        """--since after --until exits non-zero with a readable error."""
+        result = CliRunner().invoke(
+            main,
+            [
+                "cost",
+                "--path",
+                str(FIXTURES),
+                "--since",
+                "2026-12-01",
+                "--until",
+                "2026-01-01",
+            ],
+        )
+        assert result.exit_code != 0
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--since" in output
+        assert "after" in output
 
 
 # ---------------------------------------------------------------------------

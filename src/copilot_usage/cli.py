@@ -401,14 +401,23 @@ def summary(
     """Show usage summary across all sessions."""
     _print_version_header()
     path = path or ctx.obj.get("path")
+    aware_since = ensure_aware_opt(since)
+    aware_until = _normalize_until(until)
+    if (
+        aware_since is not None
+        and aware_until is not None
+        and aware_since > aware_until
+    ):
+        raise click.UsageError(
+            f"--since ({aware_since.date()}) is after --until ({aware_until.date()}); "
+            "no sessions will match."
+        )
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
-    render_summary(
-        sessions, since=ensure_aware_opt(since), until=_normalize_until(until)
-    )
+    render_summary(sessions, since=aware_since, until=aware_until)
 
 
 # ---------------------------------------------------------------------------
@@ -508,17 +517,24 @@ def cost(
     """Show premium request costs from shutdown data."""
     _print_version_header()
     path = path or ctx.obj.get("path")
+    aware_since = ensure_aware_opt(since)
+    aware_until = _normalize_until(until)
+    if (
+        aware_since is not None
+        and aware_until is not None
+        and aware_since > aware_until
+    ):
+        raise click.UsageError(
+            f"--since ({aware_since.date()}) is after --until ({aware_until.date()}); "
+            "no sessions will match."
+        )
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
 
-    render_cost_view(
-        sessions,
-        since=ensure_aware_opt(since),
-        until=_normalize_until(until),
-    )
+    render_cost_view(sessions, since=aware_since, until=aware_until)
 
 
 # ---------------------------------------------------------------------------
