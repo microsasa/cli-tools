@@ -360,7 +360,7 @@ def _interactive_loop(path: Path | None) -> None:
             _write_prompt(_BACK_PROMPT)
 
     except KeyboardInterrupt:
-        pass
+        pass  # User pressed Ctrl-C; observer cleanup runs in finally
     finally:
         _stop_observer(observer)
 

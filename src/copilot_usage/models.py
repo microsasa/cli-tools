@@ -11,9 +11,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-# Defensive alias for the built-in ``type`` so it remains usable inside
-# classes (like SessionEvent) that may define a Pydantic field ``type``
-# with a default/Field assignment in the future, which would shadow it.
+# Defensive alias for the built-in ``type`` to avoid shadowing by the
+# Pydantic field ``type: str`` defined on SessionEvent (and any future
+# class in this module that follows the same pattern).
 _type = type
 
 # ---------------------------------------------------------------------------

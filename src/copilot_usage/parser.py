@@ -387,14 +387,14 @@ def _build_active_summary(
     model = fp.model
 
     # Try to determine model from tool.execution_complete events
-    for idx_tool, ev in enumerate(events):
+    for idx, ev in enumerate(events):
         if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
             try:
                 parsed = ev.as_tool_execution()
             except ValidationError as exc:
                 logger.debug(
                     "event {} — could not parse {} event ({}), skipping",
-                    idx_tool,
+                    idx,
                     ev.type,
                     exc.error_count(),
                 )
