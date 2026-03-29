@@ -773,12 +773,21 @@ def _active_section(output: str) -> str:
     # Heuristically detect the start of the subsequent "Sessions" list table
     # or other content that follows the Active Sessions table. We trim the
     # active section at the earliest such boundary if present.
+    end_index = len(section)
+
+    # First, try to locate the "Sessions" table title as rendered by Rich.
+    # This typically appears on a border line such as "┏━━ Sessions ━━┓",
+    # so we look for any line that contains the standalone word "Sessions".
+    sessions_line_pattern = re.compile(r"^.*\bSessions\b.*$", re.MULTILINE)
+    match = sessions_line_pattern.search(section)
+    if match:
+        end_index = min(end_index, match.start())
+
+    # Fall back to simple substring markers in case the output format changes.
     end_markers = [
         "\nSessions\n",
         "\nSessions ",
     ]
-
-    end_index = len(section)
     for marker in end_markers:
         idx = section.find(marker)
         if idx != -1 and idx < end_index:
