@@ -98,7 +98,7 @@ class ModelMetrics(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
-def _copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
+def copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
     """Create an independent copy of *mm* via explicit construction.
 
     Builds new ``ModelMetrics``/``RequestMetrics``/``TokenUsage`` instances
@@ -121,7 +121,7 @@ def merge_model_metrics(
     additional: dict[str, ModelMetrics],
 ) -> dict[str, ModelMetrics]:
     """Return a new dict merging *additional* into *base* without mutation."""
-    result = {name: _copy_model_metrics(mm) for name, mm in base.items()}
+    result = {name: copy_model_metrics(mm) for name, mm in base.items()}
     for name, mm in additional.items():
         if name in result:
             existing = result[name]
@@ -132,7 +132,7 @@ def merge_model_metrics(
             existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
             existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
         else:
-            result[name] = _copy_model_metrics(mm)
+            result[name] = copy_model_metrics(mm)
     return result
 
 

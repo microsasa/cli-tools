@@ -26,6 +26,7 @@ from copilot_usage.models import (
     SessionEvent,
     SessionSummary,
     TokenUsage,
+    copy_model_metrics,
     has_active_period_stats,
     shutdown_output_tokens,
     total_output_tokens,
@@ -47,7 +48,6 @@ from copilot_usage.render_detail import (
 from copilot_usage.report import (
     _aggregate_model_metrics,
     _compute_session_totals,
-    _copy_model_metrics,
     _effective_stats,
     _EffectiveStats,
     _estimate_premium_cost,
@@ -2862,12 +2862,12 @@ class TestAggregateModelMetricsPerformance:
             assert m.usage.cacheWriteTokens == 5 * n
 
     def test_copy_called_once_per_unique_model(self) -> None:
-        """_copy_model_metrics should be called exactly len(unique_models) times."""
+        """copy_model_metrics should be called exactly len(unique_models) times."""
         n = 60
         sessions = [self._make_session(f"s{i}", self._MODEL_NAMES) for i in range(n)]
         with patch(
-            "copilot_usage.report._copy_model_metrics",
-            wraps=_copy_model_metrics,
+            "copilot_usage.report.copy_model_metrics",
+            wraps=copy_model_metrics,
         ) as mock_copy:
             _aggregate_model_metrics(sessions)
             assert mock_copy.call_count == len(self._MODEL_NAMES)

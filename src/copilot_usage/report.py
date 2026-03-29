@@ -25,9 +25,8 @@ from copilot_usage._formatting import (
 )
 from copilot_usage.models import (
     ModelMetrics,
-    RequestMetrics,
     SessionSummary,
-    TokenUsage,
+    copy_model_metrics,
     ensure_aware,
     has_active_period_stats,
     session_sort_key,
@@ -63,7 +62,7 @@ def _format_elapsed_since(start: datetime) -> str:
     return format_timedelta(delta)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _EffectiveStats:
     """Active-period stats when available, otherwise session totals."""
 
@@ -87,7 +86,7 @@ def _effective_stats(session: SessionSummary) -> _EffectiveStats:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _SessionTotals:
     """Aggregated totals across a list of sessions."""
 
@@ -238,19 +237,6 @@ def _filter_sessions(
     return filtered
 
 
-def _copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
-    """Create an independent copy of *mm* via explicit construction."""
-    return ModelMetrics(
-        requests=RequestMetrics(count=mm.requests.count, cost=mm.requests.cost),
-        usage=TokenUsage(
-            inputTokens=mm.usage.inputTokens,
-            outputTokens=mm.usage.outputTokens,
-            cacheReadTokens=mm.usage.cacheReadTokens,
-            cacheWriteTokens=mm.usage.cacheWriteTokens,
-        ),
-    )
-
-
 def _aggregate_model_metrics(
     sessions: list[SessionSummary],
 ) -> dict[str, ModelMetrics]:
@@ -271,7 +257,7 @@ def _aggregate_model_metrics(
                 existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
                 existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
             else:
-                result[model_name] = _copy_model_metrics(mm)
+                result[model_name] = copy_model_metrics(mm)
     return result
 
 
