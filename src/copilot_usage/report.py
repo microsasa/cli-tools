@@ -615,6 +615,7 @@ def render_cost_view(
                 # Only show session-level info once
                 name = ""
                 model_calls_display = ""
+            grand_output += total_output_tokens(s)
         else:
             table.add_row(
                 name,
@@ -626,7 +627,6 @@ def render_cost_view(
             )
 
         grand_model_calls += s.model_calls
-        grand_output += total_output_tokens(s)
 
         if s.is_active and s.has_shutdown_metrics:
             cost_stats = _effective_stats(s)
