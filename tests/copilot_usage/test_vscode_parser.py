@@ -93,6 +93,7 @@ class TestParseVscodeLog:
             encoding="utf-8",
         )
         requests = parse_vscode_log(log_file)
+        assert requests is not None
         assert len(requests) == 3
         assert requests[0].model == "claude-opus-4.6"
         assert requests[0].duration_ms == 8003
