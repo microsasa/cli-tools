@@ -7,8 +7,9 @@ without creating a circular dependency.
 """
 
 from datetime import timedelta
+from typing import Final
 
-MAX_CONTENT_LEN = 80
+MAX_CONTENT_LEN: Final[int] = 80
 
 
 def hms(total_seconds: int) -> tuple[int, int, int]:
