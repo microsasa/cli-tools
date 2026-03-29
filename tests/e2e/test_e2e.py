@@ -1,6 +1,7 @@
 """End-to-end tests running CLI commands against anonymized fixture data."""
 
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -714,3 +715,203 @@ class TestSessionNotFoundAvailableE2E:
         # All known fixture session prefixes should appear
         for prefix in ["b5df8a34", "4a547040", "0faecbdf"]:
             assert prefix in result.output
+
+
+# ---------------------------------------------------------------------------
+# interactive summary (two-section layout)
+# ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Marker that separates the historical section from the active section
+_ACTIVE_MARKER = "Active Sessions (Since Last Shutdown)"
+
+# Minimal completed session with zero premium requests (free-tier model only).
+# Used to verify that the historical filter's ``not s.is_active`` branch
+# includes sessions even when ``total_premium_requests == 0``.
+_FREE_COMPLETED_EVENTS = (
+    '{"type":"session.start","data":{"sessionId":"free-completed-001",'
+    '"version":1,"producer":"copilot-agent","copilotVersion":"1.0.2",'
+    '"startTime":"2026-03-07T10:00:00.000Z",'
+    '"context":{"cwd":"/tmp/gh-aw/agent"}},'
+    '"id":"fc-start","timestamp":"2026-03-07T10:00:00.000Z","parentId":null}\n'
+    '{"type":"session.shutdown","data":{"shutdownType":"routine",'
+    '"totalPremiumRequests":0,"totalApiDurationMs":1000,'
+    '"modelMetrics":{"gpt-5-mini":{"requests":{"count":1,"cost":0},'
+    '"usage":{"inputTokens":100,"outputTokens":50,'
+    '"cacheReadTokens":0,"cacheWriteTokens":0}}},'
+    '"currentModel":"gpt-5-mini"},'
+    '"id":"fc-shutdown","timestamp":"2026-03-07T10:30:00.000Z",'
+    '"parentId":"fc-start"}\n'
+)
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+def _historical_section(output: str) -> str:
+    """Return everything before the first active-section marker."""
+    return output.split(_ACTIVE_MARKER)[0]
+
+
+def _active_section(output: str) -> str:
+    """Return only the Active Sessions section after the first marker.
+
+    The full interactive layout renders additional content after the Active
+    Sessions table (a "Sessions" list and home prompt). For tests that are
+    specifically validating the Active Sessions section, we slice the output
+    to stop before those later regions so that assertions cannot be
+    accidentally satisfied by the follow-on content.
+    """
+    parts = output.split(_ACTIVE_MARKER, 1)
+    if len(parts) <= 1:
+        return ""
+
+    section = parts[1]
+
+    # Heuristically detect the start of the subsequent "Sessions" list table
+    # or other content that follows the Active Sessions table. We trim the
+    # active section at the earliest such boundary if present.
+    end_index = len(section)
+
+    # First, try to locate the "Sessions" table title as rendered by Rich.
+    # This typically appears on a border line such as "┏━━ Sessions ━━┓",
+    # so we look for any line that contains the standalone word "Sessions".
+    sessions_line_pattern = re.compile(r"^.*\bSessions\b.*$", re.MULTILINE)
+    match = sessions_line_pattern.search(section)
+    if match:
+        end_index = min(end_index, match.start())
+
+    # Fall back to simple substring markers in case the output format changes.
+    end_markers = [
+        "\nSessions\n",
+        "\nSessions ",
+    ]
+    for marker in end_markers:
+        idx = section.find(marker)
+        if idx != -1 and idx < end_index:
+            end_index = idx
+
+    return section[:end_index]
+
+
+class TestInteractiveSummaryE2E:
+    """E2E tests for the default interactive mode (two-section layout).
+
+    The default CLI path (no subcommand) enters ``_interactive_loop`` which
+    calls ``render_full_summary`` — a two-section layout with *Historical
+    Totals* and *Active Sessions*.  ``input="q\\n"`` quits immediately after
+    the initial render.
+    """
+
+    # -- Section presence -------------------------------------------------
+
+    def test_both_sections_rendered(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        assert "Historical Totals" in result.output
+        assert "Active Sessions" in result.output
+
+    # -- Historical section content ---------------------------------------
+
+    def test_resumed_session_in_historical(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "resumed-sess" in _historical_section(output)
+
+    def test_completed_sessions_in_historical(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        historical = _historical_section(output)
+        assert "0faecbdf" in historical
+
+    def test_pure_active_absent_from_historical(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        historical = _historical_section(output)
+        assert "pure-active" not in historical
+
+    def test_historical_totals_use_shutdown_tokens(self) -> None:
+        """Historical totals must use shutdown-only tokens (no active-period
+        double-counting).  The fixture set yields 414 000 shutdown output
+        tokens across all historical sessions.
+        """
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        historical = _historical_section(output)
+        assert "414.0K output tokens" in historical
+
+    # -- Active section content -------------------------------------------
+
+    def test_resumed_session_in_active(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "resumed-sess" in _active_section(output)
+
+    def test_active_sessions_in_active_section(self) -> None:
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        active = _active_section(output)
+        assert "4a547040" in active
+        assert "resumed-sess" in active
+
+    # -- Regression: resumed-session split --------------------------------
+
+    def test_resumed_active_tokens_not_duplicated(self) -> None:
+        """Active section must show active-period tokens only.
+
+        ``resumed-session`` has ``active_output_tokens=325`` (not the 500
+        from shutdown or 825 total).  The active-section row must reflect
+        only the post-resume activity.
+        """
+        result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        active = _active_section(output)
+        resumed_rows = [ln for ln in active.splitlines() if "resumed-sess" in ln]
+        assert resumed_rows
+        assert "325" in resumed_rows[0]
+
+    # -- Regression: free-model (zero-premium) completed session ----------
+
+    def test_free_model_completed_in_historical(self) -> None:
+        """A completed session with ``total_premium_requests=0`` must still
+        appear in the historical section (the ``not s.is_active`` branch
+        of the filter).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_dir = Path(tmpdir) / "free-completed"
+            session_dir.mkdir()
+            (session_dir / "events.jsonl").write_text(
+                _FREE_COMPLETED_EVENTS,
+                encoding="utf-8",
+            )
+            result = CliRunner().invoke(main, ["--path", tmpdir], input="q\n")
+            assert result.exit_code == 0
+            output = _strip_ansi(result.output)
+            assert "Historical Totals" in output
+            assert "free-complet" in _historical_section(output)
+
+    # -- Regression: pure-active-only input -------------------------------
+
+    def test_pure_active_only_no_historical(self) -> None:
+        """When the only sessions are pure-active (no shutdown data), the
+        historical section must show the ``No historical shutdown data``
+        message and the active section must still render.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shutil.copytree(
+                FIXTURES / "pure-active-session",
+                Path(tmpdir) / "pure-active-session",
+            )
+            result = CliRunner().invoke(main, ["--path", tmpdir], input="q\n")
+            assert result.exit_code == 0
+            assert "No historical shutdown data" in result.output
+            assert "Active Sessions" in result.output
