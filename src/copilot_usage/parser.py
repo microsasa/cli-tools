@@ -202,6 +202,7 @@ class _FirstPassResult:
     user_message_count: int
     total_output_tokens: int
     total_turn_starts: int
+    tool_model: str | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -232,6 +233,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     user_message_count = 0
     total_output_tokens = 0
     total_turn_starts = 0
+    tool_model: str | None = None
 
     for idx, ev in enumerate(events):
         if ev.type == EventType.SESSION_START:
@@ -279,6 +281,19 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
                 total_output_tokens += tokens
 
+        elif ev.type == EventType.TOOL_EXECUTION_COMPLETE and tool_model is None:
+            try:
+                parsed = ev.as_tool_execution()
+                if parsed.model:
+                    tool_model = parsed.model
+            except ValidationError as exc:
+                logger.debug(
+                    "event {} — could not parse {} event ({}), skipping",
+                    idx,
+                    ev.type,
+                    exc.error_count(),
+                )
+
     return _FirstPassResult(
         session_id=session_id,
         start_time=start_time,
@@ -289,6 +304,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
         user_message_count=user_message_count,
         total_output_tokens=total_output_tokens,
         total_turn_starts=total_turn_starts,
+        tool_model=tool_model,
     )
 
 
@@ -380,28 +396,10 @@ def _build_completed_summary(
 def _build_active_summary(
     fp: _FirstPassResult,
     name: str | None,
-    events: list[SessionEvent],
     config_path: Path | None,
 ) -> SessionSummary:
     """Build a :class:`SessionSummary` for a session with no shutdown data."""
-    model = fp.model
-
-    # Try to determine model from tool.execution_complete events
-    for idx, ev in enumerate(events):
-        if ev.type == EventType.TOOL_EXECUTION_COMPLETE:
-            try:
-                parsed = ev.as_tool_execution()
-            except ValidationError as exc:
-                logger.debug(
-                    "event {} — could not parse {} event ({}), skipping",
-                    idx,
-                    ev.type,
-                    exc.error_count(),
-                )
-                continue
-            if parsed.model:
-                model = parsed.model
-                break
+    model = fp.model or fp.tool_model
 
     # Fall back to ~/.copilot/config.json for active sessions
     if model is None:
@@ -477,7 +475,7 @@ def build_session_summary(
         resume = _detect_resume(events, fp.all_shutdowns)
         return _build_completed_summary(fp, name, resume)
 
-    return _build_active_summary(fp, name, events, config_path)
+    return _build_active_summary(fp, name, config_path)
 
 
 # ---------------------------------------------------------------------------
