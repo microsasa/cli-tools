@@ -54,6 +54,8 @@ Address review comments on pull request #${{ inputs.pr_number }}.
 
 ## Instructions
 
+Read and follow the coding standards in `.github/CODING_GUIDELINES.md` for all code changes.
+
 This workflow addresses unresolved review comments on a pull request.
 
 1. Check if the PR already has the label `aw-review-response-attempted`. If it does, add a comment to the PR saying "Review response already attempted — stopping to prevent loops. Manual intervention needed." and stop.

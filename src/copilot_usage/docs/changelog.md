@@ -27,7 +27,7 @@ Manual work only — autonomous agent pipeline PRs are not tracked here.
 **Plan**: Fix three `aw-protected-files` issues that autonomous agents cannot touch.
 
 **Done**:
-- **#291**: Wrapped bare `import loguru` in `TYPE_CHECKING` guard in `logging_config.py`
+- **#291**: Replaced `TYPE_CHECKING` guard with runtime `import loguru` in `logging_config.py`
 - **#330**: Added `exclude = ["src/copilot_usage/docs"]` to hatchling wheel config; created `tests/test_packaging.py` using `shutil.which("uv")` for S607 compliance
 - **#352**: Restored doctest examples in `_formatting.py`, enabled `--doctest-modules` with `testpaths = ["tests", "src"]`
 - Updated Makefile: unit test targets use `--ignore=tests/e2e` instead of explicit paths, letting `pyproject.toml` `testpaths` guide collection
