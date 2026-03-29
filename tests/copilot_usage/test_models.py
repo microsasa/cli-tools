@@ -1,6 +1,7 @@
 """Tests for copilot_usage.models — Pydantic v2 event parsing."""
 
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -379,6 +380,45 @@ class TestMergeModelMetrics:
         additional = {"m1": ModelMetrics(requests=RequestMetrics(count=5))}
         merge_model_metrics(base, additional)
         assert additional["m1"].requests.count == 5
+
+    def test_performance(self) -> None:
+        base = {
+            f"model-{i}": ModelMetrics(
+                requests=RequestMetrics(count=10, cost=5),
+                usage=TokenUsage(
+                    inputTokens=100,
+                    outputTokens=200,
+                    cacheReadTokens=50,
+                    cacheWriteTokens=10,
+                ),
+            )
+            for i in range(10)
+        }
+        additional = {
+            f"model-{i}": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=2),
+                usage=TokenUsage(
+                    inputTokens=50,
+                    outputTokens=100,
+                    cacheReadTokens=25,
+                    cacheWriteTokens=5,
+                ),
+            )
+            for i in range(10)
+        }
+
+        iterations = 1000
+        start = time.perf_counter()
+        for _ in range(iterations):
+            merge_model_metrics(base, additional)
+        elapsed = time.perf_counter() - start
+
+        # CI environments are slower than local machines; use a generous
+        # ceiling that still catches accidental deep-copy regressions
+        # (model_copy(deep=True) typically exceeds 500 µs/call in CI).
+        assert elapsed / iterations < 500e-6, (
+            f"merge_model_metrics too slow: {elapsed / iterations * 1e6:.1f} µs/call"
+        )
 
 
 # ---------------------------------------------------------------------------
