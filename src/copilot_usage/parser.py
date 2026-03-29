@@ -8,6 +8,7 @@ aggregates.
 import dataclasses
 import json
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
@@ -50,6 +51,7 @@ def _infer_model_from_metrics(metrics: dict[str, ModelMetrics]) -> str | None:
     return max(metrics, key=lambda m: metrics[m].requests.count)
 
 
+@lru_cache(maxsize=4)
 def _read_config_model(config_path: Path | None = None) -> str | None:
     """Read the active model from ``~/.copilot/config.json``."""
     path = config_path or _CONFIG_PATH

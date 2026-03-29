@@ -3607,6 +3607,108 @@ class TestReadConfigModel:
 
 
 # ---------------------------------------------------------------------------
+# Issue #508 — _read_config_model caching
+# ---------------------------------------------------------------------------
+
+
+class TestReadConfigModelCaching:
+    """Verify ``@lru_cache`` prevents redundant disk reads across calls."""
+
+    def test_repeated_calls_same_path_hit_cache(self, tmp_path: Path) -> None:
+        """Multiple calls with the same config_path only read disk once."""
+        _read_config_model.cache_clear()
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        assert _read_config_model(config) == "gpt-5.1"
+        assert _read_config_model(config) == "gpt-5.1"
+        assert _read_config_model(config) == "gpt-5.1"
+
+        info = _read_config_model.cache_info()
+        assert info.misses == 1
+        assert info.hits == 2
+
+    def test_different_paths_are_cached_independently(self, tmp_path: Path) -> None:
+        """Each unique path is a separate cache entry."""
+        _read_config_model.cache_clear()
+        c1 = tmp_path / "a" / "config.json"
+        c2 = tmp_path / "b" / "config.json"
+        c1.parent.mkdir()
+        c2.parent.mkdir()
+        c1.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+        c2.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
+        assert _read_config_model(c1) == "gpt-5.1"
+        assert _read_config_model(c2) == "claude-sonnet-4"
+        assert _read_config_model(c1) == "gpt-5.1"
+
+        info = _read_config_model.cache_info()
+        assert info.misses == 2
+        assert info.hits == 1
+
+    def test_get_all_sessions_reads_config_at_most_once(self, tmp_path: Path) -> None:
+        """N active-modelless sessions → config file read at most once."""
+        _read_config_model.cache_clear()
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        # Create 3 active sessions with no model info in events
+        for name in ("s1", "s2", "s3"):
+            session_start = json.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": name,
+                        "version": 1,
+                        "startTime": "2026-03-07T10:00:00.000Z",
+                        "context": {},
+                    },
+                    "id": f"ev-{name}",
+                    "timestamp": "2026-03-07T10:00:00.000Z",
+                }
+            )
+            user_msg = json.dumps(
+                {
+                    "type": "user.message",
+                    "data": {
+                        "content": "hello",
+                        "transformedContent": "hello",
+                        "attachments": [],
+                        "interactionId": "int-1",
+                    },
+                    "id": f"ev-u-{name}",
+                    "timestamp": "2026-03-07T10:01:00.000Z",
+                }
+            )
+            _write_events(
+                tmp_path / "sessions" / name / "events.jsonl",
+                session_start,
+                user_msg,
+            )
+
+        read_count = 0
+        original_read = Path.read_text
+
+        def counting_read(self: Path, *a: object, **kw: object) -> str:
+            nonlocal read_count
+            if self == config:
+                read_count += 1
+            return original_read(self, *a, **kw)  # type: ignore[arg-type]
+
+        with (
+            patch.object(Path, "read_text", new=counting_read),
+            patch("copilot_usage.parser._CONFIG_PATH", config),
+        ):
+            summaries = get_all_sessions(tmp_path / "sessions")
+
+        active = [s for s in summaries if s.is_active]
+        assert len(active) == 3
+        assert all(s.model == "gpt-5.1" for s in active)
+        # Config file read at most once thanks to lru_cache
+        assert read_count <= 1
+
+
+# ---------------------------------------------------------------------------
 # Issue #418 — Gap 1: malformed session.start (ValidationError)
 # ---------------------------------------------------------------------------
 
