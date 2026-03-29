@@ -1,12 +1,9 @@
 """Logging configuration — console-only for CLI tool."""
 
 import sys
-from typing import TYPE_CHECKING
 
+import loguru
 from loguru import logger
-
-if TYPE_CHECKING:
-    import loguru  # noqa: F401  — for pyright to resolve "loguru.Record"
 
 LEVEL_EMOJI: dict[str, str] = {
     "TRACE": "🔍",

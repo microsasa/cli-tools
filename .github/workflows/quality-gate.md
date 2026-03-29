@@ -50,6 +50,8 @@ Evaluate pull request #${{ inputs.pr_number }} for autonomous merge eligibility.
 
 ## Instructions
 
+Read `.github/CODING_GUIDELINES.md` and verify that the PR's code changes comply with those standards.
+
 This workflow is dispatched by the pipeline orchestrator when a PR has CI green and all review threads resolved.
 
 1. Fetch the PR details for PR #${{ inputs.pr_number }}. Verify it has the `aw` label. If not, stop immediately.

@@ -45,6 +45,8 @@ Read the issue specified by the input, understand the problem, implement the sol
 
 ## Instructions
 
+Read and follow the coding standards in `.github/CODING_GUIDELINES.md` for all code you write.
+
 Read all files in the repository. Read issue #${{ github.event.inputs.issue_number }} to understand what needs to be fixed. Implement the fix following the spec in the issue, including any testing requirements.
 
 Before committing, run the full CI check suite locally:
