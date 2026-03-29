@@ -98,12 +98,30 @@ class ModelMetrics(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+def _copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
+    """Create an independent copy of *mm* via explicit construction.
+
+    Builds new ``ModelMetrics``/``RequestMetrics``/``TokenUsage`` instances
+    instead of using Pydantic's ``model_copy(deep=True)`` which delegates to
+    ``copy.deepcopy`` and is significantly slower for simple int fields.
+    """
+    return ModelMetrics(
+        requests=RequestMetrics(count=mm.requests.count, cost=mm.requests.cost),
+        usage=TokenUsage(
+            inputTokens=mm.usage.inputTokens,
+            outputTokens=mm.usage.outputTokens,
+            cacheReadTokens=mm.usage.cacheReadTokens,
+            cacheWriteTokens=mm.usage.cacheWriteTokens,
+        ),
+    )
+
+
 def merge_model_metrics(
     base: dict[str, ModelMetrics],
     additional: dict[str, ModelMetrics],
 ) -> dict[str, ModelMetrics]:
     """Return a new dict merging *additional* into *base* without mutation."""
-    result = {name: mm.model_copy(deep=True) for name, mm in base.items()}
+    result = {name: _copy_model_metrics(mm) for name, mm in base.items()}
     for name, mm in additional.items():
         if name in result:
             existing = result[name]
@@ -114,7 +132,7 @@ def merge_model_metrics(
             existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
             existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
         else:
-            result[name] = mm.model_copy(deep=True)
+            result[name] = _copy_model_metrics(mm)
     return result
 
 

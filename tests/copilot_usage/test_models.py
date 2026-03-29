@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
@@ -379,6 +380,54 @@ class TestMergeModelMetrics:
         additional = {"m1": ModelMetrics(requests=RequestMetrics(count=5))}
         merge_model_metrics(base, additional)
         assert additional["m1"].requests.count == 5
+
+    def test_no_deep_copy_regression(self) -> None:
+        """merge_model_metrics must not use copy.deepcopy or model_copy."""
+        base = {
+            "m1": ModelMetrics(
+                requests=RequestMetrics(count=10, cost=5),
+                usage=TokenUsage(
+                    inputTokens=100,
+                    outputTokens=200,
+                    cacheReadTokens=50,
+                    cacheWriteTokens=10,
+                ),
+            )
+        }
+        additional = {
+            "m1": ModelMetrics(
+                requests=RequestMetrics(count=5, cost=2),
+                usage=TokenUsage(
+                    inputTokens=50,
+                    outputTokens=100,
+                    cacheReadTokens=25,
+                    cacheWriteTokens=5,
+                ),
+            )
+        }
+
+        with (
+            patch.object(
+                ModelMetrics,
+                "model_copy",
+                side_effect=AssertionError(
+                    "merge_model_metrics must not call model_copy"
+                ),
+            ),
+            patch(
+                "copy.deepcopy",
+                side_effect=AssertionError(
+                    "merge_model_metrics must not call copy.deepcopy"
+                ),
+            ),
+        ):
+            result = merge_model_metrics(base, additional)
+
+        # Verify correctness of merge output
+        assert result["m1"].requests.count == 15
+        assert result["m1"].requests.cost == 7
+        assert result["m1"].usage.inputTokens == 150
+        assert result["m1"].usage.outputTokens == 300
 
 
 # ---------------------------------------------------------------------------
