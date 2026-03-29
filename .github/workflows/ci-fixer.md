@@ -50,7 +50,7 @@ Fix CI failures on pull request #${{ github.event.inputs.pr_number }}.
 
 ## Instructions
 
-Read and follow the coding standards in `.github/CODING_GUIDELINES.md` for all code changes.
+Read `.github/copilot-instructions.md` and follow all referenced guidelines for code changes.
 
 1. First, check if PR #${{ github.event.inputs.pr_number }} has the label `aw-ci-fix-attempted`. If it does, add a comment saying "CI fix already attempted once — stopping to prevent loops. Manual intervention needed." and stop. Do NOT attempt another fix.
 
