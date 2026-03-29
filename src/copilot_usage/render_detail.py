@@ -8,10 +8,6 @@ All public symbols are re-exported by :mod:`copilot_usage.report` so
 that external callers see no change.
 """
 
-# pyright: reportPrivateUsage=false
-# (This companion module intentionally imports package-private utilities
-# from _formatting.py and report.py — they share a single logical namespace.)
-
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -23,11 +19,11 @@ from rich.table import Table
 from rich.text import Text
 
 from copilot_usage._formatting import (
-    _MAX_CONTENT_LEN,
-    _format_timedelta,
-    _hms,
+    MAX_CONTENT_LEN,
     format_duration,
+    format_timedelta,
     format_tokens,
+    hms,
 )
 from copilot_usage.models import (
     CodeChanges,
@@ -50,13 +46,13 @@ __all__ = ["render_session_detail"]
 def _format_relative_time(delta: timedelta) -> str:
     """Format a timedelta as ``+M:SS`` or ``+H:MM:SS``."""
     total_seconds = max(int(delta.total_seconds()), 0)
-    hours, minutes, seconds = _hms(total_seconds)
+    hours, minutes, seconds = hms(total_seconds)
     if hours:
         return f"+{hours}:{minutes:02d}:{seconds:02d}"
     return f"+{minutes}:{seconds:02d}"
 
 
-def _truncate(text: str, max_len: int = _MAX_CONTENT_LEN) -> str:
+def _truncate(text: str, max_len: int = MAX_CONTENT_LEN) -> str:
     """Truncate *text* to *max_len* characters, appending '…' if needed."""
     if max_len <= 0:
         return ""
@@ -72,7 +68,7 @@ def _format_detail_duration(
     """Return a human-readable duration string between two timestamps."""
     if start is None or end is None:
         return "—"
-    return _format_timedelta(end - start)
+    return format_timedelta(end - start)
 
 
 def _event_type_label(event_type: str) -> Text:
