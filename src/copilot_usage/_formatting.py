@@ -7,21 +7,22 @@ without creating a circular dependency.
 """
 
 from datetime import timedelta
+from typing import Final
 
-_MAX_CONTENT_LEN = 80
+MAX_CONTENT_LEN: Final[int] = 80
 
 
-def _hms(total_seconds: int) -> tuple[int, int, int]:
+def hms(total_seconds: int) -> tuple[int, int, int]:
     """Decompose *total_seconds* into ``(hours, minutes, seconds)``."""
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return hours, minutes, seconds
 
 
-def _format_timedelta(td: timedelta) -> str:
+def format_timedelta(td: timedelta) -> str:
     """Format a timedelta to human-readable duration (e.g. '1h 5m 30s')."""
     total_seconds = max(int(td.total_seconds()), 0)
-    hours, minutes, seconds = _hms(total_seconds)
+    hours, minutes, seconds = hms(total_seconds)
     parts: list[str] = []
     if hours:
         parts.append(f"{hours}h")
@@ -49,7 +50,7 @@ def format_duration(ms: int) -> str:
     >>> format_duration(60000)
     '1m'
     """
-    return _format_timedelta(timedelta(milliseconds=ms))
+    return format_timedelta(timedelta(milliseconds=ms))
 
 
 def format_tokens(n: int) -> str:

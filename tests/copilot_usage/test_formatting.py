@@ -1,7 +1,5 @@
 """Tests for copilot_usage._formatting — shared formatting utilities."""
 
-# pyright: reportPrivateUsage=false
-
 import ast
 import importlib.util
 import subprocess
@@ -108,17 +106,17 @@ class TestFormattingModuleImport:
 
 
 class TestMaxContentLenSingleDefinition:
-    """_MAX_CONTENT_LEN must come from a single source."""
+    """MAX_CONTENT_LEN must come from a single source."""
 
     def test_max_content_len_consistent(self) -> None:
-        """_formatting.py and render_detail.py use the same _MAX_CONTENT_LEN value."""
-        from copilot_usage._formatting import _MAX_CONTENT_LEN as formatting_val
-        from copilot_usage.render_detail import _MAX_CONTENT_LEN as detail_val
+        """_formatting.py and render_detail.py use the same MAX_CONTENT_LEN value."""
+        from copilot_usage._formatting import MAX_CONTENT_LEN as formatting_val
+        from copilot_usage.render_detail import MAX_CONTENT_LEN as detail_val
 
         assert formatting_val == detail_val
 
     def test_max_content_len_not_redefined(self) -> None:
-        """report.py and render_detail.py must not locally assign _MAX_CONTENT_LEN."""
+        """report.py and render_detail.py must not locally assign MAX_CONTENT_LEN."""
         for module_name in ("copilot_usage.report", "copilot_usage.render_detail"):
             spec = importlib.util.find_spec(module_name)
             assert spec is not None and spec.origin is not None
@@ -129,10 +127,10 @@ class TestMaxContentLenSingleDefinition:
                     for target in node.targets:
                         if (
                             isinstance(target, ast.Name)
-                            and target.id == "_MAX_CONTENT_LEN"
+                            and target.id == "MAX_CONTENT_LEN"
                         ):
                             pytest.fail(
-                                f"{module_name} redefines _MAX_CONTENT_LEN "
+                                f"{module_name} redefines MAX_CONTENT_LEN "
                                 f"at line {node.lineno}; "
                                 "it must be imported from _formatting"
                             )
@@ -140,20 +138,20 @@ class TestMaxContentLenSingleDefinition:
                     (
                         isinstance(node, ast.AnnAssign)
                         and isinstance(node.target, ast.Name)
-                        and node.target.id == "_MAX_CONTENT_LEN"
+                        and node.target.id == "MAX_CONTENT_LEN"
                     )
                     or (
                         isinstance(node, ast.AugAssign)
                         and isinstance(node.target, ast.Name)
-                        and node.target.id == "_MAX_CONTENT_LEN"
+                        and node.target.id == "MAX_CONTENT_LEN"
                     )
                     or (
                         isinstance(node, ast.NamedExpr)
-                        and node.target.id == "_MAX_CONTENT_LEN"
+                        and node.target.id == "MAX_CONTENT_LEN"
                     )
                 ):
                     pytest.fail(
-                        f"{module_name} redefines _MAX_CONTENT_LEN "
+                        f"{module_name} redefines MAX_CONTENT_LEN "
                         f"at line {node.lineno}; "
                         "it must be imported from _formatting"
                     )

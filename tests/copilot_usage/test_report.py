@@ -15,8 +15,8 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from copilot_usage._formatting import (
-    _format_timedelta,
-    _hms,
+    format_timedelta,
+    hms,
 )
 from copilot_usage.models import (
     CodeChanges,
@@ -3516,39 +3516,38 @@ class TestFormatDetailDurationBoundaries:
 
 
 # ---------------------------------------------------------------------------
-# Issue #243 — Unit tests for _format_timedelta core helper
+# Issue #243 — Unit tests for format_timedelta core helper
 # ---------------------------------------------------------------------------
 
 
 class TestFormatTimedelta:
     def test_zero(self) -> None:
-        assert _format_timedelta(timedelta(0)) == "0s"
+        assert format_timedelta(timedelta(0)) == "0s"
 
     def test_seconds_only(self) -> None:
-        assert _format_timedelta(timedelta(seconds=5)) == "5s"
+        assert format_timedelta(timedelta(seconds=5)) == "5s"
 
     def test_minutes_and_seconds(self) -> None:
-        assert _format_timedelta(timedelta(minutes=6, seconds=29)) == "6m 29s"
+        assert format_timedelta(timedelta(minutes=6, seconds=29)) == "6m 29s"
 
     def test_exact_minute(self) -> None:
-        assert _format_timedelta(timedelta(minutes=1)) == "1m"
+        assert format_timedelta(timedelta(minutes=1)) == "1m"
 
     def test_exact_hour(self) -> None:
-        assert _format_timedelta(timedelta(hours=1)) == "1h"
+        assert format_timedelta(timedelta(hours=1)) == "1h"
 
     def test_hours_minutes_seconds(self) -> None:
-        assert _format_timedelta(timedelta(hours=1, minutes=1, seconds=1)) == "1h 1m 1s"
+        assert format_timedelta(timedelta(hours=1, minutes=1, seconds=1)) == "1h 1m 1s"
 
     def test_hours_and_minutes_no_seconds(self) -> None:
-        assert _format_timedelta(timedelta(hours=2, minutes=30)) == "2h 30m"
+        assert format_timedelta(timedelta(hours=2, minutes=30)) == "2h 30m"
 
     def test_negative_clamped_to_zero(self) -> None:
-        assert _format_timedelta(timedelta(seconds=-10)) == "0s"
+        assert format_timedelta(timedelta(seconds=-10)) == "0s"
 
     def test_large_duration(self) -> None:
         assert (
-            _format_timedelta(timedelta(hours=100, minutes=5, seconds=3))
-            == "100h 5m 3s"
+            format_timedelta(timedelta(hours=100, minutes=5, seconds=3)) == "100h 5m 3s"
         )
 
 
@@ -4470,28 +4469,28 @@ class TestRenderFullSummaryResumedSplitView:
 
 
 # ---------------------------------------------------------------------------
-# Issue #308 — _hms decomposition helper
+# Issue #308 — hms decomposition helper
 # ---------------------------------------------------------------------------
 
 
 class TestHms:
     def test_zero(self) -> None:
-        assert _hms(0) == (0, 0, 0)
+        assert hms(0) == (0, 0, 0)
 
     def test_seconds_only(self) -> None:
-        assert _hms(45) == (0, 0, 45)
+        assert hms(45) == (0, 0, 45)
 
     def test_minutes_and_seconds(self) -> None:
-        assert _hms(125) == (0, 2, 5)
+        assert hms(125) == (0, 2, 5)
 
     def test_exact_hour(self) -> None:
-        assert _hms(3600) == (1, 0, 0)
+        assert hms(3600) == (1, 0, 0)
 
     def test_hours_minutes_seconds(self) -> None:
-        assert _hms(3661) == (1, 1, 1)
+        assert hms(3661) == (1, 1, 1)
 
     def test_large_value(self) -> None:
-        assert _hms(360303) == (100, 5, 3)
+        assert hms(360303) == (100, 5, 3)
 
 
 # ---------------------------------------------------------------------------

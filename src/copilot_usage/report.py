@@ -19,8 +19,8 @@ from rich.table import Table
 from rich.text import Text
 
 from copilot_usage._formatting import (
-    _format_timedelta,  # pyright: ignore[reportPrivateUsage]
     format_duration,
+    format_timedelta,
     format_tokens,
 )
 from copilot_usage.models import (
@@ -56,10 +56,10 @@ def session_display_name(session: SessionSummary) -> str:
 def _format_elapsed_since(start: datetime) -> str:
     """Return a human-readable elapsed time from *start* to now.
 
-    Formats using :func:`_format_timedelta` for consistent output.
+    Formats using :func:`format_timedelta` for consistent output.
     """
     delta = datetime.now(tz=UTC) - ensure_aware(start)
-    return _format_timedelta(delta)
+    return format_timedelta(delta)
 
 
 @dataclass(frozen=True)
