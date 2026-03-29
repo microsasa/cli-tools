@@ -756,9 +756,35 @@ def _historical_section(output: str) -> str:
 
 
 def _active_section(output: str) -> str:
-    """Return everything after the first active-section marker."""
+    """Return only the Active Sessions section after the first marker.
+
+    The full interactive layout renders additional content after the Active
+    Sessions table (a "Sessions" list and home prompt). For tests that are
+    specifically validating the Active Sessions section, we slice the output
+    to stop before those later regions so that assertions cannot be
+    accidentally satisfied by the follow-on content.
+    """
     parts = output.split(_ACTIVE_MARKER, 1)
-    return parts[1] if len(parts) > 1 else ""
+    if len(parts) <= 1:
+        return ""
+
+    section = parts[1]
+
+    # Heuristically detect the start of the subsequent "Sessions" list table
+    # or other content that follows the Active Sessions table. We trim the
+    # active section at the earliest such boundary if present.
+    end_markers = [
+        "\nSessions\n",
+        "\nSessions ",
+    ]
+
+    end_index = len(section)
+    for marker in end_markers:
+        idx = section.find(marker)
+        if idx != -1 and idx < end_index:
+            end_index = idx
+
+    return section[:end_index]
 
 
 class TestInteractiveSummaryE2E:
@@ -782,17 +808,20 @@ class TestInteractiveSummaryE2E:
 
     def test_resumed_session_in_historical(self) -> None:
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         assert "resumed-sess" in _historical_section(output)
 
     def test_completed_sessions_in_historical(self) -> None:
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         historical = _historical_section(output)
         assert "0faecbdf" in historical
 
     def test_pure_active_absent_from_historical(self) -> None:
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         historical = _historical_section(output)
         assert "pure-active" not in historical
@@ -803,6 +832,7 @@ class TestInteractiveSummaryE2E:
         tokens across all historical sessions.
         """
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         historical = _historical_section(output)
         assert "414.0K output tokens" in historical
@@ -811,11 +841,13 @@ class TestInteractiveSummaryE2E:
 
     def test_resumed_session_in_active(self) -> None:
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         assert "resumed-sess" in _active_section(output)
 
     def test_active_sessions_in_active_section(self) -> None:
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         active = _active_section(output)
         assert "4a547040" in active
@@ -831,6 +863,7 @@ class TestInteractiveSummaryE2E:
         only the post-resume activity.
         """
         result = CliRunner().invoke(main, ["--path", str(FIXTURES)], input="q\n")
+        assert result.exit_code == 0
         output = _strip_ansi(result.output)
         active = _active_section(output)
         resumed_rows = [ln for ln in active.splitlines() if "resumed-sess" in ln]
@@ -847,7 +880,10 @@ class TestInteractiveSummaryE2E:
         with tempfile.TemporaryDirectory() as tmpdir:
             session_dir = Path(tmpdir) / "free-completed"
             session_dir.mkdir()
-            (session_dir / "events.jsonl").write_text(_FREE_COMPLETED_EVENTS)
+            (session_dir / "events.jsonl").write_text(
+                _FREE_COMPLETED_EVENTS,
+                encoding="utf-8",
+            )
             result = CliRunner().invoke(main, ["--path", tmpdir], input="q\n")
             assert result.exit_code == 0
             output = _strip_ansi(result.output)
