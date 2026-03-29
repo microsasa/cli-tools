@@ -25,10 +25,11 @@ from copilot_usage._formatting import (
 )
 from copilot_usage.models import (
     ModelMetrics,
+    RequestMetrics,
     SessionSummary,
+    TokenUsage,
     ensure_aware,
     has_active_period_stats,
-    merge_model_metrics,
     session_sort_key,
     shutdown_output_tokens,
     total_output_tokens,
@@ -237,14 +238,41 @@ def _filter_sessions(
     return filtered
 
 
+def _copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
+    """Create an independent copy of *mm* via explicit construction."""
+    return ModelMetrics(
+        requests=RequestMetrics(count=mm.requests.count, cost=mm.requests.cost),
+        usage=TokenUsage(
+            inputTokens=mm.usage.inputTokens,
+            outputTokens=mm.usage.outputTokens,
+            cacheReadTokens=mm.usage.cacheReadTokens,
+            cacheWriteTokens=mm.usage.cacheWriteTokens,
+        ),
+    )
+
+
 def _aggregate_model_metrics(
     sessions: list[SessionSummary],
 ) -> dict[str, ModelMetrics]:
-    """Merge model metrics across all sessions into a single dict."""
-    merged: dict[str, ModelMetrics] = {}
+    """Merge model metrics across all sessions into a single dict.
+
+    Accumulates in-place so each unique model name is copied at most once,
+    reducing copy overhead from O(n × m) to O(m).
+    """
+    result: dict[str, ModelMetrics] = {}
     for s in sessions:
-        merged = merge_model_metrics(merged, s.model_metrics)
-    return merged
+        for model_name, mm in s.model_metrics.items():
+            if model_name in result:
+                existing = result[model_name]
+                existing.requests.count += mm.requests.count
+                existing.requests.cost += mm.requests.cost
+                existing.usage.inputTokens += mm.usage.inputTokens
+                existing.usage.outputTokens += mm.usage.outputTokens
+                existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
+                existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
+            else:
+                result[model_name] = _copy_model_metrics(mm)
+    return result
 
 
 def _render_summary_header(

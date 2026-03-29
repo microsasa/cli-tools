@@ -47,6 +47,7 @@ from copilot_usage.render_detail import (
 from copilot_usage.report import (
     _aggregate_model_metrics,
     _compute_session_totals,
+    _copy_model_metrics,
     _effective_stats,
     _EffectiveStats,
     _estimate_premium_cost,
@@ -2813,6 +2814,63 @@ class TestAggregateModelMetrics:
         merged = _aggregate_model_metrics([s1, s2])
         assert merged["model-a"].requests.count == 5
         assert merged["model-a"].usage.outputTokens == 100
+
+
+# ---------------------------------------------------------------------------
+# Issue #499 — _aggregate_model_metrics O(m) copy overhead
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateModelMetricsPerformance:
+    """Verify in-place accumulation correctness and O(m) copy overhead."""
+
+    _MODEL_NAMES: list[str] = ["model-a", "model-b", "model-c"]
+
+    @staticmethod
+    def _make_session(sid: str, model_names: list[str]) -> SessionSummary:
+        """Build a session with one ModelMetrics entry per *model_names*."""
+        return SessionSummary(
+            session_id=sid,
+            model_metrics={
+                name: ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=1),
+                    usage=TokenUsage(
+                        inputTokens=100,
+                        outputTokens=50,
+                        cacheReadTokens=10,
+                        cacheWriteTokens=5,
+                    ),
+                )
+                for name in model_names
+            },
+        )
+
+    def test_many_sessions_correct_totals(self) -> None:
+        """50+ sessions × 3 models must sum correctly."""
+        n = 50
+        sessions = [self._make_session(f"s{i}", self._MODEL_NAMES) for i in range(n)]
+        merged = _aggregate_model_metrics(sessions)
+
+        assert set(merged.keys()) == set(self._MODEL_NAMES)
+        for name in self._MODEL_NAMES:
+            m = merged[name]
+            assert m.requests.count == 2 * n
+            assert m.requests.cost == 1 * n
+            assert m.usage.inputTokens == 100 * n
+            assert m.usage.outputTokens == 50 * n
+            assert m.usage.cacheReadTokens == 10 * n
+            assert m.usage.cacheWriteTokens == 5 * n
+
+    def test_copy_called_once_per_unique_model(self) -> None:
+        """_copy_model_metrics should be called exactly len(unique_models) times."""
+        n = 60
+        sessions = [self._make_session(f"s{i}", self._MODEL_NAMES) for i in range(n)]
+        with patch(
+            "copilot_usage.report._copy_model_metrics",
+            wraps=_copy_model_metrics,
+        ) as mock_copy:
+            _aggregate_model_metrics(sessions)
+            assert mock_copy.call_count == len(self._MODEL_NAMES)
 
 
 # ---------------------------------------------------------------------------
