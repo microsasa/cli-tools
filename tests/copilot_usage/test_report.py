@@ -4844,7 +4844,7 @@ class TestRenderRecentEventsMaxEventsBoundary:
 
 
 # ---------------------------------------------------------------------------
-# Issue #446 — Cleanup: callers guard against empty sessions
+# Issue #472 — Cleanup: callers guard against empty sessions
 # ---------------------------------------------------------------------------
 
 
