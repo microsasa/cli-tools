@@ -50,7 +50,7 @@ Evaluate pull request #${{ inputs.pr_number }} for autonomous merge eligibility.
 
 ## Instructions
 
-Read `.github/CODING_GUIDELINES.md` and verify that the PR's code changes comply with those standards.
+Read `.github/copilot-instructions.md` and all referenced guidelines. Verify that the PR's code changes comply with those standards.
 
 This workflow is dispatched by the pipeline orchestrator when a PR has CI green and all review threads resolved.
 

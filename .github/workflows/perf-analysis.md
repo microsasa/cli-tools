@@ -32,7 +32,7 @@ Analyze the codebase for performance problems and open issues for anything worth
 
 ## Instructions
 
-Read `.github/CODING_GUIDELINES.md` for context on the project's coding standards.
+Read `.github/copilot-instructions.md` and all referenced guidelines for context on the project's coding standards.
 
 Read all files in the repository. Read all open issues in the repository. Focus exclusively on performance — do not report code style, refactoring, or documentation issues (those belong to code-health).
 
@@ -40,4 +40,4 @@ Look for performance problems such as algorithmic inefficiency (O(n²) loops, re
 
 For each finding, open an issue with: the specific file and function, what makes it slow, a concrete fix with expected improvement, and a testing requirement (benchmark or assertion that the optimized path is exercised). Prefix each issue title with `[aw][perf]` and label each issue with `aw` and `perf`.
 
-Do not open issues for micro-optimizations that save nanoseconds. Do not open issues for things already caught by CI (ruff PERF rules). Do not open issues for things that already have an open issue. If nothing worth optimizing is found, do not create any issues.
+Do not open issues for micro-optimizations that save nanoseconds. Do not open issues for things already caught by CI (ruff PERF rules). Do not open issues for things that already have an open issue. If you find more issues than you can open, prioritize by impact: prefer findings in hot paths, high-frequency call sites, or code that scales with input size. If nothing worth optimizing is found, do not create any issues.

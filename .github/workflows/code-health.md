@@ -32,10 +32,10 @@ Analyze the entire codebase for cleanup opportunities and open issues for anythi
 
 ## Instructions
 
-Read `.github/CODING_GUIDELINES.md`. Flag any violations of those standards in existing code as cleanup opportunities.
+Read `.github/copilot-instructions.md` and all referenced guidelines. Flag any violations of those standards in existing code as cleanup opportunities.
 
 Read all files in the repository. Read all open issues in the repository. Identify genuine cleanup opportunities — refactoring, dead code, inconsistencies, stale docs, dependency hygiene, or anything else that would make the codebase meaningfully better.
 
 For each finding, open an issue with root cause analysis and a clear spec for resolving it. Each issue must include a testing requirement — regression tests for bugs, coverage for new functionality. Prefix each issue title with `[aw][code health]` and label each issue with `aw` and `code-health`.
 
-Do not open issues for things already caught by CI (ruff, pyright, bandit). Do not open issues for things that already have an open issue. Do not open an issue that is just a nit — if there are many small nits that together form a meaningful cleanup, bundle them into one issue. Do not open issues for performance problems (those belong to perf-analysis). If nothing worth fixing is found, do not create any issues.
+Do not open issues for things already caught by CI (ruff, pyright, bandit). Do not open issues for things that already have an open issue. Do not open an issue that is just a nit — if there are many small nits that together form a meaningful cleanup, bundle them into one issue. Do not open issues for performance problems (those belong to perf-analysis). If you find more issues than you can open, prioritize by severity: prefer bugs and correctness issues over cosmetic cleanup. If nothing worth fixing is found, do not create any issues.
