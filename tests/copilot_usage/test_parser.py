@@ -3707,6 +3707,54 @@ class TestReadConfigModelCaching:
         # Config file read at most once thanks to lru_cache
         assert read_count <= 1
 
+    def test_get_all_sessions_clears_cache_between_calls(self, tmp_path: Path) -> None:
+        """Successive get_all_sessions calls pick up config edits."""
+        _read_config_model.cache_clear()
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        session_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s1",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {},
+                },
+                "id": "ev-s1",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hello",
+                    "transformedContent": "hello",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": "ev-u-s1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        _write_events(
+            tmp_path / "sessions" / "s1" / "events.jsonl",
+            session_start,
+            user_msg,
+        )
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            summaries = get_all_sessions(tmp_path / "sessions")
+            assert summaries[0].model == "gpt-5.1"
+
+            # Edit the config file between calls
+            config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
+            summaries = get_all_sessions(tmp_path / "sessions")
+            assert summaries[0].model == "claude-sonnet-4"
+
 
 # ---------------------------------------------------------------------------
 # Issue #418 — Gap 1: malformed session.start (ValidationError)

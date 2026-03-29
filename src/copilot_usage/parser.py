@@ -490,7 +490,13 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
 
     Returns list sorted by ``start_time`` (newest first).  Sessions
     without a ``start_time`` sort last.
+
+    The ``_read_config_model`` cache is cleared at the start of each
+    invocation so that interactive callers (e.g. ``_interactive_loop``)
+    pick up config-file edits between refreshes while still avoiding
+    redundant reads *within* a single invocation.
     """
+    _read_config_model.cache_clear()
     paths = discover_sessions(base_path)
     summaries: list[SessionSummary] = []
     for events_path in paths:
