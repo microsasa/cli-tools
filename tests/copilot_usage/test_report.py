@@ -4943,8 +4943,16 @@ class TestRenderCostViewNoModelMetricsGrandTotal:
             model_metrics={},
         )
         output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
         # The row should show "—" for Output Tokens
-        assert "—" in output
-        # Grand Total output tokens must be 0 (no visible rows contribute)
-        assert "Grand Total" in output
-        assert "500" not in output
+        assert "—" in clean
+        assert "Grand Total" in clean
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[6] == "0", (
+            f"Grand Total output tokens should be 0, got '{grand_cols[6]}'"
+        )
+        # Regression check: the raw 500 active_output_tokens value must not
+        # appear in the totals
+        assert "500" not in clean
