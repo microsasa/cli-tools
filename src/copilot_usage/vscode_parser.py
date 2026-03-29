@@ -47,12 +47,10 @@ class VSCodeLogSummary:
 
     total_requests: int = 0
     total_duration_ms: int = 0
-    requests_by_model: dict[str, int] = field(default_factory=lambda: dict[str, int]())
-    duration_by_model: dict[str, int] = field(default_factory=lambda: dict[str, int]())
-    requests_by_category: dict[str, int] = field(
-        default_factory=lambda: dict[str, int]()
-    )
-    requests_by_date: dict[str, int] = field(default_factory=lambda: dict[str, int]())
+    requests_by_model: dict[str, int] = field(default_factory=lambda: {})
+    duration_by_model: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_category: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_date: dict[str, int] = field(default_factory=lambda: {})
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
