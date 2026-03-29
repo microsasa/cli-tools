@@ -185,6 +185,10 @@ GitHub Copilot charges different premium-request multipliers per model. This too
 | `gpt-5.4-mini`         | 0×         | Free     |
 | `gpt-5-mini`           | 0×         | Free     |
 | `gpt-4.1`              | 0×         | Free     |
+| `gpt-4o-mini`          | 0×         | Free     |
+| `gpt-4o-mini-2024-07-18` | 0×      | Free     |
+| `copilot-nes-oct`      | 0×         | Free     |
+| `copilot-suggestions-himalia-001` | 0× | Free  |
 | `gemini-3-pro-preview` | 1×         | Standard |
 
 ## Development

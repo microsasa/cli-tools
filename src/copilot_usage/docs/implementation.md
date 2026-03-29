@@ -415,6 +415,10 @@ From `pricing.py` — `_RAW_MULTIPLIERS` dict:
 | `gpt-5.4-mini`         | 0×         | Free     |
 | `gpt-5-mini`           | 0×         | Free     |
 | `gpt-4.1`              | 0×         | Free     |
+| `gpt-4o-mini`          | 0×         | Free     |
+| `gpt-4o-mini-2024-07-18` | 0×      | Free     |
+| `copilot-nes-oct`      | 0×         | Free     |
+| `copilot-suggestions-himalia-001` | 0× | Free  |
 | `gemini-3-pro-preview` | 1×         | Standard |
 
 Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, = 0.0 → Free, < 1.0 → Light, otherwise Standard.
