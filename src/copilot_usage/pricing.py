@@ -11,6 +11,7 @@ AI model used.  This module provides:
 
 import warnings
 from enum import StrEnum
+from functools import lru_cache
 from typing import Final
 
 from pydantic import BaseModel
@@ -136,6 +137,12 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
             model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
         )
 
+    return _cached_lookup(normalized)
+
+
+@lru_cache(maxsize=256)
+def _cached_lookup(normalized: str) -> ModelPricing:
+    """Cached inner lookup — called after normalization and empty-name guard."""
     # 1. Exact
     if normalized in KNOWN_PRICING:
         return KNOWN_PRICING[normalized]
@@ -159,9 +166,9 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
 
     # 3. Unknown
     warnings.warn(
-        f"Unknown model '{model_name}'; assuming 1× standard pricing.",
+        f"Unknown model '{normalized}'; assuming 1× standard pricing.",
         UserWarning,
-        stacklevel=2,
+        stacklevel=3,
     )
     return ModelPricing(
         model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD

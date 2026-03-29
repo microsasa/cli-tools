@@ -3,16 +3,26 @@
 # pyright: reportPrivateUsage=false
 
 import warnings
+from functools import lru_cache
 
 import pytest
 
+from copilot_usage import pricing
 from copilot_usage.pricing import (
     KNOWN_PRICING,
     ModelPricing,
     PricingTier,
+    _cached_lookup,
     _tier_from_multiplier,
     lookup_model_pricing,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_pricing_cache() -> None:
+    """Reset the LRU cache between tests to prevent cross-test leakage."""
+    _cached_lookup.cache_clear()
+
 
 # ---------------------------------------------------------------------------
 # ModelPricing basics
@@ -181,6 +191,7 @@ class TestPartialMatchTieBreaking:
             ),
         }
         monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
+        _cached_lookup.cache_clear()
 
         p = lookup_model_pricing("gpt-5.1-cod")
         expected = local_pricing["gpt-5.1-codex"]
@@ -210,6 +221,7 @@ class TestPartialMatchTieBreaking:
             ),
         }
         monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
+        _cached_lookup.cache_clear()
 
         p = lookup_model_pricing("gpt-5")
         expected = local_pricing["gpt-5-mini"]
@@ -357,3 +369,35 @@ class TestLookupModelPricingCaseNormalization:
         assert len(caught) == 0
         assert p.multiplier == 6.0
         assert p.tier == PricingTier.PREMIUM
+
+
+# ---------------------------------------------------------------------------
+# Caching behaviour (issue #493)
+# ---------------------------------------------------------------------------
+
+
+class TestLookupModelPricingCached:
+    """Verify that repeated lookups hit the LRU cache instead of rescanning."""
+
+    def test_lookup_model_pricing_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        call_count = 0
+        original = pricing._cached_lookup.__wrapped__
+
+        def counting_lookup(normalized: str) -> ModelPricing:
+            nonlocal call_count
+            call_count += 1
+            return original(normalized)
+
+        monkeypatch.setattr(
+            pricing,
+            "_cached_lookup",
+            lru_cache(maxsize=256)(counting_lookup),
+        )
+        pricing._cached_lookup.cache_clear()
+
+        for _ in range(50):
+            pricing.lookup_model_pricing("claude-sonnet-4.6")
+
+        assert call_count == 1, (
+            "Should only scan KNOWN_PRICING once for a repeated model name"
+        )
