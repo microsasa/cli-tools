@@ -92,8 +92,13 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     return logs
 
 
-def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
-    """Parse a single VS Code Copilot Chat log file into request objects."""
+def parse_vscode_log(log_path: Path) -> list[VSCodeRequest] | None:
+    """Parse a single VS Code Copilot Chat log file into request objects.
+
+    Returns a list of parsed requests, or ``None`` if the file could not be
+    opened/read (so callers can distinguish "no matching lines" from "I/O
+    failure").
+    """
     requests: list[VSCodeRequest] = []
     try:
         with log_path.open(encoding="utf-8", errors="replace") as f:
@@ -117,7 +122,7 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
                 )
     except OSError as exc:
         logger.warning("Could not read log file {}: {}", log_path, exc)
-        return requests
+        return None
     logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
     return requests
 
@@ -156,8 +161,12 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs."""
     logs = discover_vscode_logs(base_path)
     all_requests: list[VSCodeRequest] = []
+    parsed_count = 0
     for log_path in logs:
-        all_requests.extend(parse_vscode_log(log_path))
+        result = parse_vscode_log(log_path)
+        if result is not None:
+            all_requests.extend(result)
+            parsed_count += 1
     summary = build_vscode_summary(all_requests)
-    summary.log_files_parsed = len(logs)
+    summary.log_files_parsed = parsed_count
     return summary

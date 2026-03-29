@@ -106,7 +106,7 @@ class TestParseVscodeLog:
 
     def test_missing_file(self, tmp_path: Path) -> None:
         missing = tmp_path / "no_such.log"
-        assert parse_vscode_log(missing) == []
+        assert parse_vscode_log(missing) is None
 
 
 # ---------------------------------------------------------------------------

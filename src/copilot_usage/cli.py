@@ -572,7 +572,7 @@ def live(ctx: click.Context, path: Path | None) -> None:
     "--vscode-logs",
     type=click.Path(exists=True, path_type=Path),
     default=None,
-    help="Custom VS Code logs directory.",
+    help="Path to VS Code 'Code/logs' directory (parent of the dated log folders).",
 )
 def vscode(vscode_logs: Path | None) -> None:
     """Show usage from VS Code Copilot Chat logs."""
