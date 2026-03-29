@@ -34,7 +34,7 @@ Analyze the codebase for performance problems and open issues for anything worth
 
 Read `.github/CODING_GUIDELINES.md` for context on the project's coding standards.
 
-Read all source files in `src/` and `tests/`. Read all open issues in the repository. Focus exclusively on performance — do not report code style, refactoring, or documentation issues (those belong to code-health).
+Read all files in the repository. Read all open issues in the repository. Focus exclusively on performance — do not report code style, refactoring, or documentation issues (those belong to code-health).
 
 Look for performance problems such as algorithmic inefficiency (O(n²) loops, repeated linear scans), redundant I/O, wasteful allocations, repeated computation, and import-time cost — but do not limit yourself to these categories. Any meaningful performance improvement is in scope.
 
