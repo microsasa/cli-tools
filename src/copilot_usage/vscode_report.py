@@ -17,9 +17,11 @@ __all__ = ["render_vscode_summary"]
 _DAILY_ACTIVITY_LIMIT = 14
 
 
-def render_vscode_summary(summary: VSCodeLogSummary) -> None:
+def render_vscode_summary(
+    summary: VSCodeLogSummary, target_console: Console | None = None
+) -> None:
     """Render VS Code Copilot Chat usage summary to the console."""
-    console = Console()
+    console = target_console or Console()
 
     # --- Totals panel ---
     date_range = "—"

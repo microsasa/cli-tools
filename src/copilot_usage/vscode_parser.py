@@ -30,7 +30,7 @@ CCREQ_RE = re.compile(
 )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class VSCodeRequest:
     """A single parsed VS Code Copilot Chat request."""
 
@@ -41,7 +41,7 @@ class VSCodeRequest:
     category: str
 
 
-@dataclass
+@dataclass(slots=True)
 class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs."""
 
@@ -115,8 +115,8 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
                         category=category,
                     )
                 )
-    except OSError:
-        logger.warning("Could not read log file: {}", log_path)
+    except OSError as exc:
+        logger.warning("Could not read log file {}: {}", log_path, exc)
         return requests
     logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
     return requests
