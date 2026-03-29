@@ -3979,5 +3979,153 @@ class TestBuildActiveSummaryConfigFallback:
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
         events = parse_events(p)
         fp = _first_pass(events)
-        result = _build_active_summary(fp, name=None, events=events, config_path=config)
+        result = _build_active_summary(fp, name=None, config_path=config)
         assert result.model == "gpt-4o"
+
+
+# ---------------------------------------------------------------------------
+# Issue #498 — _first_pass captures tool_model, eliminating second pass
+# ---------------------------------------------------------------------------
+
+
+class TestFirstPassToolModel:
+    """Verify _first_pass populates tool_model from tool.execution_complete events."""
+
+    def test_tool_model_captured_in_first_pass(self, tmp_path: Path) -> None:
+        """tool_model is set from the first tool.execution_complete with a model."""
+        turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t1"},
+                "id": "ev-ts1",
+                "timestamp": "2026-03-07T10:00:30.000Z",
+            }
+        )
+        assistant = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m1", "content": "hi", "outputTokens": 100},
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": "claude-sonnet-4",
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, turn_start, assistant, tool)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model == "claude-sonnet-4"
+
+    def test_tool_model_none_when_no_tool_events(self, tmp_path: Path) -> None:
+        """tool_model is None when no tool.execution_complete events exist."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model is None
+
+    def test_tool_model_skips_none_model(self, tmp_path: Path) -> None:
+        """tool.execution_complete with model=None is skipped; next one wins."""
+        tool_no_model = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "model": None, "success": True},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool_with_model = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-2", "model": "gpt-5.1", "success": True},
+                "id": "ev-t2",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_no_model, tool_with_model)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model == "gpt-5.1"
+
+    def test_active_session_resolves_model_via_first_pass(self, tmp_path: Path) -> None:
+        """Active session (no shutdown) resolves model from _first_pass.tool_model."""
+        turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t1"},
+                "id": "ev-ts1",
+                "timestamp": "2026-03-07T10:00:30.000Z",
+            }
+        )
+        assistant = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {"messageId": "m1", "content": "hi", "outputTokens": 200},
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": "claude-sonnet-4",
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, turn_start, assistant, tool)
+        events = parse_events(p)
+
+        # Verify _first_pass captures tool_model
+        fp = _first_pass(events)
+        assert fp.tool_model == "claude-sonnet-4"
+
+        # Verify build_session_summary uses tool_model correctly
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.model == "claude-sonnet-4"
+        assert summary.is_active is True
+
+    def test_malformed_tool_event_skipped(self, tmp_path: Path) -> None:
+        """A malformed tool.execution_complete is skipped; next valid one wins."""
+        bad_tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "toolTelemetry": "invalid"},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        good_tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-2",
+                    "model": "gpt-5.1",
+                    "success": True,
+                },
+                "id": "ev-t2",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, bad_tool, good_tool)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model == "gpt-5.1"
