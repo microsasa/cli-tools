@@ -99,9 +99,10 @@ class ModelMetrics(BaseModel):
 
 
 def _copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
-    """Create an independent copy of *mm* via direct field assignment.
+    """Create an independent copy of *mm* via explicit construction.
 
-    Avoids Pydantic's ``model_copy(deep=True)`` which delegates to
+    Builds new ``ModelMetrics``/``RequestMetrics``/``TokenUsage`` instances
+    instead of using Pydantic's ``model_copy(deep=True)`` which delegates to
     ``copy.deepcopy`` and is significantly slower for simple int fields.
     """
     return ModelMetrics(
