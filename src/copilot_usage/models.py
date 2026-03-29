@@ -8,6 +8,7 @@ flexible fallback for unknown ones.
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Final
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,7 +22,7 @@ _type = type
 # ---------------------------------------------------------------------------
 
 # Aware datetime sentinel used as a sort-key fallback for sessions without a start_time.
-EPOCH: datetime = datetime.min.replace(tzinfo=UTC)
+EPOCH: Final[datetime] = datetime.min.replace(tzinfo=UTC)
 
 
 def ensure_aware(dt: datetime) -> datetime:

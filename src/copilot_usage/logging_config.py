@@ -1,11 +1,14 @@
 """Logging configuration — console-only for CLI tool."""
 
+from __future__ import annotations
+
 import sys
+from typing import Final
 
 import loguru
 from loguru import logger
 
-LEVEL_EMOJI: dict[str, str] = {
+LEVEL_EMOJI: Final[dict[str, str]] = {
     "TRACE": "🔍",
     "DEBUG": "🐛",
     "INFO": "ℹ️ ",
@@ -15,7 +18,7 @@ LEVEL_EMOJI: dict[str, str] = {
     "CRITICAL": "🔥",
 }
 
-CONSOLE_FORMAT = (
+CONSOLE_FORMAT: Final[str] = (
     "<dim>{time:HH:mm:ss}</dim> "
     "{extra[emoji]} "
     "<level>{level:<7}</level> "
@@ -23,7 +26,7 @@ CONSOLE_FORMAT = (
 )
 
 
-def _emoji_patcher(record: "loguru.Record") -> None:
+def _emoji_patcher(record: loguru.Record) -> None:
     """Inject a level-specific emoji into the log record's extras."""
     record["extra"]["emoji"] = LEVEL_EMOJI.get(record["level"].name, "  ")
 

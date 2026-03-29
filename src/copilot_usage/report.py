@@ -62,7 +62,7 @@ def _format_elapsed_since(start: datetime) -> str:
     return format_timedelta(delta)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _EffectiveStats:
     """Active-period stats when available, otherwise session totals."""
 
@@ -86,7 +86,7 @@ def _effective_stats(session: SessionSummary) -> _EffectiveStats:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _SessionTotals:
     """Aggregated totals across a list of sessions."""
 
