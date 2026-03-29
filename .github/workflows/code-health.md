@@ -38,4 +38,4 @@ Read all files in the repository. Read all open issues in the repository. Identi
 
 For each finding, open an issue with root cause analysis and a clear spec for resolving it. Each issue must include a testing requirement — regression tests for bugs, coverage for new functionality. Prefix each issue title with `[aw][code health]` and label each issue with `aw` and `code-health`.
 
-Do not open issues for things already caught by CI (ruff, pyright, bandit). Do not open issues for things that already have an open issue. Do not open an issue that is just a nit — if there are many small nits that together form a meaningful cleanup, bundle them into one issue. If nothing worth fixing is found, do not create any issues.
+Do not open issues for things already caught by CI (ruff, pyright, bandit). Do not open issues for things that already have an open issue. Do not open an issue that is just a nit — if there are many small nits that together form a meaningful cleanup, bundle them into one issue. Do not open issues for performance problems (those belong to perf-analysis). If nothing worth fixing is found, do not create any issues.
