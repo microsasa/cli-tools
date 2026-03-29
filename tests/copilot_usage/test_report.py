@@ -2114,8 +2114,8 @@ class TestRenderCostView:
         assert "—" in output  # placeholder row (no metrics)
         assert "Since last shutdown" not in output
 
-    def test_pure_active_no_metrics_grand_total_includes_active_tokens(self) -> None:
-        """Grand total output tokens includes active_output_tokens for no-metrics active session."""
+    def test_pure_active_no_metrics_grand_total_excludes_active_tokens(self) -> None:
+        """Grand total output tokens excludes active_output_tokens when row shows '—'."""
         session = SessionSummary(
             session_id="pure-active-5678",
             name="Token Check",
@@ -2129,11 +2129,11 @@ class TestRenderCostView:
         )
         output = _capture_cost_view([session])
         assert "Grand Total" in output
-        # 1500 output tokens → formatted as "1.5K"
-        assert "1.5K" in output
+        # No model_metrics → row shows "—" → grand total must NOT include 1500
+        assert "1.5K" not in output
 
     def test_mixed_sessions_grand_total(self) -> None:
-        """Grand total sums metrics-output from completed + active_output from active-no-metrics."""
+        """Grand total only sums metrics-output from completed; active-no-metrics contributes 0."""
         completed = SessionSummary(
             session_id="comp-aaaa-111111",
             name="Done",
@@ -2159,8 +2159,10 @@ class TestRenderCostView:
             active_output_tokens=500,
         )
         output = _capture_cost_view([completed, active])
-        # 2000 + 500 = 2500 → "2.5K"
-        assert "2.5K" in output
+        # Only the completed session's 2000 tokens count → "2.0K"
+        assert "2.0K" in output
+        # The active session's 500 must NOT inflate the grand total
+        assert "2.5K" not in output
 
     def test_active_session_estimated_cost_known_model(self) -> None:
         """Active session shows numeric estimated cost, not 'N/A', when model is known."""
@@ -4917,3 +4919,40 @@ class TestRenderSummaryHeaderEmptyGuard:
         """render_full_summary returns early for empty list."""
         output = _capture_full_summary([])
         assert "No sessions found" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #506 — render_cost_view grand total excludes sessions with no
+# model_metrics (Output Tokens column shows "—")
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewNoModelMetricsGrandTotal:
+    """Grand Total Output Tokens must equal the sum of non-'—' Output Tokens cells."""
+
+    def test_grand_total_excludes_no_model_metrics_session(self) -> None:
+        """Session with model_metrics={} and active_output_tokens>0 must not inflate Grand Total."""
+        session = SessionSummary(
+            session_id="no-metrics-active-506",
+            name="No Metrics Active",
+            model=None,
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=500,
+            model_metrics={},
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # The row should show "—" for Output Tokens
+        assert "—" in clean
+        assert "Grand Total" in clean
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[6] == "0", (
+            f"Grand Total output tokens should be 0, got '{grand_cols[6]}'"
+        )
+        # Regression check: the raw 500 active_output_tokens value must not
+        # appear in the totals
+        assert "500" not in clean
