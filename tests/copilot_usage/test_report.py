@@ -2618,6 +2618,49 @@ class TestBuildEventDetails:
         ev = _make_event(EventType.SESSION_SHUTDOWN, data={"modelMetrics": "bad"})
         assert _build_event_details(ev) == ""
 
+    def test_assistant_message_tokens_only_no_content(self) -> None:
+        """outputTokens > 0 but content='' → shows tokens, no content."""
+        ev = _make_event(
+            EventType.ASSISTANT_MESSAGE,
+            data={"messageId": "m1", "outputTokens": 50, "content": ""},
+        )
+        details = _build_event_details(ev)
+        assert details == "tokens=50"
+
+    def test_assistant_message_tokens_only_large_count(self) -> None:
+        """outputTokens > 0 with large count and empty content."""
+        ev = _make_event(
+            EventType.ASSISTANT_MESSAGE,
+            data={"messageId": "m1", "outputTokens": 150_000, "content": ""},
+        )
+        details = _build_event_details(ev)
+        assert details == "tokens=150000"
+
+    def test_session_shutdown_empty_shutdown_type(self) -> None:
+        """shutdownType='' → returns empty string."""
+        ev = _make_event(
+            EventType.SESSION_SHUTDOWN,
+            data={
+                "shutdownType": "",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+                "modelMetrics": {},
+            },
+        )
+        assert _build_event_details(ev) == ""
+
+    def test_session_shutdown_default_data(self) -> None:
+        """SessionShutdownData() with all defaults → returns empty string."""
+        ev = _make_event(
+            EventType.SESSION_SHUTDOWN,
+            data={
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+                "modelMetrics": {},
+            },
+        )
+        assert _build_event_details(ev) == ""
+
 
 class TestRenderShutdownCyclesEdgeCases:
     """Test _render_shutdown_cycles with malformed data and missing fields."""
