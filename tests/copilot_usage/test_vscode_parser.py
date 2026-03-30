@@ -109,6 +109,24 @@ class TestParseVscodeLog:
         missing = tmp_path / "no_such.log"
         assert parse_vscode_log(missing) is None
 
+    def test_invalid_timestamp_line_is_skipped(self, tmp_path: Path) -> None:
+        """A regex-matching line with an unparseable timestamp is skipped."""
+        bad_ts = "9999-99-99 99:99:99.000"  # impossible date triggers ValueError
+        bad_line = (
+            f"{bad_ts} [info] ccreq:abc123.copilotmd"
+            " | success | claude-sonnet-4 | 100ms | [panel]"
+        )
+        # Ensure the constructed line still matches the CCREQ_RE regex; otherwise
+        # this test would no longer exercise the ValueError timestamp branch.
+        assert CCREQ_RE.match(bad_line) is not None
+        good_line = _LOG_OPUS  # a valid known-good line
+        log_file = tmp_path / "test.log"
+        log_file.write_text(f"{bad_line}\n{good_line}", encoding="utf-8")
+        result = parse_vscode_log(log_file)
+        assert result is not None
+        assert len(result) == 1  # bad line skipped
+        assert result[0].model == "claude-opus-4.6"
+
 
 # ---------------------------------------------------------------------------
 # build_vscode_summary
@@ -201,6 +219,19 @@ class TestDiscoverVscodeLogs:
         monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
         with patch.object(Path, "is_dir", return_value=False):
             result = discover_vscode_logs()
+        assert result == []
+
+    def test_default_windows_no_appdata(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Windows without APPDATA uses the home-relative fallback path."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
+        monkeypatch.setenv("APPDATA", "")  # empty → falsy
+        with patch.object(
+            Path, "is_dir", autospec=True, return_value=False
+        ) as mock_is_dir:
+            result = discover_vscode_logs()
+        mock_is_dir.assert_any_call(
+            Path.home() / "AppData" / "Roaming" / "Code" / "logs"
+        )
         assert result == []
 
     def test_default_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
