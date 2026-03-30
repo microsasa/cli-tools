@@ -11,7 +11,7 @@ from copilot_usage._formatting import format_duration
 from copilot_usage.pricing import lookup_model_pricing
 from copilot_usage.vscode_parser import VSCodeLogSummary
 
-__all__ = ["render_vscode_summary"]
+__all__: Final[list[str]] = ["render_vscode_summary"]
 
 _DAILY_ACTIVITY_LIMIT: Final[int] = 14
 

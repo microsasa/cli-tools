@@ -7,10 +7,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from typing import Final
 
 from loguru import logger
 
-__all__ = [
+__all__: Final[list[str]] = [
     "CCREQ_RE",
     "VSCodeLogSummary",
     "VSCodeRequest",
@@ -20,7 +21,7 @@ __all__ = [
     "parse_vscode_log",
 ]
 
-CCREQ_RE = re.compile(
+CCREQ_RE: Final[re.Pattern[str]] = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \[info\] "
     r"ccreq:(\w+)\.copilotmd \| success \| "
     r"(\S+?)(?:\s*->\s*\S+)? \| "
