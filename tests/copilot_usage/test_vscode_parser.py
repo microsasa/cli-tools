@@ -116,6 +116,9 @@ class TestParseVscodeLog:
             f"{bad_ts} [info] ccreq:abc123.copilotmd"
             " | success | claude-sonnet-4 | 100ms | [panel]"
         )
+        # Ensure the constructed line still matches the CCREQ_RE regex; otherwise
+        # this test would no longer exercise the ValueError timestamp branch.
+        assert CCREQ_RE.match(bad_line) is not None
         good_line = _LOG_OPUS  # a valid known-good line
         log_file = tmp_path / "test.log"
         log_file.write_text(f"{bad_line}\n{good_line}", encoding="utf-8")
@@ -222,8 +225,13 @@ class TestDiscoverVscodeLogs:
         """Windows without APPDATA uses the home-relative fallback path."""
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", "")  # empty → falsy
-        with patch.object(Path, "is_dir", return_value=False):
+        with patch.object(
+            Path, "is_dir", autospec=True, return_value=False
+        ) as mock_is_dir:
             result = discover_vscode_logs()
+        mock_is_dir.assert_any_call(
+            Path.home() / "AppData" / "Roaming" / "Code" / "logs"
+        )
         assert result == []
 
     def test_default_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
