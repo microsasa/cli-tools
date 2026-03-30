@@ -30,6 +30,7 @@ from copilot_usage.models import (
 from copilot_usage.parser import (
     _SESSION_CACHE,
     _build_active_summary,
+    _CachedSession,
     _detect_resume,
     _extract_session_name,
     _first_pass,
@@ -4420,20 +4421,20 @@ class TestSessionCacheMtime:
         assert len(second) == 1
         assert second[0].name == "Renamed Session"
         # The cache should have been updated in-place
-        cached_summary = _SESSION_CACHE[p][1]
+        cached_summary = _SESSION_CACHE[p].summary
         assert cached_summary.name == "Renamed Session"
 
     def test_single_stat_per_file(self, tmp_path: Path) -> None:
-        """Each events.jsonl is stat'd only once per get_all_sessions call."""
+        """events.jsonl stat'd once (discovery), plan.md stat'd once (cache store)."""
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
             "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # _safe_file_identity called once by _discover_with_identity, not again
-            # by the cache check in get_all_sessions.
-            assert spy.call_count == 1
+            # _safe_file_identity called once by _discover_with_identity for
+            # events.jsonl, and once for plan.md when storing the cache entry.
+            assert spy.call_count == 2
 
     def test_resumed_session_not_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown is NOT cached (model may change)."""
@@ -4504,3 +4505,57 @@ class TestSessionCacheMtime:
 
         # Resumed session should NOT be in the cache
         assert events_path not in _SESSION_CACHE
+
+    def test_plan_md_not_reread_when_unchanged(self, tmp_path: Path) -> None:
+        """plan.md is not re-read for cached sessions when its identity is unchanged."""
+        p = self._make_session(tmp_path, "sess-a", "a")
+        plan = p.parent / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        # First call populates cache
+        first = get_all_sessions(tmp_path)
+        assert len(first) == 1
+        assert first[0].name == "My Session"
+
+        # Second call with plan.md unchanged — _extract_session_name must NOT be called
+        with patch(
+            "copilot_usage.parser._extract_session_name",
+            wraps=_extract_session_name,
+        ) as spy:
+            second = get_all_sessions(tmp_path)
+            assert len(second) == 1
+            assert second[0].name == "My Session"
+            spy.assert_not_called()
+
+    def test_plan_md_reread_when_changed(self, tmp_path: Path) -> None:
+        """plan.md IS re-read when its file identity changes between calls."""
+        p = self._make_session(tmp_path, "sess-a", "a")
+        plan = p.parent / "plan.md"
+        plan.write_text("# Original\n", encoding="utf-8")
+
+        first = get_all_sessions(tmp_path)
+        assert first[0].name == "Original"
+
+        # Modify plan.md
+        plan.write_text("# Updated\n", encoding="utf-8")
+
+        with patch(
+            "copilot_usage.parser._extract_session_name",
+            wraps=_extract_session_name,
+        ) as spy:
+            second = get_all_sessions(tmp_path)
+            assert second[0].name == "Updated"
+            spy.assert_called_once()
+
+    def test_cached_session_stores_plan_id(self, tmp_path: Path) -> None:
+        """Cache entries use _CachedSession with plan_id field."""
+        p = self._make_session(tmp_path, "sess-a", "a")
+        plan = p.parent / "plan.md"
+        plan.write_text("# Test\n", encoding="utf-8")
+
+        get_all_sessions(tmp_path)
+
+        entry = _SESSION_CACHE[p]
+        assert isinstance(entry, _CachedSession)
+        assert entry.plan_id == _safe_file_identity(plan)
+        assert entry.summary.name == "Test"
