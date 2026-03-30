@@ -4279,9 +4279,11 @@ class TestDetectResumeNoListSlice:
         # Measure peak memory during _detect_resume.
         tracemalloc.start()
         tracemalloc.reset_peak()
-        result = _detect_resume(events, fp.all_shutdowns)
-        _, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
+        try:
+            result = _detect_resume(events, fp.all_shutdowns)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
 
         # The call should have counted all post-shutdown user messages
         assert result.post_shutdown_user_messages == 1_200
