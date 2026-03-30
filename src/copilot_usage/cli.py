@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 
 import click
 from loguru import logger
@@ -39,15 +39,17 @@ from copilot_usage.report import (
 
 type _View = Literal["home", "detail", "cost"]
 
-_DATE_FORMATS = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
+_DATE_FORMATS: Final[list[str]] = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
 
-_WATCHDOG_DEBOUNCE_SECS: float = 2.0  # Prevents rapid redraws during tool-use bursts
+_WATCHDOG_DEBOUNCE_SECS: Final[float] = (
+    2.0  # Prevents rapid redraws during tool-use bursts
+)
 
-_UUID_STR_LEN = 36
-_UUID_DASH_COUNT = 4
-_MIN_PREFIX_LEN_FOR_PREFILTER = 4
+_UUID_STR_LEN: Final[int] = 36
+_UUID_DASH_COUNT: Final[int] = 4
+_MIN_PREFIX_LEN_FOR_PREFILTER: Final[int] = 4
 
-console = Console()
+console: Final[Console] = Console()
 
 
 def _normalize_until(dt: datetime | None) -> datetime | None:
@@ -103,8 +105,10 @@ def _print_version_header(target: Console | None = None) -> None:
 # Interactive mode helpers
 # ---------------------------------------------------------------------------
 
-_HOME_PROMPT = "\nEnter session # for detail, [c] cost, [r] refresh, [q] quit: "
-_BACK_PROMPT = "\nPress Enter to go back... "
+_HOME_PROMPT: Final[str] = (
+    "\nEnter session # for detail, [c] cost, [r] refresh, [q] quit: "
+)
+_BACK_PROMPT: Final[str] = "\nPress Enter to go back... "
 
 
 def _render_session_list(console: Console, sessions: list[SessionSummary]) -> None:
