@@ -4615,11 +4615,9 @@ class TestSessionCacheMtime:
         assert len(results) == 1
         assert results[0].is_active is True
 
-        # Resumed (active) session IS now cached with config_model
+        # Resumed (active) session IS now cached with expected config_model
         assert events_path in _SESSION_CACHE
-        assert _SESSION_CACHE[events_path].config_model is not None or (
-            _SESSION_CACHE[events_path].config_model is None
-        )
+        assert _SESSION_CACHE[events_path].config_model == _read_config_model(None)
 
     def test_plan_md_not_reread_when_unchanged(self, tmp_path: Path) -> None:
         """plan.md is not re-read for cached sessions when its identity is unchanged."""
