@@ -560,3 +560,32 @@ def live(ctx: click.Context, path: Path | None) -> None:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
     render_live_sessions(sessions)
+
+
+# ---------------------------------------------------------------------------
+# vscode
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--vscode-logs",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to VS Code 'Code/logs' directory (parent of the dated log folders).",
+)
+def vscode(vscode_logs: Path | None) -> None:
+    """Show usage from VS Code Copilot Chat logs."""
+    _print_version_header()
+    from copilot_usage.vscode_parser import get_vscode_summary
+    from copilot_usage.vscode_report import render_vscode_summary
+
+    try:
+        summary = get_vscode_summary(vscode_logs)
+    except OSError as exc:
+        click.echo(f"Error reading VS Code logs: {exc}", err=True)
+        sys.exit(1)
+    if summary.total_requests == 0:
+        click.echo("No VS Code Copilot Chat requests found.", err=True)
+        sys.exit(1)
+    render_vscode_summary(summary)

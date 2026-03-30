@@ -89,6 +89,10 @@ class TestKnownPricing:
             ("gpt-4.1", 0.0),
             ("gpt-5-mini", 0.0),
             ("gpt-5.4-mini", 0.0),
+            ("gpt-4o-mini", 0.0),
+            ("gpt-4o-mini-2024-07-18", 0.0),
+            ("copilot-nes-oct", 0.0),
+            ("copilot-suggestions-himalia-001", 0.0),
             ("gemini-3-pro-preview", 1.0),
         ],
     )
@@ -104,6 +108,8 @@ class TestKnownPricing:
             ("gpt-5-mini", PricingTier.FREE),
             ("gpt-5.4-mini", PricingTier.FREE),
             ("gpt-4.1", PricingTier.FREE),
+            ("gpt-4o-mini", PricingTier.FREE),
+            ("copilot-nes-oct", PricingTier.FREE),
         ],
     )
     def test_known_tiers(self, model: str, expected_tier: PricingTier) -> None:

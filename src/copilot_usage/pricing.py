@@ -88,8 +88,13 @@ _RAW_MULTIPLIERS: Final[dict[str, float]] = {
     "gpt-5.4-mini": 0.0,
     "gpt-5-mini": 0.0,
     "gpt-4.1": 0.0,
+    "gpt-4o-mini": 0.0,
+    "gpt-4o-mini-2024-07-18": 0.0,
     # Gemini -----------------------------------------------------------------
     "gemini-3-pro-preview": 1.0,
+    # VS Code internal / completions -----------------------------------------
+    "copilot-nes-oct": 0.0,
+    "copilot-suggestions-himalia-001": 0.0,
 }
 
 KNOWN_PRICING: Final[dict[str, ModelPricing]] = {

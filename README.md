@@ -150,6 +150,16 @@ Example:
 $ copilot-usage session b5df8a34
 ```
 
+##### `copilot-usage vscode`
+
+Show usage stats from local VS Code Copilot Chat logs. Parses `ccreq:` lines recording API requests with model name, latency, and feature category.
+
+```
+copilot-usage vscode [--vscode-logs PATH]
+```
+
+Output includes request totals, per-model breakdown with pricing tier, feature category percentages, and daily activity (last 14 days). Note: token counts are not available from local logs — only request counts and durations.
+
 #### How It Works
 
 Copilot CLI stores session data locally in `~/.copilot/session-state/{session-id}/`. Each session directory contains an `events.jsonl` file with structured events:
@@ -185,6 +195,10 @@ GitHub Copilot charges different premium-request multipliers per model. This too
 | `gpt-5.4-mini`         | 0×         | Free     |
 | `gpt-5-mini`           | 0×         | Free     |
 | `gpt-4.1`              | 0×         | Free     |
+| `gpt-4o-mini`          | 0×         | Free     |
+| `gpt-4o-mini-2024-07-18` | 0×      | Free     |
+| `copilot-nes-oct`      | 0×         | Free     |
+| `copilot-suggestions-himalia-001` | 0× | Free  |
 | `gemini-3-pro-preview` | 1×         | Standard |
 
 ## Development
