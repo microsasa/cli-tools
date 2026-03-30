@@ -2949,10 +2949,13 @@ class TestExtractSessionName:
 
         # Patch read_text to explode — proving the implementation uses
         # open()+readline() instead of reading the whole file.
+        original_read_text = Path.read_text
+
         def _boom(self: Path, *_a: object, **_kw: object) -> str:
             if self == plan:
                 raise AssertionError("read_text must not be called")
-            return Path.read_text(self, encoding="utf-8")
+            # Delegate to the original implementation for any other path
+            return original_read_text(self, *_a, **_kw)  # type: ignore[arg-type]
 
         with patch.object(Path, "read_text", _boom):
             result = _extract_session_name(tmp_path)
