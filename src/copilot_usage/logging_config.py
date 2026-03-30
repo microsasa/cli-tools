@@ -1,11 +1,12 @@
 """Logging configuration — console-only for CLI tool."""
 
 import sys
+from typing import Final
 
 import loguru
 from loguru import logger
 
-LEVEL_EMOJI: dict[str, str] = {
+LEVEL_EMOJI: Final[dict[str, str]] = {
     "TRACE": "🔍",
     "DEBUG": "🐛",
     "INFO": "ℹ️ ",
@@ -15,7 +16,7 @@ LEVEL_EMOJI: dict[str, str] = {
     "CRITICAL": "🔥",
 }
 
-CONSOLE_FORMAT = (
+CONSOLE_FORMAT: Final[str] = (
     "<dim>{time:HH:mm:ss}</dim> "
     "{extra[emoji]} "
     "<level>{level:<7}</level> "
