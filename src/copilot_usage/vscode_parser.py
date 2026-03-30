@@ -89,37 +89,34 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     return logs
 
 
-def parse_vscode_log(log_path: Path) -> list[VSCodeRequest] | None:
+def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     """Parse a single VS Code Copilot Chat log file into request objects.
 
-    Returns a list of parsed requests, or ``None`` if the file could not be
-    opened/read (so callers can distinguish "no matching lines" from "I/O
-    failure").
+    Returns a list of parsed requests (possibly empty when no lines match).
+
+    Raises:
+        OSError: If the file cannot be opened or read.
     """
     requests: list[VSCodeRequest] = []
-    try:
-        with log_path.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                m = CCREQ_RE.match(line)
-                if m is None:
-                    continue
-                ts_str, req_id, model, duration_str, category = m.groups()
-                try:
-                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
-                except ValueError:
-                    continue
-                requests.append(
-                    VSCodeRequest(
-                        timestamp=ts,
-                        request_id=req_id,
-                        model=model,
-                        duration_ms=int(duration_str),
-                        category=category,
-                    )
+    with log_path.open(encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = CCREQ_RE.match(line)
+            if m is None:
+                continue
+            ts_str, req_id, model, duration_str, category = m.groups()
+            try:
+                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                continue
+            requests.append(
+                VSCodeRequest(
+                    timestamp=ts,
+                    request_id=req_id,
+                    model=model,
+                    duration_ms=int(duration_str),
+                    category=category,
                 )
-    except OSError as exc:
-        logger.warning("Could not read log file {}: {}", log_path, exc)
-        return None
+            )
     logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
     return requests
 
@@ -201,8 +198,11 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     logs = discover_vscode_logs(base_path)
     acc = _SummaryAccumulator()
     for log_path in logs:
-        result = parse_vscode_log(log_path)
-        if result is not None:
-            _update_vscode_summary(acc, result)
-            acc.log_files_parsed += 1
+        try:
+            result = parse_vscode_log(log_path)
+        except OSError as exc:
+            logger.warning("Could not read log file {}: {}", log_path, exc)
+            continue
+        _update_vscode_summary(acc, result)
+        acc.log_files_parsed += 1
     return _finalize_summary(acc)

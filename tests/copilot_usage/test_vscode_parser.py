@@ -91,7 +91,6 @@ class TestParseVscodeLog:
             encoding="utf-8",
         )
         requests = parse_vscode_log(log_file)
-        assert requests is not None
         assert len(requests) == 3
         assert requests[0].model == "claude-opus-4.6"
         assert requests[0].duration_ms == 8003
@@ -103,9 +102,10 @@ class TestParseVscodeLog:
         log_file.write_text("", encoding="utf-8")
         assert parse_vscode_log(log_file) == []
 
-    def test_missing_file(self, tmp_path: Path) -> None:
+    def test_missing_file_raises_oserror(self, tmp_path: Path) -> None:
         missing = tmp_path / "no_such.log"
-        assert parse_vscode_log(missing) is None
+        with pytest.raises(OSError):
+            parse_vscode_log(missing)
 
     def test_invalid_timestamp_line_is_skipped(self, tmp_path: Path) -> None:
         """A regex-matching line with an unparseable timestamp is skipped."""
@@ -121,7 +121,6 @@ class TestParseVscodeLog:
         log_file = tmp_path / "test.log"
         log_file.write_text(f"{bad_line}\n{good_line}", encoding="utf-8")
         result = parse_vscode_log(log_file)
-        assert result is not None
         assert len(result) == 1  # bad line skipped
         assert result[0].model == "claude-opus-4.6"
 
@@ -138,7 +137,6 @@ class TestParseVscodeLog:
         log_file = tmp_path / "all_bad.log"
         log_file.write_text(f"{bad_line}\n{bad_line}\n", encoding="utf-8")
         result = parse_vscode_log(log_file)
-        assert result is not None, "Must return [] (not None) — not an I/O error"
         assert result == []
 
 
@@ -366,6 +364,43 @@ class TestGetVscodeSummary:
         # be called because get_vscode_summary now aggregates per-file via
         # _update_vscode_summary instead of collecting all requests first.
         mock_build.assert_not_called()
+
+    def test_oserror_skips_file_and_continues(self) -> None:
+        """When one log file raises OSError, the other is still processed."""
+        from datetime import datetime
+
+        file_a = Path("/fake/log_a.log")
+        file_b = Path("/fake/log_b.log")
+        requests_b = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 12, 0, 0),
+                request_id="b1",
+                model="claude-sonnet-4",
+                duration_ms=300,
+                category="inline",
+            ),
+        ]
+
+        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+            if path == file_a:
+                raise OSError("Permission denied")
+            return list(requests_b)
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fake_parse,
+            ),
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.log_files_parsed == 1
+        assert summary.total_requests == 1
+        assert summary.requests_by_model["claude-sonnet-4"] == 1
 
 
 # ---------------------------------------------------------------------------
