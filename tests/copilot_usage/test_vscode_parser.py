@@ -125,6 +125,22 @@ class TestParseVscodeLog:
         assert len(result) == 1  # bad line skipped
         assert result[0].model == "claude-opus-4.6"
 
+    def test_all_lines_invalid_timestamp_returns_empty_list(
+        self, tmp_path: Path
+    ) -> None:
+        """All lines match CCREQ_RE but have invalid timestamps → returns [], not None."""
+        bad_ts = "9999-99-99 99:99:99.000"
+        bad_line = (
+            f"{bad_ts} [info] ccreq:abc123.copilotmd"
+            " | success | claude-sonnet-4 | 100ms | [panel]"
+        )
+        assert CCREQ_RE.match(bad_line) is not None  # regex matches
+        log_file = tmp_path / "all_bad.log"
+        log_file.write_text(f"{bad_line}\n{bad_line}\n", encoding="utf-8")
+        result = parse_vscode_log(log_file)
+        assert result is not None, "Must return [] (not None) — not an I/O error"
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # build_vscode_summary
@@ -269,6 +285,25 @@ class TestGetVscodeSummary:
         summary = get_vscode_summary(tmp_path)
         assert summary.total_requests == 0
         assert summary.log_files_parsed == 0
+
+    def test_all_invalid_timestamps_still_counted_in_log_files_parsed(
+        self, tmp_path: Path
+    ) -> None:
+        """File with all-invalid-timestamp lines is counted in log_files_parsed."""
+        bad_ts = "9999-99-99 99:99:99.000"
+        bad_line = (
+            f"{bad_ts} [info] ccreq:abc123.copilotmd"
+            " | success | claude-sonnet-4 | 100ms | [panel]"
+        )
+        log_dir = (
+            tmp_path / "20260313T120000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(f"{bad_line}\n", encoding="utf-8")
+        summary = get_vscode_summary(tmp_path)
+        assert summary.log_files_parsed == 1  # file read successfully, even if empty
+        assert summary.total_requests == 0
 
     def test_incremental_aggregation(self) -> None:
         """Per-file incremental processing: requests are aggregated per file."""
