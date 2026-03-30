@@ -96,17 +96,17 @@ def test_level_emoji_covers_all_standard_levels() -> None:
 
 
 def test_emoji_patcher_real_loguru_record() -> None:
-    """_emoji_patcher works with an actual loguru Record object at runtime.
+    """_emoji_patcher works with an actual loguru record mapping at runtime.
 
-    Confirms that ``loguru.Record`` is resolvable as a real runtime type
-    annotation (no longer a deferred string reference).
+    Exercises ``_emoji_patcher`` against a real ``message.record`` dict
+    captured from a running loguru sink, ensuring it handles the concrete
+    record structure produced at runtime.
     """
     captured: list[loguru.Record] = []
 
     def _sink(message: loguru.Message) -> None:
         captured.append(message.record)
 
-    logger.remove()
     handler_id = logger.add(_sink, level="DEBUG")
     try:
         logger.info("test message for emoji patcher")
