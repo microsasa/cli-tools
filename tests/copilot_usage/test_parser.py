@@ -4611,13 +4611,18 @@ class TestSessionCacheMtime:
             user_after,
         )
 
-        results = get_all_sessions(tmp_path)
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            results = get_all_sessions(tmp_path)
         assert len(results) == 1
         assert results[0].is_active is True
 
-        # Resumed (active) session IS now cached with expected config_model
+        # Resumed session IS cached; model comes from the shutdown event,
+        # NOT from config, so config_model should be None.
         assert events_path in _SESSION_CACHE
-        assert _SESSION_CACHE[events_path].config_model == _read_config_model(None)
+        assert _SESSION_CACHE[events_path].config_model is None
 
     def test_plan_md_not_reread_when_unchanged(self, tmp_path: Path) -> None:
         """plan.md is not re-read for cached sessions when its identity is unchanged."""

@@ -39,9 +39,11 @@ class _CachedSession:
     ``events.jsonl`` and ``plan.md`` so that the session name is only
     re-read when ``plan.md`` actually changes on disk.
 
-    For active sessions, ``config_model`` records the config model used
-    during parsing so the cache can be invalidated when the user edits
-    ``~/.copilot/config.json``.  For non-active sessions it is ``None``.
+    For pure-active sessions (no shutdown metrics), ``config_model``
+    records the config model used during parsing so the cache can be
+    invalidated when the user edits ``~/.copilot/config.json``.
+    Resumed and completed sessions derive their model from the shutdown
+    event and store ``None``.
     """
 
     file_id: tuple[int, int]
@@ -562,9 +564,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     for events_path, file_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         if cached is not None and cached.file_id == file_id:
-            # For active sessions, also require config model match
-            if cached.summary.is_active and cached.config_model != current_config_model:
-                pass  # stale active cache — fall through to re-parse
+            # Only pure-active sessions (no shutdown metrics) depend on
+            # the config file for their model; resumed sessions derive
+            # their model from the shutdown event.
+            if (
+                cached.config_model is not None
+                and cached.config_model != current_config_model
+            ):
+                pass  # stale config — fall through to re-parse
             else:
                 plan_id = _safe_file_identity(events_path.parent / "plan.md")
                 if plan_id != cached.plan_id:
@@ -591,7 +598,9 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         _SESSION_CACHE[events_path] = _CachedSession(
             file_id,
             plan_id,
-            current_config_model if summary.is_active else None,
+            current_config_model
+            if summary.is_active and not summary.has_shutdown_metrics
+            else None,
             summary,
         )
         summaries.append(summary)
