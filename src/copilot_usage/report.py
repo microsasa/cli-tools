@@ -12,6 +12,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Final
 
 from rich.console import Console
 from rich.panel import Panel
@@ -36,7 +37,7 @@ from copilot_usage.models import (
 from copilot_usage.pricing import lookup_model_pricing
 from copilot_usage.render_detail import render_session_detail
 
-__all__ = [
+__all__: Final[list[str]] = [
     "format_duration",
     "format_tokens",
     "render_cost_view",

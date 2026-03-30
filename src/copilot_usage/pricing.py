@@ -16,7 +16,7 @@ from typing import Final
 
 from pydantic import BaseModel
 
-__all__: list[str] = [
+__all__: Final[list[str]] = [
     "ModelPricing",
     "PricingTier",
     "KNOWN_PRICING",

@@ -10,6 +10,7 @@ that external callers see no change.
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Final
 
 from loguru import logger
 from pydantic import ValidationError
@@ -36,7 +37,7 @@ from copilot_usage.models import (
     total_output_tokens,
 )
 
-__all__ = ["render_session_detail"]
+__all__: Final[list[str]] = ["render_session_detail"]
 
 # ---------------------------------------------------------------------------
 # Session detail helpers
