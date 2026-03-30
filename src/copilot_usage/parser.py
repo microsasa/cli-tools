@@ -29,9 +29,24 @@ from copilot_usage.models import (
 _DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Path = Path.home() / ".copilot" / "config.json"
 
-# Module-level file-identity cache: events_path → ((mtime_ns, size), SessionSummary).
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CachedSession:
+    """Cache entry pairing file identities with a built summary.
+
+    Stores the ``(st_mtime_ns, st_size)`` identity of both
+    ``events.jsonl`` and ``plan.md`` so that the session name is only
+    re-read when ``plan.md`` actually changes on disk.
+    """
+
+    file_id: tuple[int, int]
+    plan_id: tuple[int, int]
+    summary: SessionSummary
+
+
+# Module-level file-identity cache: events_path → _CachedSession.
 # Avoids re-parsing unchanged files on every interactive refresh.
-_SESSION_CACHE: dict[Path, tuple[tuple[int, int], SessionSummary]] = {}
+_SESSION_CACHE: dict[Path, _CachedSession] = {}
 
 _RESUME_INDICATOR_TYPES: frozenset[str] = frozenset(
     {
@@ -516,8 +531,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     that unchanged files are not re-parsed on subsequent calls — only
     files whose ``(st_mtime_ns, st_size)`` has changed since the last
     invocation are re-read.  Cached summaries have their ``name``
-    refreshed from ``plan.md`` on every call so renames are picked up
-    even when ``events.jsonl`` is unchanged.
+    refreshed from ``plan.md`` only when ``plan.md``'s own file
+    identity has changed, avoiding redundant file reads.
 
     The ``_read_config_model`` cache is cleared at the start of each
     invocation so that interactive callers (e.g. ``_interactive_loop``)
@@ -529,14 +544,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     summaries: list[SessionSummary] = []
     for events_path, file_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
-        if cached is not None and cached[0] == file_id:
-            summary = cached[1]
-            # Refresh session name from plan.md so renames are picked up
-            # even when events.jsonl is unchanged.
-            fresh_name = _extract_session_name(events_path.parent)
-            if fresh_name != summary.name:
-                summary = summary.model_copy(update={"name": fresh_name})
-                _SESSION_CACHE[events_path] = (file_id, summary)
+        if cached is not None and cached.file_id == file_id:
+            plan_id = _safe_file_identity(events_path.parent / "plan.md")
+            if plan_id != cached.plan_id:
+                fresh_name = _extract_session_name(events_path.parent)
+                summary = cached.summary.model_copy(update={"name": fresh_name})
+                _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
+            else:
+                summary = cached.summary
             summaries.append(summary)
             continue
         try:
@@ -552,7 +567,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         # file.  Pure-active sessions (no shutdown) derive their model
         # from _read_config_model which can change between calls.
         if not summary.is_active:
-            _SESSION_CACHE[events_path] = (file_id, summary)
+            plan_id = _safe_file_identity(events_path.parent / "plan.md")
+            _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
         summaries.append(summary)
 
     summaries.sort(key=session_sort_key, reverse=True)
