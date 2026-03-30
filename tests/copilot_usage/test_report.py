@@ -4992,14 +4992,12 @@ class TestRenderSessionTablePreSorted:
         console = Console(file=buf, force_terminal=False, width=160)
         _render_session_table(console, sessions, pre_sorted=True)
         output = buf.getvalue()
-        lines = output.splitlines()
-        # Extract the session names from rendered rows
-        name_rows = [line for line in lines if re.search(r"Session \d+", line)]
+        # Single pass: capture the match and build indices in one iteration
         found_indices: list[int] = []
-        for line in name_rows:
+        for line in output.splitlines():
             m = re.search(r"Session (\d+)", line)
-            assert m is not None, f"Expected 'Session <n>' in line: {line!r}"
-            found_indices.append(int(m.group(1)))
+            if m:
+                found_indices.append(int(m.group(1)))
         assert len(found_indices) == 50
         # Must be in ascending index order (0, 1, 2, …) which corresponds
         # to descending start_time (newest first), matching input order.
@@ -5012,13 +5010,11 @@ class TestRenderSessionTablePreSorted:
         console = Console(file=buf, force_terminal=False, width=160)
         _render_session_table(console, sessions, pre_sorted=False)
         output = buf.getvalue()
-        name_rows = [
-            line for line in output.splitlines() if re.search(r"Session \d+", line)
-        ]
+        # Single pass: capture the match and build indices in one iteration
         found_indices: list[int] = []
-        for line in name_rows:
+        for line in output.splitlines():
             m = re.search(r"Session (\d+)", line)
-            assert m is not None, f"Expected 'Session <n>' in line: {line!r}"
-            found_indices.append(int(m.group(1)))
+            if m:
+                found_indices.append(int(m.group(1)))
         # Should be re-sorted into descending start_time (index 0 first)
         assert found_indices == list(range(10))
