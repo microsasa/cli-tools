@@ -6,8 +6,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from copilot_usage._formatting import format_duration
 from copilot_usage.pricing import lookup_model_pricing
-from copilot_usage.report import format_duration
 from copilot_usage.vscode_parser import VSCodeLogSummary
 
 __all__ = ["render_vscode_summary"]
