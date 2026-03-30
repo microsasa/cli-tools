@@ -1,7 +1,5 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import patch
 

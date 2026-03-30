@@ -1,7 +1,5 @@
 """Rendering for VS Code Copilot Chat usage data."""
 
-from __future__ import annotations
-
 import warnings
 
 from rich.console import Console

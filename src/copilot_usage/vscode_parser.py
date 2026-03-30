@@ -1,7 +1,6 @@
 """Parser for VS Code Copilot Chat log files."""
 
-from __future__ import annotations
-
+import dataclasses
 import os
 import re
 import sys
@@ -41,7 +40,7 @@ class VSCodeRequest:
     category: str
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs."""
 
@@ -127,32 +126,45 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest] | None:
 
 def build_vscode_summary(requests: list[VSCodeRequest]) -> VSCodeLogSummary:
     """Aggregate a list of parsed requests into a summary."""
-    summary = VSCodeLogSummary()
-    for req in requests:
-        summary.total_requests += 1
-        summary.total_duration_ms += req.duration_ms
+    total_requests = 0
+    total_duration_ms = 0
+    requests_by_model: dict[str, int] = {}
+    duration_by_model: dict[str, int] = {}
+    requests_by_category: dict[str, int] = {}
+    requests_by_date: dict[str, int] = {}
+    first_timestamp: datetime | None = None
+    last_timestamp: datetime | None = None
 
-        summary.requests_by_model[req.model] = (
-            summary.requests_by_model.get(req.model, 0) + 1
+    for req in requests:
+        total_requests += 1
+        total_duration_ms += req.duration_ms
+
+        requests_by_model[req.model] = requests_by_model.get(req.model, 0) + 1
+        duration_by_model[req.model] = (
+            duration_by_model.get(req.model, 0) + req.duration_ms
         )
-        summary.duration_by_model[req.model] = (
-            summary.duration_by_model.get(req.model, 0) + req.duration_ms
-        )
-        summary.requests_by_category[req.category] = (
-            summary.requests_by_category.get(req.category, 0) + 1
+        requests_by_category[req.category] = (
+            requests_by_category.get(req.category, 0) + 1
         )
 
         date_key = req.timestamp.strftime("%Y-%m-%d")
-        summary.requests_by_date[date_key] = (
-            summary.requests_by_date.get(date_key, 0) + 1
-        )
+        requests_by_date[date_key] = requests_by_date.get(date_key, 0) + 1
 
-        if summary.first_timestamp is None or req.timestamp < summary.first_timestamp:
-            summary.first_timestamp = req.timestamp
-        if summary.last_timestamp is None or req.timestamp > summary.last_timestamp:
-            summary.last_timestamp = req.timestamp
+        if first_timestamp is None or req.timestamp < first_timestamp:
+            first_timestamp = req.timestamp
+        if last_timestamp is None or req.timestamp > last_timestamp:
+            last_timestamp = req.timestamp
 
-    return summary
+    return VSCodeLogSummary(
+        total_requests=total_requests,
+        total_duration_ms=total_duration_ms,
+        requests_by_model=requests_by_model,
+        duration_by_model=duration_by_model,
+        requests_by_category=requests_by_category,
+        requests_by_date=requests_by_date,
+        first_timestamp=first_timestamp,
+        last_timestamp=last_timestamp,
+    )
 
 
 def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
@@ -166,5 +178,4 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
             all_requests.extend(result)
             parsed_count += 1
     summary = build_vscode_summary(all_requests)
-    summary.log_files_parsed = parsed_count
-    return summary
+    return dataclasses.replace(summary, log_files_parsed=parsed_count)
