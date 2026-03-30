@@ -2938,7 +2938,12 @@ class TestExtractSessionName:
         assert _extract_session_name(tmp_path) == "First Heading"
 
     def test_large_plan_reads_only_first_line(self, tmp_path: Path) -> None:
-        """Confirm readline is used — whole-file read_text is not called."""
+        """Confirm that only a single readline() reads ≤ 1 KB of a 100 KB+ file.
+
+        Wraps ``Path.open`` with a spy file handle that tracks bytes read
+        through ``readline()`` and raises on ``read()`` / ``readlines()``.
+        Also patches ``read_text`` as a belt-and-suspenders guard.
+        """
         title = "My Session Title"
         filler = "x" * 100 * 1024  # 100 KB of filler
         plan = tmp_path / "plan.md"
@@ -2947,20 +2952,61 @@ class TestExtractSessionName:
         # Sanity: the function returns the expected title.
         assert _extract_session_name(tmp_path) == title
 
-        # Patch read_text to explode — proving the implementation uses
-        # open()+readline() instead of reading the whole file.
+        original_open = Path.open
+        bytes_read: list[int] = [0]
+
+        class _SpyFile:
+            """Context-manager spy that records readline bytes and forbids whole-file reads."""
+
+            def __init__(self, fh: io.TextIOWrapper) -> None:
+                self._fh = fh
+
+            def readline(self, limit: int = -1) -> str:
+                line = self._fh.readline(limit)
+                bytes_read[0] += len(line.encode("utf-8"))
+                return line
+
+            def read(self, size: int = -1) -> str:  # noqa: ARG002
+                raise AssertionError("read() must not be called on plan.md")
+
+            def readlines(self, hint: int = -1) -> list[str]:  # noqa: ARG002
+                raise AssertionError("readlines() must not be called on plan.md")
+
+            def __enter__(self) -> "_SpyFile":
+                self._fh.__enter__()
+                return self
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc_val: BaseException | None,
+                exc_tb: object,
+            ) -> None:
+                self._fh.__exit__(exc_type, exc_val, exc_tb)  # type: ignore[arg-type]
+
+        def _spy_open(self_: Path, *args: object, **kwargs: object) -> object:
+            fh = original_open(self_, *args, **kwargs)  # type: ignore[arg-type]
+            return _SpyFile(fh) if self_ == plan else fh  # type: ignore[arg-type]
+
         original_read_text = Path.read_text
 
-        def _boom(self: Path, *_a: object, **_kw: object) -> str:
-            if self == plan:
+        def _no_read_text(self_: Path, *_a: object, **_kw: object) -> str:
+            if self_ == plan:
                 raise AssertionError("read_text must not be called")
-            # Delegate to the original implementation for any other path
-            return original_read_text(self, *_a, **_kw)  # type: ignore[arg-type]
+            return original_read_text(self_, *_a, **_kw)  # type: ignore[arg-type]
 
-        with patch.object(Path, "read_text", _boom):
+        with (
+            patch.object(Path, "open", _spy_open),
+            patch.object(Path, "read_text", _no_read_text),
+        ):
             result = _extract_session_name(tmp_path)
 
         assert result == title
+        # Title line is ~20 bytes; the full file is 100+ KB.
+        # A 1 KB threshold leaves ample headroom while catching whole-file reads.
+        assert bytes_read[0] < 1024, (
+            f"Expected < 1 KB from readline(), got {bytes_read[0]} bytes"
+        )
 
 
 # ---------------------------------------------------------------------------
