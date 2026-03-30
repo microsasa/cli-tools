@@ -4107,8 +4107,17 @@ class TestFirstPassDirect:
         _write_events(p, _START_EVENT, _USER_MSG, bad_shutdown)
         events = parse_events(p)
         result = _first_pass(events)
-        assert result.all_shutdowns == []
+        assert result.all_shutdowns == ()
         assert result.session_id == "test-session-001"
+
+    def test_all_shutdowns_is_tuple(self, tmp_path: Path) -> None:
+        """_first_pass returns all_shutdowns as an immutable tuple."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert isinstance(fp.all_shutdowns, tuple)
+        assert len(fp.all_shutdowns) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -4121,7 +4130,7 @@ class TestDetectResumeDirect:
 
     def test_empty_shutdowns_returns_zeroed(self) -> None:
         """No shutdowns → zeroed _ResumeInfo."""
-        result = _detect_resume(events=[], all_shutdowns=[])
+        result = _detect_resume(events=[], all_shutdowns=())
         assert result.session_resumed is False
         assert result.post_shutdown_output_tokens == 0
         assert result.post_shutdown_turn_starts == 0
