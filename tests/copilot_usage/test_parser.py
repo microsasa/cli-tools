@@ -611,6 +611,17 @@ class TestBuildSessionSummaryCompleted:
         summary = build_session_summary(events, session_dir=sdir)
         assert summary.name == "My Cool Project"
 
+    def test_events_path_set_when_passed(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        ep = sdir / "events.jsonl"
+        summary = build_session_summary(events, session_dir=sdir, events_path=ep)
+        assert summary.events_path == ep
+
+    def test_events_path_none_when_omitted(self, tmp_path: Path) -> None:
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.events_path is None
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — active session (no shutdown)
@@ -700,6 +711,17 @@ class TestBuildSessionSummaryActive:
         # output tokens (150 from the single assistant message).
         assert sonnet_metrics.usage is not None
         assert sonnet_metrics.usage.outputTokens == summary.active_output_tokens == 150
+
+    def test_events_path_set_when_passed(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        ep = sdir / "events.jsonl"
+        summary = build_session_summary(events, session_dir=sdir, events_path=ep)
+        assert summary.events_path == ep
+
+    def test_events_path_none_when_omitted(self, tmp_path: Path) -> None:
+        events, sdir = _active_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert summary.events_path is None
 
 
 # ---------------------------------------------------------------------------
@@ -1559,6 +1581,17 @@ class TestGetAllSessions:
 
     def test_empty_base(self, tmp_path: Path) -> None:
         assert get_all_sessions(tmp_path) == []
+
+    def test_events_path_set_for_all_sessions(self, tmp_path: Path) -> None:
+        """Regression: get_all_sessions returns summaries with non-None events_path."""
+        s1 = tmp_path / "a" / "events.jsonl"
+        s2 = tmp_path / "b" / "events.jsonl"
+        _write_events(s1, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        _write_events(s2, _START_EVENT, _SHUTDOWN_EVENT)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 2
+        returned_paths = {s.events_path for s in result}
+        assert returned_paths == {s1, s2}
 
 
 # ---------------------------------------------------------------------------

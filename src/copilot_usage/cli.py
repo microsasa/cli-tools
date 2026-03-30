@@ -484,7 +484,9 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
             continue
         if not events:
             continue
-        s = build_session_summary(events, session_dir=events_path.parent)
+        s = build_session_summary(
+            events, session_dir=events_path.parent, events_path=events_path
+        )
         if s.session_id.startswith(session_id):
             render_session_detail(events, s)
             return
