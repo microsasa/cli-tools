@@ -38,10 +38,22 @@ class _CachedSession:
     Stores the ``(st_mtime_ns, st_size)`` identity of both
     ``events.jsonl`` and ``plan.md`` so that the session name is only
     re-read when ``plan.md`` actually changes on disk.
+
+    ``depends_on_config`` is ``True`` only when the session's model was
+    sourced from ``~/.copilot/config.json`` (i.e. neither the events nor
+    tool executions supplied a model).  When ``True``, ``config_model``
+    records the value that was read so the cache can be invalidated on
+    change — including the ``None → "gpt-…"`` transition.
+
+    Resumed and completed sessions always have
+    ``depends_on_config=False`` because their model comes from the
+    shutdown event.
     """
 
     file_id: tuple[int, int]
     plan_id: tuple[int, int]
+    config_model: str | None
+    depends_on_config: bool
     summary: SessionSummary
 
 
@@ -482,6 +494,43 @@ def _build_active_summary(
 # ---------------------------------------------------------------------------
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BuildMeta:
+    """Internal result from :func:`_build_session_summary_with_meta`.
+
+    Carries the summary together with a flag indicating whether the
+    model was resolved from the config file (as opposed to events).
+    """
+
+    summary: SessionSummary
+    used_config_fallback: bool
+
+
+def _build_session_summary_with_meta(
+    events: list[SessionEvent],
+    *,
+    session_dir: Path | None = None,
+    config_path: Path | None = None,
+    events_path: Path | None = None,
+) -> _BuildMeta:
+    """Build a summary and report whether the config fallback was used."""
+    fp = _first_pass(events)
+    name = _extract_session_name(session_dir) if session_dir else None
+
+    if fp.all_shutdowns:
+        resume = _detect_resume(events, fp.all_shutdowns)
+        return _BuildMeta(
+            _build_completed_summary(fp, name, resume, events_path=events_path),
+            used_config_fallback=False,
+        )
+
+    used_config = fp.model is None and fp.tool_model is None
+    return _BuildMeta(
+        _build_active_summary(fp, name, config_path, events_path=events_path),
+        used_config_fallback=used_config,
+    )
+
+
 def build_session_summary(
     events: list[SessionEvent],
     *,
@@ -515,14 +564,12 @@ def build_session_summary(
     If *session_dir* is given the session name is extracted from
     ``plan.md`` when present.
     """
-    fp = _first_pass(events)
-    name = _extract_session_name(session_dir) if session_dir else None
-
-    if fp.all_shutdowns:
-        resume = _detect_resume(events, fp.all_shutdowns)
-        return _build_completed_summary(fp, name, resume, events_path=events_path)
-
-    return _build_active_summary(fp, name, config_path, events_path=events_path)
+    return _build_session_summary_with_meta(
+        events,
+        session_dir=session_dir,
+        config_path=config_path,
+        events_path=events_path,
+    ).summary
 
 
 # ---------------------------------------------------------------------------
@@ -549,20 +596,36 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     redundant reads *within* a single invocation.
     """
     _read_config_model.cache_clear()
+    # Pass None explicitly to match the lru_cache key used by
+    # build_session_summary (which passes config_path=None by default).
+    current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
     for events_path, file_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         if cached is not None and cached.file_id == file_id:
-            plan_id = _safe_file_identity(events_path.parent / "plan.md")
-            if plan_id != cached.plan_id:
-                fresh_name = _extract_session_name(events_path.parent)
-                summary = cached.summary.model_copy(update={"name": fresh_name})
-                _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
+            # Only sessions whose model was sourced from config need
+            # invalidation when the config changes.  Sessions that
+            # derived their model from events or shutdown data are
+            # immune to config edits.
+            if cached.depends_on_config and cached.config_model != current_config_model:
+                pass  # stale config — fall through to re-parse
             else:
-                summary = cached.summary
-            summaries.append(summary)
-            continue
+                plan_id = _safe_file_identity(events_path.parent / "plan.md")
+                if plan_id != cached.plan_id:
+                    fresh_name = _extract_session_name(events_path.parent)
+                    summary = cached.summary.model_copy(update={"name": fresh_name})
+                    _SESSION_CACHE[events_path] = _CachedSession(
+                        file_id,
+                        plan_id,
+                        cached.config_model,
+                        cached.depends_on_config,
+                        summary,
+                    )
+                else:
+                    summary = cached.summary
+                summaries.append(summary)
+                continue
         try:
             events = parse_events(events_path)
         except OSError as exc:
@@ -570,15 +633,18 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
-        summary = build_session_summary(
+        meta = _build_session_summary_with_meta(
             events, session_dir=events_path.parent, events_path=events_path
         )
-        # Only cache sessions whose model does NOT depend on the config
-        # file.  Pure-active sessions (no shutdown) derive their model
-        # from _read_config_model which can change between calls.
-        if not summary.is_active:
-            plan_id = _safe_file_identity(events_path.parent / "plan.md")
-            _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
+        summary = meta.summary
+        plan_id = _safe_file_identity(events_path.parent / "plan.md")
+        _SESSION_CACHE[events_path] = _CachedSession(
+            file_id,
+            plan_id,
+            current_config_model if meta.used_config_fallback else None,
+            meta.used_config_fallback,
+            summary,
+        )
         summaries.append(summary)
 
     summaries.sort(key=session_sort_key, reverse=True)
