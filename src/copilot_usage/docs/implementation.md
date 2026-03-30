@@ -358,7 +358,7 @@ Sessions where `parse_events()` returns an empty list (no valid events at all) a
 
 Two levels of protection against files disappearing between discovery and read:
 
-1. **Discovery**: `_safe_mtime()` (in `parser.py`) returns `0.0` instead of crashing when a file vanishes between `glob()` and `stat()`.
+1. **Discovery**: `_safe_file_identity()` (in `parser.py`) returns `(0, 0)` instead of crashing when a file vanishes between `glob()` and `stat()`.
 2. **Parsing**: `get_all_sessions()` (in `parser.py`) catches `FileNotFoundError` and `OSError` during `parse_events()` and skips the session with a warning.
 
 ### Unknown event types

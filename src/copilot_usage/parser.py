@@ -29,6 +29,10 @@ from copilot_usage.models import (
 _DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Path = Path.home() / ".copilot" / "config.json"
 
+# Module-level file-identity cache: events_path → ((mtime_ns, size), SessionSummary).
+# Avoids re-parsing unchanged files on every interactive refresh.
+_SESSION_CACHE: dict[Path, tuple[tuple[int, int], SessionSummary]] = {}
+
 _RESUME_INDICATOR_TYPES: frozenset[str] = frozenset(
     {
         EventType.SESSION_RESUME,
@@ -85,12 +89,36 @@ def _safe_int_tokens(raw: object) -> int | None:
     return None
 
 
-def _safe_mtime(path: Path) -> float:
-    """Return *path*'s mtime, or ``0`` on any OS-level error (deleted, permission denied, etc.)."""
+def _safe_file_identity(path: Path) -> tuple[int, int]:
+    """Return ``(st_mtime_ns, st_size)`` for *path*, or ``(0, 0)`` on any OS error.
+
+    Uses nanosecond-precision mtime paired with file size for robust
+    change detection — avoids the float-rounding and coarse-resolution
+    issues of ``st_mtime``.
+    """
     try:
-        return path.stat().st_mtime
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
     except OSError:
-        return 0.0
+        return (0, 0)
+
+
+def _discover_with_identity(
+    base_path: Path | None = None,
+) -> list[tuple[Path, tuple[int, int]]]:
+    """Find session ``events.jsonl`` files paired with their file identity.
+
+    Returns ``(path, (st_mtime_ns, st_size))`` tuples sorted by file
+    identity (mtime descending, then size as tie-breaker).  Each file is
+    stat'd exactly once, so callers that also need the file-identity for
+    caching avoid a redundant stat.
+    """
+    root = base_path or _DEFAULT_BASE
+    if not root.is_dir():
+        return []
+    pairs = [(p, _safe_file_identity(p)) for p in root.glob("*/events.jsonl")]
+    pairs.sort(key=lambda t: t[1], reverse=True)
+    return pairs
 
 
 def discover_sessions(base_path: Path | None = None) -> list[Path]:
@@ -98,20 +126,13 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
 
     Default *base_path*: ``~/.copilot/session-state/``
 
-    Returns list of paths to ``events.jsonl`` files, sorted by
-    modification time (newest first).
+    Returns list of paths to ``events.jsonl`` files, sorted by file
+    identity (newest first).
 
     Tolerates directories deleted between the glob and the stat call
-    (TOCTOU race) by assigning mtime 0 to vanished paths.
+    (TOCTOU race) by returning a zero identity for vanished paths.
     """
-    root = base_path or _DEFAULT_BASE
-    if not root.is_dir():
-        return []
-    return sorted(
-        root.glob("*/events.jsonl"),
-        key=_safe_mtime,
-        reverse=True,
-    )
+    return [p for p, _identity in _discover_with_identity(base_path)]
 
 
 # ---------------------------------------------------------------------------
@@ -491,15 +512,33 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     Returns list sorted by ``start_time`` (newest first).  Sessions
     without a ``start_time`` sort last.
 
+    Uses a module-level file-identity cache (``_SESSION_CACHE``) so
+    that unchanged files are not re-parsed on subsequent calls — only
+    files whose ``(st_mtime_ns, st_size)`` has changed since the last
+    invocation are re-read.  Cached summaries have their ``name``
+    refreshed from ``plan.md`` on every call so renames are picked up
+    even when ``events.jsonl`` is unchanged.
+
     The ``_read_config_model`` cache is cleared at the start of each
     invocation so that interactive callers (e.g. ``_interactive_loop``)
     pick up config-file edits between refreshes while still avoiding
     redundant reads *within* a single invocation.
     """
     _read_config_model.cache_clear()
-    paths = discover_sessions(base_path)
+    discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
-    for events_path in paths:
+    for events_path, file_id in discovered:
+        cached = _SESSION_CACHE.get(events_path)
+        if cached is not None and cached[0] == file_id:
+            summary = cached[1]
+            # Refresh session name from plan.md so renames are picked up
+            # even when events.jsonl is unchanged.
+            fresh_name = _extract_session_name(events_path.parent)
+            if fresh_name != summary.name:
+                summary = summary.model_copy(update={"name": fresh_name})
+                _SESSION_CACHE[events_path] = (file_id, summary)
+            summaries.append(summary)
+            continue
         try:
             events = parse_events(events_path)
         except OSError as exc:
@@ -509,6 +548,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         summary = build_session_summary(events, session_dir=events_path.parent)
         summary.events_path = events_path
+        # Only cache sessions whose model does NOT depend on the config
+        # file.  Pure-active sessions (no shutdown) derive their model
+        # from _read_config_model which can change between calls.
+        if not summary.is_active:
+            _SESSION_CACHE[events_path] = (file_id, summary)
         summaries.append(summary)
 
     summaries.sort(key=session_sort_key, reverse=True)

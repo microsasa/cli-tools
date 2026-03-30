@@ -28,19 +28,27 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _SESSION_CACHE,
     _build_active_summary,
     _detect_resume,
     _extract_session_name,
     _first_pass,
     _infer_model_from_metrics,
     _read_config_model,
+    _safe_file_identity,
     _safe_int_tokens,
-    _safe_mtime,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
     parse_events,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_session_cache() -> None:
+    """Isolate tests from the module-level mtime cache."""
+    _SESSION_CACHE.clear()
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — synthetic events.jsonl content
@@ -306,20 +314,22 @@ def _active_events(
 
 
 # ---------------------------------------------------------------------------
-# _safe_mtime
+# _safe_file_identity
 # ---------------------------------------------------------------------------
 
 
-class TestSafeMtime:
-    def test_returns_mtime_for_existing_file(self, tmp_path: Path) -> None:
+class TestSafeFileIdentity:
+    def test_returns_mtime_ns_size_for_existing_file(self, tmp_path: Path) -> None:
         f = tmp_path / "events.jsonl"
-        f.write_text("")
-        assert _safe_mtime(f) > 0
+        f.write_text("content")
+        mtime_ns, size = _safe_file_identity(f)
+        assert mtime_ns > 0
+        assert size == len(b"content")
 
-    def test_returns_zero_for_missing_file(self, tmp_path: Path) -> None:
-        assert _safe_mtime(tmp_path / "ghost.jsonl") == 0.0
+    def test_returns_zero_tuple_for_missing_file(self, tmp_path: Path) -> None:
+        assert _safe_file_identity(tmp_path / "ghost.jsonl") == (0, 0)
 
-    def test_returns_zero_for_permission_error(
+    def test_returns_zero_tuple_for_permission_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -329,9 +339,9 @@ class TestSafeMtime:
             raise PermissionError("denied")
 
         monkeypatch.setattr(Path, "stat", _raise_perm)
-        assert _safe_mtime(f) == 0.0
+        assert _safe_file_identity(f) == (0, 0)
 
-    def test_returns_zero_for_generic_oserror(
+    def test_returns_zero_tuple_for_generic_oserror(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -341,7 +351,7 @@ class TestSafeMtime:
             raise OSError("I/O error")
 
         monkeypatch.setattr(Path, "stat", _raise_os)
-        assert _safe_mtime(f) == 0.0
+        assert _safe_file_identity(f) == (0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -4279,3 +4289,218 @@ class TestFirstPassToolModel:
         events = parse_events(p)
         fp = _first_pass(events)
         assert fp.tool_model == "gpt-5.1"
+
+
+# ---------------------------------------------------------------------------
+# Issue #509 — mtime-based session cache
+# ---------------------------------------------------------------------------
+
+
+class TestSessionCacheMtime:
+    """get_all_sessions skips parse_events for files whose mtime is unchanged."""
+
+    def _make_session(self, base: Path, name: str, sid: str) -> Path:
+        """Create a completed session (with shutdown) and return events_path."""
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": sid,
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/"},
+                },
+                "id": f"ev-{sid}",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hi",
+                    "transformedContent": "hi",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": f"ev-u-{sid}",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 500,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {
+                        "gpt-5.1": {
+                            "requests": {"count": 1, "cost": 1},
+                            "usage": {"outputTokens": 50},
+                        }
+                    },
+                },
+                "id": f"ev-sd-{sid}",
+                "timestamp": "2026-03-07T10:05:00.000Z",
+            }
+        )
+        return _write_events(base / name / "events.jsonl", start, user, shutdown)
+
+    def test_unchanged_file_not_reparsed(self, tmp_path: Path) -> None:
+        """Only the file with a bumped mtime is re-parsed on the second call."""
+        p1 = self._make_session(tmp_path, "sess-a", "a")
+        self._make_session(tmp_path, "sess-b", "b")
+
+        # First call — populates cache; both files must be parsed.
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            result1 = get_all_sessions(tmp_path)
+            assert len(result1) == 2
+            assert spy.call_count == 2
+
+        # Modify only sess-a (append an extra event and bump mtime).
+        extra = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-extra",
+                    "content": "extra",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 42,
+                },
+                "id": "ev-extra",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        with p1.open("a", encoding="utf-8") as fh:
+            fh.write(extra + "\n")
+
+        # Ensure the mtime actually differs (size already changed via
+        # append, but bump mtime_ns too for robustness).
+        import os
+
+        stat = p1.stat()
+        os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        # Second call — only the modified file should be re-parsed.
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            result2 = get_all_sessions(tmp_path)
+            assert len(result2) == 2
+            assert spy.call_count == 1
+            spy.assert_called_once_with(p1)
+
+    def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
+        """Cached entries produce the same summaries as a fresh parse."""
+        self._make_session(tmp_path, "sess-a", "a")
+        self._make_session(tmp_path, "sess-b", "b")
+
+        first = get_all_sessions(tmp_path)
+        second = get_all_sessions(tmp_path)
+
+        # Ensure that all fields of the summaries are identical between
+        # the initial parse and the cached results.
+        assert [s.model_dump() for s in first] == [s.model_dump() for s in second]
+
+    def test_cache_refreshes_session_name_on_plan_rename(self, tmp_path: Path) -> None:
+        """Cached summaries pick up plan.md edits without re-parsing events."""
+        p = self._make_session(tmp_path, "sess-a", "a")
+        plan = p.parent / "plan.md"
+        plan.write_text("# Original Name\n", encoding="utf-8")
+
+        first = get_all_sessions(tmp_path)
+        assert len(first) == 1
+        assert first[0].name == "Original Name"
+
+        # Edit plan.md without touching events.jsonl
+        plan.write_text("# Renamed Session\n", encoding="utf-8")
+
+        second = get_all_sessions(tmp_path)
+        assert len(second) == 1
+        assert second[0].name == "Renamed Session"
+        # The cache should have been updated in-place
+        cached_summary = _SESSION_CACHE[p][1]
+        assert cached_summary.name == "Renamed Session"
+
+    def test_single_stat_per_file(self, tmp_path: Path) -> None:
+        """Each events.jsonl is stat'd only once per get_all_sessions call."""
+        self._make_session(tmp_path, "sess-a", "a")
+
+        with patch(
+            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+        ) as spy:
+            get_all_sessions(tmp_path)
+            # _safe_file_identity called once by _discover_with_identity, not again
+            # by the cache check in get_all_sessions.
+            assert spy.call_count == 1
+
+    def test_resumed_session_not_cached(self, tmp_path: Path) -> None:
+        """A session that resumed after shutdown is NOT cached (model may change)."""
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "resumed-1",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/"},
+                },
+                "id": "ev-start",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 500,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {
+                        "gpt-5.1": {
+                            "requests": {"count": 1, "cost": 1},
+                            "usage": {"outputTokens": 50},
+                        }
+                    },
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T10:05:00.000Z",
+            }
+        )
+        resume = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        user_after = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hi again",
+                    "transformedContent": "hi again",
+                    "attachments": [],
+                    "interactionId": "int-2",
+                },
+                "id": "ev-u2",
+                "timestamp": "2026-03-07T11:01:00.000Z",
+            }
+        )
+        events_path = _write_events(
+            tmp_path / "sess-resumed" / "events.jsonl",
+            start,
+            shutdown,
+            resume,
+            user_after,
+        )
+
+        results = get_all_sessions(tmp_path)
+        assert len(results) == 1
+        assert results[0].is_active is True
+
+        # Resumed session should NOT be in the cache
+        assert events_path not in _SESSION_CACHE
