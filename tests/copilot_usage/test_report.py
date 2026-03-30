@@ -1143,7 +1143,7 @@ class TestRenderSummary:
         output = _capture_summary([s], since=datetime(2026, 1, 1, tzinfo=UTC))
         assert "No sessions found" in output
 
-    def test_sorts_newest_first(self) -> None:
+    def test_preserves_descending_input_order(self) -> None:
         s1 = _make_summary_session(
             session_id="s1",
             name="Older",
@@ -4995,10 +4995,11 @@ class TestRenderSessionTablePreSorted:
         lines = output.splitlines()
         # Extract the session names from rendered rows
         name_rows = [line for line in lines if re.search(r"Session \d+", line)]
-        found_indices = [
-            int(re.search(r"Session (\d+)", line).group(1))  # type: ignore[union-attr]
-            for line in name_rows
-        ]
+        found_indices: list[int] = []
+        for line in name_rows:
+            m = re.search(r"Session (\d+)", line)
+            assert m is not None, f"Expected 'Session <n>' in line: {line!r}"
+            found_indices.append(int(m.group(1)))
         assert len(found_indices) == 50
         # Must be in ascending index order (0, 1, 2, …) which corresponds
         # to descending start_time (newest first), matching input order.
@@ -5014,9 +5015,10 @@ class TestRenderSessionTablePreSorted:
         name_rows = [
             line for line in output.splitlines() if re.search(r"Session \d+", line)
         ]
-        found_indices = [
-            int(re.search(r"Session (\d+)", line).group(1))  # type: ignore[union-attr]
-            for line in name_rows
-        ]
+        found_indices: list[int] = []
+        for line in name_rows:
+            m = re.search(r"Session (\d+)", line)
+            assert m is not None, f"Expected 'Session <n>' in line: {line!r}"
+            found_indices.append(int(m.group(1)))
         # Should be re-sorted into descending start_time (index 0 first)
         assert found_indices == list(range(10))

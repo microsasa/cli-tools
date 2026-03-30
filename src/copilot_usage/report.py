@@ -416,6 +416,10 @@ def render_summary(
     """Render the full summary report to the terminal using Rich.
 
     Filters sessions by date range when *since* and/or *until* are given.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
@@ -541,6 +545,10 @@ def render_full_summary(
 
     Section 1: Historical shutdown data (totals, per-model, per-session).
     Section 2: Active sessions since last shutdown.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
 
@@ -572,6 +580,10 @@ def render_cost_view(
     For active sessions with shutdown metrics, appends a
     "↳ Since last shutdown" row with an estimated premium cost and the
     active model calls / output tokens.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
