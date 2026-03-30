@@ -2892,19 +2892,21 @@ class TestExtractSessionName:
         plan = tmp_path / "plan.md"
         plan.write_text("# Title\n", encoding="utf-8")
 
-        original_read_text = Path.read_text
+        original_open = Path.open
 
-        def _raise_os_error(self: Path, *args: object, **kwargs: object) -> str:
+        def _raise_os_error(  # type: ignore[override]
+            self: Path, *args: object, **kwargs: object
+        ) -> object:
             if self == plan:
                 raise OSError("denied")
-            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
 
         from loguru import logger
 
         log_messages: list[str] = []
         handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
         try:
-            with patch.object(Path, "read_text", _raise_os_error):
+            with patch.object(Path, "open", _raise_os_error):
                 assert _extract_session_name(tmp_path) is None
         finally:
             logger.remove(handler_id)
@@ -2934,6 +2936,83 @@ class TestExtractSessionName:
             "# First Heading\n# Second Heading\nsome body text\n", encoding="utf-8"
         )
         assert _extract_session_name(tmp_path) == "First Heading"
+
+    def test_large_plan_reads_only_first_line(self, tmp_path: Path) -> None:
+        """Confirm that only the first line of a large file is read via a single readline().
+
+        Wraps ``Path.open`` with a spy file handle that tracks bytes returned from
+        ``readline()`` and raises on ``read()`` / ``readlines()``. Also patches
+        ``read_text`` as a belt-and-suspenders guard to ensure no whole-file reads.
+        """
+        title = "My Session Title"
+        filler = "x" * 100 * 1024  # 100 KB of filler
+        plan = tmp_path / "plan.md"
+        plan.write_text(f"# {title}\n{filler}\n", encoding="utf-8")
+
+        # Sanity: the function returns the expected title.
+        assert _extract_session_name(tmp_path) == title
+
+        original_open = Path.open
+        bytes_read: list[int] = [0]
+        readline_calls: list[int] = [0]
+
+        class _SpyFile:
+            """Context-manager spy that records readline bytes and forbids whole-file reads."""
+
+            def __init__(self, fh: io.TextIOWrapper) -> None:
+                self._fh = fh
+
+            def readline(self, limit: int = -1) -> str:
+                readline_calls[0] += 1
+                line = self._fh.readline(limit)
+                bytes_read[0] += len(line.encode("utf-8"))
+                return line
+
+            def read(self, size: int = -1) -> str:  # noqa: ARG002
+                raise AssertionError("read() must not be called on plan.md")
+
+            def readlines(self, hint: int = -1) -> list[str]:  # noqa: ARG002
+                raise AssertionError("readlines() must not be called on plan.md")
+
+            def __enter__(self) -> "_SpyFile":
+                self._fh.__enter__()
+                return self
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc_val: BaseException | None,
+                exc_tb: object,
+            ) -> None:
+                self._fh.__exit__(exc_type, exc_val, exc_tb)  # type: ignore[arg-type]
+
+        def _spy_open(self_: Path, *args: object, **kwargs: object) -> object:
+            fh = original_open(self_, *args, **kwargs)  # type: ignore[arg-type]
+            return _SpyFile(fh) if self_ == plan else fh  # type: ignore[arg-type]
+
+        original_read_text = Path.read_text
+
+        def _no_read_text(self_: Path, *_a: object, **_kw: object) -> str:
+            if self_ == plan:
+                raise AssertionError("read_text must not be called")
+            return original_read_text(self_, *_a, **_kw)  # type: ignore[arg-type]
+
+        with (
+            patch.object(Path, "open", _spy_open),
+            patch.object(Path, "read_text", _no_read_text),
+        ):
+            result = _extract_session_name(tmp_path)
+
+        assert result == title
+        # Title line is ~20 bytes; the full file is 100+ KB.
+        # A 1 KB threshold leaves ample headroom while catching whole-file reads.
+        assert bytes_read[0] < 1024, (
+            f"Expected < 1 KB from readline(), got {bytes_read[0]} bytes"
+        )
+        # Exactly one readline() call proves we don't iterate or re-read.
+        assert readline_calls[0] == 1, (
+            f"Expected exactly 1 readline() call, got {readline_calls[0]}"
+        )
 
 
 # ---------------------------------------------------------------------------

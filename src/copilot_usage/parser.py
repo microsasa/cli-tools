@@ -214,7 +214,8 @@ def _extract_session_name(session_dir: Path) -> str | None:
     if not plan.is_file():
         return None
     try:
-        first_line = plan.read_text(encoding="utf-8").split("\n", maxsplit=1)[0]
+        with plan.open(encoding="utf-8") as fh:
+            first_line = fh.readline().rstrip("\n")
         if first_line.startswith("# "):
             return first_line.removeprefix("# ").strip() or None
     except (OSError, UnicodeDecodeError) as exc:
