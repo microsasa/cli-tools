@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Final
 
 from loguru import logger
 from pydantic import ValidationError
@@ -26,8 +27,8 @@ from copilot_usage.models import (
     session_sort_key,
 )
 
-_DEFAULT_BASE: Path = Path.home() / ".copilot" / "session-state"
-_CONFIG_PATH: Path = Path.home() / ".copilot" / "config.json"
+_DEFAULT_BASE: Final[Path] = Path.home() / ".copilot" / "session-state"
+_CONFIG_PATH: Final[Path] = Path.home() / ".copilot" / "config.json"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -48,7 +49,7 @@ class _CachedSession:
 # Avoids re-parsing unchanged files on every interactive refresh.
 _SESSION_CACHE: dict[Path, _CachedSession] = {}
 
-_RESUME_INDICATOR_TYPES: frozenset[str] = frozenset(
+_RESUME_INDICATOR_TYPES: Final[frozenset[EventType]] = frozenset(
     {
         EventType.SESSION_RESUME,
         EventType.USER_MESSAGE,

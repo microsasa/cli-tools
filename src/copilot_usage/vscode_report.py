@@ -1,6 +1,7 @@
 """Rendering for VS Code Copilot Chat usage data."""
 
 import warnings
+from typing import Final
 
 from rich.console import Console
 from rich.panel import Panel
@@ -12,7 +13,7 @@ from copilot_usage.vscode_parser import VSCodeLogSummary
 
 __all__ = ["render_vscode_summary"]
 
-_DAILY_ACTIVITY_LIMIT = 14
+_DAILY_ACTIVITY_LIMIT: Final[int] = 14
 
 
 def render_vscode_summary(
