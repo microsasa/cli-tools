@@ -3,8 +3,9 @@
 import os
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -129,10 +130,18 @@ class _SummaryAccumulator:
 
     total_requests: int = 0
     total_duration_ms: int = 0
-    requests_by_model: dict[str, int] = field(default_factory=lambda: {})
-    duration_by_model: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_category: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_date: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_model: defaultdict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    duration_by_model: defaultdict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    requests_by_category: defaultdict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    requests_by_date: defaultdict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
@@ -142,20 +151,22 @@ def _update_vscode_summary(
     acc: _SummaryAccumulator, requests: list[VSCodeRequest]
 ) -> None:
     """Merge *requests* into *acc* in-place, then discard."""
+    last_date_key: str = ""
+    last_date_val: date | None = None
+
     for req in requests:
         acc.total_requests += 1
         acc.total_duration_ms += req.duration_ms
 
-        acc.requests_by_model[req.model] = acc.requests_by_model.get(req.model, 0) + 1
-        acc.duration_by_model[req.model] = (
-            acc.duration_by_model.get(req.model, 0) + req.duration_ms
-        )
-        acc.requests_by_category[req.category] = (
-            acc.requests_by_category.get(req.category, 0) + 1
-        )
+        acc.requests_by_model[req.model] += 1
+        acc.duration_by_model[req.model] += req.duration_ms
+        acc.requests_by_category[req.category] += 1
 
-        date_key = req.timestamp.strftime("%Y-%m-%d")
-        acc.requests_by_date[date_key] = acc.requests_by_date.get(date_key, 0) + 1
+        ts_date = req.timestamp.date()
+        if last_date_val is None or ts_date != last_date_val:
+            last_date_key = req.timestamp.strftime("%Y-%m-%d")
+            last_date_val = ts_date
+        acc.requests_by_date[last_date_key] += 1
 
         if acc.first_timestamp is None or req.timestamp < acc.first_timestamp:
             acc.first_timestamp = req.timestamp
@@ -168,10 +179,10 @@ def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
-        requests_by_model=acc.requests_by_model,
-        duration_by_model=acc.duration_by_model,
-        requests_by_category=acc.requests_by_category,
-        requests_by_date=acc.requests_by_date,
+        requests_by_model=dict(acc.requests_by_model),
+        duration_by_model=dict(acc.duration_by_model),
+        requests_by_category=dict(acc.requests_by_category),
+        requests_by_date=dict(acc.requests_by_date),
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,
