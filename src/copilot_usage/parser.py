@@ -39,16 +39,21 @@ class _CachedSession:
     ``events.jsonl`` and ``plan.md`` so that the session name is only
     re-read when ``plan.md`` actually changes on disk.
 
-    For pure-active sessions (no shutdown metrics), ``config_model``
-    records the config model used during parsing so the cache can be
-    invalidated when the user edits ``~/.copilot/config.json``.
-    Resumed and completed sessions derive their model from the shutdown
-    event and store ``None``.
+    ``depends_on_config`` is ``True`` only when the session's model was
+    sourced from ``~/.copilot/config.json`` (i.e. neither the events nor
+    tool executions supplied a model).  When ``True``, ``config_model``
+    records the value that was read so the cache can be invalidated on
+    change — including the ``None → "gpt-…"`` transition.
+
+    Resumed and completed sessions always have
+    ``depends_on_config=False`` because their model comes from the
+    shutdown event.
     """
 
     file_id: tuple[int, int]
     plan_id: tuple[int, int]
     config_model: str | None
+    depends_on_config: bool
     summary: SessionSummary
 
 
@@ -489,6 +494,43 @@ def _build_active_summary(
 # ---------------------------------------------------------------------------
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BuildMeta:
+    """Internal result from :func:`_build_session_summary_with_meta`.
+
+    Carries the summary together with a flag indicating whether the
+    model was resolved from the config file (as opposed to events).
+    """
+
+    summary: SessionSummary
+    used_config_fallback: bool
+
+
+def _build_session_summary_with_meta(
+    events: list[SessionEvent],
+    *,
+    session_dir: Path | None = None,
+    config_path: Path | None = None,
+    events_path: Path | None = None,
+) -> _BuildMeta:
+    """Build a summary and report whether the config fallback was used."""
+    fp = _first_pass(events)
+    name = _extract_session_name(session_dir) if session_dir else None
+
+    if fp.all_shutdowns:
+        resume = _detect_resume(events, fp.all_shutdowns)
+        return _BuildMeta(
+            _build_completed_summary(fp, name, resume, events_path=events_path),
+            used_config_fallback=False,
+        )
+
+    used_config = fp.model is None and fp.tool_model is None
+    return _BuildMeta(
+        _build_active_summary(fp, name, config_path, events_path=events_path),
+        used_config_fallback=used_config,
+    )
+
+
 def build_session_summary(
     events: list[SessionEvent],
     *,
@@ -522,14 +564,12 @@ def build_session_summary(
     If *session_dir* is given the session name is extracted from
     ``plan.md`` when present.
     """
-    fp = _first_pass(events)
-    name = _extract_session_name(session_dir) if session_dir else None
-
-    if fp.all_shutdowns:
-        resume = _detect_resume(events, fp.all_shutdowns)
-        return _build_completed_summary(fp, name, resume, events_path=events_path)
-
-    return _build_active_summary(fp, name, config_path, events_path=events_path)
+    return _build_session_summary_with_meta(
+        events,
+        session_dir=session_dir,
+        config_path=config_path,
+        events_path=events_path,
+    ).summary
 
 
 # ---------------------------------------------------------------------------
@@ -564,13 +604,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     for events_path, file_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         if cached is not None and cached.file_id == file_id:
-            # Only pure-active sessions (no shutdown metrics) depend on
-            # the config file for their model; resumed sessions derive
-            # their model from the shutdown event.
-            if (
-                cached.config_model is not None
-                and cached.config_model != current_config_model
-            ):
+            # Only sessions whose model was sourced from config need
+            # invalidation when the config changes.  Sessions that
+            # derived their model from events or shutdown data are
+            # immune to config edits.
+            if cached.depends_on_config and cached.config_model != current_config_model:
                 pass  # stale config — fall through to re-parse
             else:
                 plan_id = _safe_file_identity(events_path.parent / "plan.md")
@@ -578,7 +616,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
                     fresh_name = _extract_session_name(events_path.parent)
                     summary = cached.summary.model_copy(update={"name": fresh_name})
                     _SESSION_CACHE[events_path] = _CachedSession(
-                        file_id, plan_id, cached.config_model, summary
+                        file_id,
+                        plan_id,
+                        cached.config_model,
+                        cached.depends_on_config,
+                        summary,
                     )
                 else:
                     summary = cached.summary
@@ -591,16 +633,16 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
-        summary = build_session_summary(
+        meta = _build_session_summary_with_meta(
             events, session_dir=events_path.parent, events_path=events_path
         )
+        summary = meta.summary
         plan_id = _safe_file_identity(events_path.parent / "plan.md")
         _SESSION_CACHE[events_path] = _CachedSession(
             file_id,
             plan_id,
-            current_config_model
-            if summary.is_active and not summary.has_shutdown_metrics
-            else None,
+            current_config_model if meta.used_config_fallback else None,
+            meta.used_config_fallback,
             summary,
         )
         summaries.append(summary)

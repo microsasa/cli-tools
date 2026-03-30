@@ -4549,7 +4549,7 @@ class TestSessionCacheMtime:
             assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
-        """A session that resumed after shutdown IS cached with config_model."""
+        """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
         start = json.dumps(
             {
                 "type": "session.start",
@@ -4714,15 +4714,24 @@ class TestActiveSessionCaching:
         p = tmp_path / "active-sess" / "events.jsonl"
         _write_events(p, *events_lines)
 
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
         # First call — must parse
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with (
+            patch("copilot_usage.parser._CONFIG_PATH", config),
+            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+        ):
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 1
             assert result1[0].is_active is True
             assert spy.call_count == 1
 
         # Second call — no file changes, should use cache
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with (
+            patch("copilot_usage.parser._CONFIG_PATH", config),
+            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+        ):
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 1
             assert result2[0].is_active is True
@@ -4787,4 +4796,62 @@ class TestActiveSessionCaching:
 
         entry = _SESSION_CACHE[p]
         assert entry.config_model is None
+        assert entry.depends_on_config is False
         assert entry.summary.is_active is False
+
+    def test_active_session_config_none_to_real_invalidates(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cache invalidates when config transitions from None to a real model."""
+        config = tmp_path / "config.json"
+        # Start with no config file → config model is None
+        p = tmp_path / "sessions" / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            result1 = get_all_sessions(tmp_path / "sessions")
+            assert len(result1) == 1
+            assert result1[0].model is None
+
+            entry = _SESSION_CACHE[p]
+            assert entry.depends_on_config is True
+            assert entry.config_model is None
+
+            # Now create a config with a model
+            config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+                result2 = get_all_sessions(tmp_path / "sessions")
+                assert len(result2) == 1
+                assert result2[0].model == "gpt-5.1"
+                assert spy.call_count == 1
+
+    def test_active_session_with_event_model_not_invalidated_by_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Active sessions whose model comes from events ignore config changes."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        # _TOOL_EXEC has model "claude-sonnet-4" in its data
+        p = tmp_path / "sessions" / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _TOOL_EXEC)
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            result1 = get_all_sessions(tmp_path / "sessions")
+            assert len(result1) == 1
+            assert result1[0].model == "claude-sonnet-4"
+
+            entry = _SESSION_CACHE[p]
+            assert entry.depends_on_config is False
+
+            # Change config — should NOT trigger re-parse
+            config.write_text('{"model": "gpt-5.2"}', encoding="utf-8")
+
+            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+                result2 = get_all_sessions(tmp_path / "sessions")
+                assert len(result2) == 1
+                assert result2[0].model == "claude-sonnet-4"
+                assert spy.call_count == 0
