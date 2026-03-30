@@ -2938,11 +2938,11 @@ class TestExtractSessionName:
         assert _extract_session_name(tmp_path) == "First Heading"
 
     def test_large_plan_reads_only_first_line(self, tmp_path: Path) -> None:
-        """Confirm that only a single readline() reads ≤ 1 KB of a 100 KB+ file.
+        """Confirm that only the first line of a large file is read via a single readline().
 
-        Wraps ``Path.open`` with a spy file handle that tracks bytes read
-        through ``readline()`` and raises on ``read()`` / ``readlines()``.
-        Also patches ``read_text`` as a belt-and-suspenders guard.
+        Wraps ``Path.open`` with a spy file handle that tracks bytes returned from
+        ``readline()`` and raises on ``read()`` / ``readlines()``. Also patches
+        ``read_text`` as a belt-and-suspenders guard to ensure no whole-file reads.
         """
         title = "My Session Title"
         filler = "x" * 100 * 1024  # 100 KB of filler
