@@ -133,7 +133,7 @@ def _build_event_details(ev: SessionEvent) -> str:
         case EventType.TOOL_EXECUTION_COMPLETE:
             if (data := _safe_event_data(ev, ev.as_tool_execution)) is None:
                 return ""
-            parts: list[str] = []
+            parts = []
             tool_name = _extract_tool_name(data)
             if tool_name:
                 parts.append(tool_name)

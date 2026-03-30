@@ -1,13 +1,15 @@
 """Tests for copilot_usage.logging_config — setup_logging, _emoji_patcher, LEVEL_EMOJI."""
 
+from __future__ import annotations
+
 # pyright: reportPrivateUsage=false
 # pyright: reportUnknownMemberType=false
 # pyright: reportAttributeAccessIssue=false
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
-
 import sys
 
+import loguru
 from loguru import logger
 
 from copilot_usage.logging_config import (
@@ -86,3 +88,32 @@ _STANDARD_LEVELS = frozenset(
 def test_level_emoji_covers_all_standard_levels() -> None:
     """LEVEL_EMOJI contains entries for all seven standard loguru levels."""
     assert _STANDARD_LEVELS.issubset(LEVEL_EMOJI.keys())
+
+
+# ---------------------------------------------------------------------------
+# _emoji_patcher with real loguru record (issue #522)
+# ---------------------------------------------------------------------------
+
+
+def test_emoji_patcher_real_loguru_record() -> None:
+    """_emoji_patcher works with an actual loguru Record object at runtime.
+
+    Confirms that ``loguru.Record`` is resolvable as a real runtime type
+    annotation (no longer a deferred string reference).
+    """
+    captured: list[loguru.Record] = []
+
+    def _sink(message: loguru.Message) -> None:
+        captured.append(message.record)
+
+    logger.remove()
+    handler_id = logger.add(_sink, level="DEBUG")
+    try:
+        logger.info("test message for emoji patcher")
+    finally:
+        logger.remove(handler_id)
+
+    assert captured, "expected at least one captured record"
+    record = captured[0]
+    _emoji_patcher(record)
+    assert record["extra"]["emoji"] == LEVEL_EMOJI["INFO"]
