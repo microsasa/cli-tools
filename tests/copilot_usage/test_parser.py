@@ -1590,9 +1590,8 @@ class TestGetAllSessions:
         _write_events(s2, _START_EVENT, _SHUTDOWN_EVENT)
         result = get_all_sessions(tmp_path)
         assert len(result) == 2
-        for s in result:
-            assert s.events_path is not None
-            assert s.events_path.name == "events.jsonl"
+        returned_paths = {s.events_path for s in result}
+        assert returned_paths == {s1, s2}
 
 
 # ---------------------------------------------------------------------------
