@@ -317,6 +317,9 @@ class TestGetVscodeSummary:
                 "copilot_usage.vscode_parser.parse_vscode_log",
                 side_effect=_fake_parse,
             ) as mock_parse,
+            patch(
+                "copilot_usage.vscode_parser.build_vscode_summary",
+            ) as mock_build,
         ):
             summary = get_vscode_summary()
 
@@ -324,6 +327,10 @@ class TestGetVscodeSummary:
         assert summary.log_files_parsed == 2
         assert mock_parse.call_count == 2
         mock_parse.assert_has_calls([call(file_a), call(file_b)])
+        # Verify the incremental path is used: build_vscode_summary must NOT
+        # be called because get_vscode_summary now aggregates per-file via
+        # _update_vscode_summary instead of collecting all requests first.
+        mock_build.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
