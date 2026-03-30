@@ -251,7 +251,7 @@ class _FirstPassResult:
     end_time: datetime | None
     cwd: str | None
     model: str | None
-    all_shutdowns: list[tuple[int, SessionShutdownData]]
+    all_shutdowns: tuple[tuple[int, SessionShutdownData], ...]
     user_message_count: int
     total_output_tokens: int
     total_turn_starts: int
@@ -282,7 +282,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     cwd: str | None = None
     model: str | None = None
     seen_session_start = False
-    all_shutdowns: list[tuple[int, SessionShutdownData]] = []
+    _shutdowns: list[tuple[int, SessionShutdownData]] = []
     user_message_count = 0
     total_output_tokens = 0
     total_turn_starts = 0
@@ -320,7 +320,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             current_model = ev.currentModel or data.currentModel
             if not current_model and data.modelMetrics:
                 current_model = _infer_model_from_metrics(data.modelMetrics)
-            all_shutdowns.append((idx, data))
+            _shutdowns.append((idx, data))
             end_time = ev.timestamp
             model = current_model
 
@@ -353,7 +353,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
         end_time=end_time,
         cwd=cwd,
         model=model,
-        all_shutdowns=all_shutdowns,
+        all_shutdowns=tuple(_shutdowns),
         user_message_count=user_message_count,
         total_output_tokens=total_output_tokens,
         total_turn_starts=total_turn_starts,
@@ -363,7 +363,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
 
 def _detect_resume(
     events: list[SessionEvent],
-    all_shutdowns: list[tuple[int, SessionShutdownData]],
+    all_shutdowns: tuple[tuple[int, SessionShutdownData], ...],
 ) -> _ResumeInfo:
     """Scan events after the last shutdown for resume indicators."""
     if not all_shutdowns:
