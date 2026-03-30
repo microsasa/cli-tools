@@ -38,10 +38,15 @@ class _CachedSession:
     Stores the ``(st_mtime_ns, st_size)`` identity of both
     ``events.jsonl`` and ``plan.md`` so that the session name is only
     re-read when ``plan.md`` actually changes on disk.
+
+    For active sessions, ``config_model`` records the config model used
+    during parsing so the cache can be invalidated when the user edits
+    ``~/.copilot/config.json``.  For non-active sessions it is ``None``.
     """
 
     file_id: tuple[int, int]
     plan_id: tuple[int, int]
+    config_model: str | None
     summary: SessionSummary
 
 
@@ -549,20 +554,29 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     redundant reads *within* a single invocation.
     """
     _read_config_model.cache_clear()
+    # Pass None explicitly to match the lru_cache key used by
+    # build_session_summary (which passes config_path=None by default).
+    current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
     for events_path, file_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         if cached is not None and cached.file_id == file_id:
-            plan_id = _safe_file_identity(events_path.parent / "plan.md")
-            if plan_id != cached.plan_id:
-                fresh_name = _extract_session_name(events_path.parent)
-                summary = cached.summary.model_copy(update={"name": fresh_name})
-                _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
+            # For active sessions, also require config model match
+            if cached.summary.is_active and cached.config_model != current_config_model:
+                pass  # stale active cache — fall through to re-parse
             else:
-                summary = cached.summary
-            summaries.append(summary)
-            continue
+                plan_id = _safe_file_identity(events_path.parent / "plan.md")
+                if plan_id != cached.plan_id:
+                    fresh_name = _extract_session_name(events_path.parent)
+                    summary = cached.summary.model_copy(update={"name": fresh_name})
+                    _SESSION_CACHE[events_path] = _CachedSession(
+                        file_id, plan_id, cached.config_model, summary
+                    )
+                else:
+                    summary = cached.summary
+                summaries.append(summary)
+                continue
         try:
             events = parse_events(events_path)
         except OSError as exc:
@@ -573,12 +587,13 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         summary = build_session_summary(
             events, session_dir=events_path.parent, events_path=events_path
         )
-        # Only cache sessions whose model does NOT depend on the config
-        # file.  Pure-active sessions (no shutdown) derive their model
-        # from _read_config_model which can change between calls.
-        if not summary.is_active:
-            plan_id = _safe_file_identity(events_path.parent / "plan.md")
-            _SESSION_CACHE[events_path] = _CachedSession(file_id, plan_id, summary)
+        plan_id = _safe_file_identity(events_path.parent / "plan.md")
+        _SESSION_CACHE[events_path] = _CachedSession(
+            file_id,
+            plan_id,
+            current_config_model if summary.is_active else None,
+            summary,
+        )
         summaries.append(summary)
 
     summaries.sort(key=session_sort_key, reverse=True)
