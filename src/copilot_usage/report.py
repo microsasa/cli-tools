@@ -346,20 +346,25 @@ def _render_session_table(
     *,
     title: str = "Sessions",
     token_fn: Callable[[SessionSummary], int] = total_output_tokens,
+    pre_sorted: bool = True,
 ) -> None:
-    """Render the per-session table sorted by start time (newest first).
+    """Render the per-session table ordered by start time (newest first).
 
     *token_fn* controls how output tokens are counted per session.  Defaults
     to :func:`total_output_tokens` (includes active tokens for resumed
     sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
+
+    When *pre_sorted* is ``True`` (the default), the input is assumed to
+    already be in descending ``start_time`` order — the contract guaranteed
+    by :func:`~copilot_usage.parser.get_all_sessions` — and no sort is
+    performed.  Set to ``False`` to sort explicitly when calling with
+    unsorted data.
     """
     if not sessions:
         return
 
-    sorted_sessions = sorted(
-        sessions,
-        key=session_sort_key,
-        reverse=True,
+    ordered: list[SessionSummary] = (
+        sessions if pre_sorted else sorted(sessions, key=session_sort_key, reverse=True)
     )
 
     table = Table(title=title, border_style="cyan")
@@ -371,7 +376,7 @@ def _render_session_table(
     table.add_column("Output Tokens", justify="right")
     table.add_column("Status")
 
-    for s in sorted_sessions:
+    for s in ordered:
         name = session_display_name(s)
         model = s.model or "—"
 

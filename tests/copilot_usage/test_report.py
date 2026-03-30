@@ -1154,7 +1154,9 @@ class TestRenderSummary:
             name="Newer",
             start_time=datetime(2026, 6, 1, tzinfo=UTC),
         )
-        output = _capture_summary([s1, s2])
+        # Input is pre-sorted descending (newest first) — the contract
+        # guaranteed by get_all_sessions().
+        output = _capture_summary([s2, s1])
         pos_newer = output.index("Newer")
         pos_older = output.index("Older")
         assert pos_newer < pos_older
@@ -4956,3 +4958,65 @@ class TestRenderCostViewNoModelMetricsGrandTotal:
         # Regression check: the raw 500 active_output_tokens value must not
         # appear in the totals
         assert "500" not in clean
+
+
+class TestRenderSessionTablePreSorted:
+    """Issue #541 — _render_session_table skips redundant sort for pre-sorted input."""
+
+    @staticmethod
+    def _build_sessions(count: int = 50) -> list[SessionSummary]:
+        """Build *count* sessions in descending start_time order (pre-sorted)."""
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        return [
+            SessionSummary(
+                session_id=f"sess-{i:04d}",
+                name=f"Session {i}",
+                model="gpt-4",
+                start_time=base - timedelta(hours=i),
+                is_active=False,
+                model_calls=i,
+                user_messages=i,
+                model_metrics={
+                    "gpt-4": ModelMetrics(
+                        usage=TokenUsage(outputTokens=100 * (i + 1)),
+                    ),
+                },
+            )
+            for i in range(count)
+        ]
+
+    def test_pre_sorted_output_preserves_descending_order(self) -> None:
+        """Rows appear in the same descending start_time order as the input."""
+        sessions = self._build_sessions(50)
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=160)
+        _render_session_table(console, sessions, pre_sorted=True)
+        output = buf.getvalue()
+        lines = output.splitlines()
+        # Extract the session names from rendered rows
+        name_rows = [line for line in lines if re.search(r"Session \d+", line)]
+        found_indices = [
+            int(re.search(r"Session (\d+)", line).group(1))  # type: ignore[union-attr]
+            for line in name_rows
+        ]
+        assert len(found_indices) == 50
+        # Must be in ascending index order (0, 1, 2, …) which corresponds
+        # to descending start_time (newest first), matching input order.
+        assert found_indices == list(range(50))
+
+    def test_pre_sorted_false_sorts_explicitly(self) -> None:
+        """When pre_sorted=False the function sorts the input itself."""
+        sessions = list(reversed(self._build_sessions(10)))  # ascending = wrong order
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=160)
+        _render_session_table(console, sessions, pre_sorted=False)
+        output = buf.getvalue()
+        name_rows = [
+            line for line in output.splitlines() if re.search(r"Session \d+", line)
+        ]
+        found_indices = [
+            int(re.search(r"Session (\d+)", line).group(1))  # type: ignore[union-attr]
+            for line in name_rows
+        ]
+        # Should be re-sorted into descending start_time (index 0 first)
+        assert found_indices == list(range(10))
