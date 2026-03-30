@@ -395,6 +395,8 @@ def _build_completed_summary(
     fp: _FirstPassResult,
     name: str | None,
     resume: _ResumeInfo,
+    *,
+    events_path: Path | None = None,
 ) -> SessionSummary:
     """Build a :class:`SessionSummary` for a session that has shutdown data."""
     total_premium = 0
@@ -428,6 +430,7 @@ def _build_completed_summary(
         active_model_calls=resume.post_shutdown_turn_starts,
         active_user_messages=resume.post_shutdown_user_messages,
         active_output_tokens=resume.post_shutdown_output_tokens,
+        events_path=events_path,
     )
 
 
@@ -435,6 +438,8 @@ def _build_active_summary(
     fp: _FirstPassResult,
     name: str | None,
     config_path: Path | None,
+    *,
+    events_path: Path | None = None,
 ) -> SessionSummary:
     """Build a :class:`SessionSummary` for a session with no shutdown data."""
     model = fp.model or fp.tool_model
@@ -466,6 +471,7 @@ def _build_active_summary(
         active_model_calls=fp.total_turn_starts,
         active_user_messages=fp.user_message_count,
         active_output_tokens=fp.total_output_tokens,
+        events_path=events_path,
     )
 
 
@@ -479,6 +485,7 @@ def build_session_summary(
     *,
     session_dir: Path | None = None,
     config_path: Path | None = None,
+    events_path: Path | None = None,
 ) -> SessionSummary:
     """Build a :class:`SessionSummary` from parsed events.
 
@@ -511,9 +518,9 @@ def build_session_summary(
 
     if fp.all_shutdowns:
         resume = _detect_resume(events, fp.all_shutdowns)
-        return _build_completed_summary(fp, name, resume)
+        return _build_completed_summary(fp, name, resume, events_path=events_path)
 
-    return _build_active_summary(fp, name, config_path)
+    return _build_active_summary(fp, name, config_path, events_path=events_path)
 
 
 # ---------------------------------------------------------------------------
@@ -561,8 +568,9 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
-        summary = build_session_summary(events, session_dir=events_path.parent)
-        summary.events_path = events_path
+        summary = build_session_summary(
+            events, session_dir=events_path.parent, events_path=events_path
+        )
         # Only cache sessions whose model does NOT depend on the config
         # file.  Pure-active sessions (no shutdown) derive their model
         # from _read_config_model which can change between calls.
