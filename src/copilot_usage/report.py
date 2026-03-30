@@ -346,20 +346,25 @@ def _render_session_table(
     *,
     title: str = "Sessions",
     token_fn: Callable[[SessionSummary], int] = total_output_tokens,
+    pre_sorted: bool = True,
 ) -> None:
-    """Render the per-session table sorted by start time (newest first).
+    """Render the per-session table ordered by start time (newest first).
 
     *token_fn* controls how output tokens are counted per session.  Defaults
     to :func:`total_output_tokens` (includes active tokens for resumed
     sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
+
+    When *pre_sorted* is ``True`` (the default), the input is assumed to
+    already be in descending ``start_time`` order — the contract guaranteed
+    by :func:`~copilot_usage.parser.get_all_sessions` — and no sort is
+    performed.  Set to ``False`` to sort explicitly when calling with
+    unsorted data.
     """
     if not sessions:
         return
 
-    sorted_sessions = sorted(
-        sessions,
-        key=session_sort_key,
-        reverse=True,
+    ordered: list[SessionSummary] = (
+        sessions if pre_sorted else sorted(sessions, key=session_sort_key, reverse=True)
     )
 
     table = Table(title=title, border_style="cyan")
@@ -371,7 +376,7 @@ def _render_session_table(
     table.add_column("Output Tokens", justify="right")
     table.add_column("Status")
 
-    for s in sorted_sessions:
+    for s in ordered:
         name = session_display_name(s)
         model = s.model or "—"
 
@@ -411,6 +416,10 @@ def render_summary(
     """Render the full summary report to the terminal using Rich.
 
     Filters sessions by date range when *since* and/or *until* are given.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
@@ -536,6 +545,10 @@ def render_full_summary(
 
     Section 1: Historical shutdown data (totals, per-model, per-session).
     Section 2: Active sessions since last shutdown.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
 
@@ -567,6 +580,10 @@ def render_cost_view(
     For active sessions with shutdown metrics, appends a
     "↳ Since last shutdown" row with an estimated premium cost and the
     active model calls / output tokens.
+
+    *sessions* must be in descending ``start_time`` order — the contract
+    guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
+    re-sorting is performed.
     """
     console = target_console or Console()
     filtered = _filter_sessions(sessions, since, until)
