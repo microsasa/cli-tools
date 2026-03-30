@@ -2894,9 +2894,9 @@ class TestExtractSessionName:
 
         original_open = Path.open
 
-        def _raise_os_error(
+        def _raise_os_error(  # type: ignore[override]
             self: Path, *args: object, **kwargs: object
-        ) -> io.TextIOWrapper:
+        ) -> object:
             if self == plan:
                 raise OSError("denied")
             return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
