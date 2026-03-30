@@ -2954,6 +2954,7 @@ class TestExtractSessionName:
 
         original_open = Path.open
         bytes_read: list[int] = [0]
+        readline_calls: list[int] = [0]
 
         class _SpyFile:
             """Context-manager spy that records readline bytes and forbids whole-file reads."""
@@ -2962,6 +2963,7 @@ class TestExtractSessionName:
                 self._fh = fh
 
             def readline(self, limit: int = -1) -> str:
+                readline_calls[0] += 1
                 line = self._fh.readline(limit)
                 bytes_read[0] += len(line.encode("utf-8"))
                 return line
@@ -3006,6 +3008,10 @@ class TestExtractSessionName:
         # A 1 KB threshold leaves ample headroom while catching whole-file reads.
         assert bytes_read[0] < 1024, (
             f"Expected < 1 KB from readline(), got {bytes_read[0]} bytes"
+        )
+        # Exactly one readline() call proves we don't iterate or re-read.
+        assert readline_calls[0] == 1, (
+            f"Expected exactly 1 readline() call, got {readline_calls[0]}"
         )
 
 
