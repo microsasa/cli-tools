@@ -359,3 +359,90 @@ class TestVscodeCliCommand:
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
         assert result.exit_code == 0
         assert "VS Code Copilot Chat" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Benchmark / correctness: large batch of requests
+# ---------------------------------------------------------------------------
+
+_NUM_BENCHMARK_REQUESTS = 10_000
+_MODELS = ["claude-opus-4.6", "gpt-4o-mini", "claude-sonnet-4"]
+_CATEGORIES = ["panel/editAgent", "inline", "copilotLanguageModelWrapper"]
+
+
+def _make_bulk_requests(n: int = _NUM_BENCHMARK_REQUESTS) -> list[VSCodeRequest]:
+    """Build *n* requests spread across a few models/categories on one date."""
+    from datetime import datetime
+
+    base = datetime(2026, 3, 13, 10, 0, 0)
+    return [
+        VSCodeRequest(
+            timestamp=base,
+            request_id=f"r{i}",
+            model=_MODELS[i % len(_MODELS)],
+            duration_ms=100 + (i % 7),
+            category=_CATEGORIES[i % len(_CATEGORIES)],
+        )
+        for i in range(n)
+    ]
+
+
+class TestBuildVscodeSummaryBulk:
+    """Correctness check using a large batch of requests."""
+
+    def test_bulk_aggregation_correctness(self) -> None:
+        requests = _make_bulk_requests()
+        summary = build_vscode_summary(requests)
+
+        assert summary.total_requests == _NUM_BENCHMARK_REQUESTS
+
+        # Model distribution: requests are round-robined across 3 models
+        for model in _MODELS:
+            expected = sum(1 for r in requests if r.model == model)
+            assert summary.requests_by_model[model] == expected
+
+        # Duration by model
+        for model in _MODELS:
+            expected_dur = sum(r.duration_ms for r in requests if r.model == model)
+            assert summary.duration_by_model[model] == expected_dur
+
+        # Category distribution
+        for cat in _CATEGORIES:
+            expected_cat = sum(1 for r in requests if r.category == cat)
+            assert summary.requests_by_category[cat] == expected_cat
+
+        # All requests share the same date
+        assert summary.requests_by_date == {"2026-03-13": _NUM_BENCHMARK_REQUESTS}
+
+        # Total duration
+        expected_total = sum(r.duration_ms for r in requests)
+        assert summary.total_duration_ms == expected_total
+
+    def test_bulk_multi_date(self) -> None:
+        """Requests spanning multiple dates are aggregated correctly."""
+        from datetime import datetime, timedelta
+
+        base = datetime(2026, 3, 10, 8, 0, 0)
+        requests = [
+            VSCodeRequest(
+                timestamp=base + timedelta(days=i // 100),
+                request_id=f"m{i}",
+                model="gpt-4o",
+                duration_ms=50,
+                category="panel",
+            )
+            for i in range(1000)
+        ]
+        summary = build_vscode_summary(requests)
+        assert summary.total_requests == 1000
+        assert sum(summary.requests_by_date.values()) == 1000
+        # 10 distinct dates (0..999 // 100 → 0..9)
+        assert len(summary.requests_by_date) == 10
+
+    def test_finalized_summary_uses_plain_dict(self) -> None:
+        """_finalize_summary converts defaultdict to plain dict."""
+        summary = build_vscode_summary(_make_bulk_requests())
+        assert type(summary.requests_by_model) is dict
+        assert type(summary.duration_by_model) is dict
+        assert type(summary.requests_by_category) is dict
+        assert type(summary.requests_by_date) is dict
