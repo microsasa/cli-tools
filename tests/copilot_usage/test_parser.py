@@ -4276,26 +4276,24 @@ class TestDetectResumeNoListSlice:
         events = parse_events(p)
         fp = _first_pass(events)
 
-        # Snapshot memory before and after _detect_resume
+        # Measure peak memory during _detect_resume.
         tracemalloc.start()
-        snapshot_before = tracemalloc.take_snapshot()
+        tracemalloc.reset_peak()
         result = _detect_resume(events, fp.all_shutdowns)
-        snapshot_after = tracemalloc.take_snapshot()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
         # The call should have counted all post-shutdown user messages
         assert result.post_shutdown_user_messages == 1_200
 
-        # Compare memory: no single allocation should be >= 1000 * 8 bytes
-        # (the size of a list of 1000 pointers on 64-bit).  A list slice of
-        # 1200 refs would be ~9.6 KB + list overhead (~56 bytes) ≈ 9.7 KB.
-        stats = snapshot_after.compare_to(snapshot_before, "lineno")
-        parser_allocs = [s for s in stats if "parser.py" in str(s) and s.size_diff > 0]
-        for stat in parser_allocs:
-            # No single allocation from parser.py should be a 1000+ element list
-            assert stat.size_diff < 8_000, (
-                f"Unexpected large allocation in parser.py: {stat}"
-            )
+        # Assert that peak memory usage stays below what we'd expect from
+        # allocating a list slice of 1000+ elements. On 64-bit, a list of
+        # 1000 pointers is ~8 KB, so a 1200-element slice would be >9.6 KB
+        # plus list overhead. Keeping the threshold at 8 KB ensures we would
+        # catch such a large temporary list allocation.
+        assert peak < 8_000, (
+            f"Unexpected high peak memory in _detect_resume: {peak} bytes"
+        )
 
 
 # ---------------------------------------------------------------------------
