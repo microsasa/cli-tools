@@ -4,11 +4,15 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import datetime
 from io import StringIO
+from unittest.mock import MagicMock
 
+import pytest
 from rich.console import Console
 
+from copilot_usage.pricing import ModelPricing, PricingTier
 from copilot_usage.vscode_parser import VSCodeLogSummary
 from copilot_usage.vscode_report import _DAILY_ACTIVITY_LIMIT, render_vscode_summary
 
@@ -77,7 +81,7 @@ class TestRenderVscodeSummaryTotalsPanel:
     def test_api_time_rendered(self) -> None:
         summary = _make_summary(total_requests=1, total_duration_ms=120_000)
         output = _capture(summary)
-        # format_duration(120_000) produces "2m 0s"
+        # format_duration(120_000) produces "2m"
         assert "2m" in output
 
     def test_log_files_count_rendered(self) -> None:
@@ -104,14 +108,36 @@ class TestRenderVscodeSummaryPerModelTable:
         assert "claude-opus-4.6" in output
         assert "gpt-4o-mini" in output
 
-    def test_tier_column_uses_lookup(self) -> None:
+    def test_tier_column_uses_lookup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        spy = MagicMock(
+            return_value=ModelPricing(
+                model_name="claude-opus-4.6",
+                multiplier=3.0,
+                tier=PricingTier.PREMIUM,
+            )
+        )
+        monkeypatch.setattr("copilot_usage.vscode_report.lookup_model_pricing", spy)
         summary = _make_summary(
             total_requests=1,
             requests_by_model={"claude-opus-4.6": 1},
             duration_by_model={"claude-opus-4.6": 500},
         )
         output = _capture(summary)
+        spy.assert_called_once_with("claude-opus-4.6")
         assert "premium" in output
+
+    def test_tier_lookup_suppresses_warnings(self) -> None:
+        """Unknown models must not leak UserWarning to the caller."""
+        summary = _make_summary(
+            total_requests=1,
+            requests_by_model={"totally-unknown-model-xyz": 1},
+            duration_by_model={"totally-unknown-model-xyz": 100},
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _capture(summary)
+        user_warnings = [w for w in caught if issubclass(w.category, UserWarning)]
+        assert len(user_warnings) == 0, f"Leaked warnings: {user_warnings}"
 
     def test_avg_ms_calculation(self) -> None:
         summary = _make_summary(
