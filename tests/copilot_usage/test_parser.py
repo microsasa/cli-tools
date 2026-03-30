@@ -2892,19 +2892,21 @@ class TestExtractSessionName:
         plan = tmp_path / "plan.md"
         plan.write_text("# Title\n", encoding="utf-8")
 
-        original_read_text = Path.read_text
+        original_open = Path.open
 
-        def _raise_os_error(self: Path, *args: object, **kwargs: object) -> str:
+        def _raise_os_error(
+            self: Path, *args: object, **kwargs: object
+        ) -> io.TextIOWrapper:
             if self == plan:
                 raise OSError("denied")
-            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
 
         from loguru import logger
 
         log_messages: list[str] = []
         handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
         try:
-            with patch.object(Path, "read_text", _raise_os_error):
+            with patch.object(Path, "open", _raise_os_error):
                 assert _extract_session_name(tmp_path) is None
         finally:
             logger.remove(handler_id)
@@ -2934,6 +2936,28 @@ class TestExtractSessionName:
             "# First Heading\n# Second Heading\nsome body text\n", encoding="utf-8"
         )
         assert _extract_session_name(tmp_path) == "First Heading"
+
+    def test_large_plan_reads_only_first_line(self, tmp_path: Path) -> None:
+        """Confirm readline is used — whole-file read_text is not called."""
+        title = "My Session Title"
+        filler = "x" * 100 * 1024  # 100 KB of filler
+        plan = tmp_path / "plan.md"
+        plan.write_text(f"# {title}\n{filler}\n", encoding="utf-8")
+
+        # Sanity: the function returns the expected title.
+        assert _extract_session_name(tmp_path) == title
+
+        # Patch read_text to explode — proving the implementation uses
+        # open()+readline() instead of reading the whole file.
+        def _boom(self: Path, *_a: object, **_kw: object) -> str:
+            if self == plan:
+                raise AssertionError("read_text must not be called")
+            return Path.read_text(self, encoding="utf-8")
+
+        with patch.object(Path, "read_text", _boom):
+            result = _extract_session_name(tmp_path)
+
+        assert result == title
 
 
 # ---------------------------------------------------------------------------
