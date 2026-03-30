@@ -2,8 +2,6 @@
 
 # pyright: reportPrivateUsage=false
 
-from __future__ import annotations
-
 import warnings
 from datetime import datetime
 from io import StringIO
@@ -37,17 +35,17 @@ def _make_summary(
     last_timestamp: datetime | None = None,
     log_files_parsed: int = 1,
 ) -> VSCodeLogSummary:
-    s = VSCodeLogSummary()
-    s.total_requests = total_requests
-    s.total_duration_ms = total_duration_ms
-    s.requests_by_model = requests_by_model or {}
-    s.duration_by_model = duration_by_model or {}
-    s.requests_by_category = requests_by_category or {}
-    s.requests_by_date = requests_by_date or {}
-    s.first_timestamp = first_timestamp
-    s.last_timestamp = last_timestamp
-    s.log_files_parsed = log_files_parsed
-    return s
+    return VSCodeLogSummary(
+        total_requests=total_requests,
+        total_duration_ms=total_duration_ms,
+        requests_by_model=requests_by_model or {},
+        duration_by_model=duration_by_model or {},
+        requests_by_category=requests_by_category or {},
+        requests_by_date=requests_by_date or {},
+        first_timestamp=first_timestamp,
+        last_timestamp=last_timestamp,
+        log_files_parsed=log_files_parsed,
+    )
 
 
 # ---------------------------------------------------------------------------
