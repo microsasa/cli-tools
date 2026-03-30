@@ -270,6 +270,61 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 0
         assert summary.log_files_parsed == 0
 
+    def test_incremental_aggregation(self) -> None:
+        """Per-file incremental processing: requests are aggregated per file."""
+        from datetime import datetime
+        from unittest.mock import call
+
+        file_a = Path("/fake/log_a.log")
+        file_b = Path("/fake/log_b.log")
+        requests_a = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 13, 10, 0, 0),
+                request_id="a1",
+                model="gpt-4o",
+                duration_ms=100,
+                category="panel",
+            ),
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 13, 10, 1, 0),
+                request_id="a2",
+                model="gpt-4o",
+                duration_ms=200,
+                category="panel",
+            ),
+        ]
+        requests_b = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 12, 0, 0),
+                request_id="b1",
+                model="claude-sonnet-4",
+                duration_ms=300,
+                category="inline",
+            ),
+        ]
+
+        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+            if path == file_a:
+                return list(requests_a)
+            return list(requests_b)
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fake_parse,
+            ) as mock_parse,
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.total_requests == 3
+        assert summary.log_files_parsed == 2
+        assert mock_parse.call_count == 2
+        mock_parse.assert_has_calls([call(file_a), call(file_b)])
+
 
 # ---------------------------------------------------------------------------
 # CLI: vscode subcommand

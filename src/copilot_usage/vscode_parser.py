@@ -1,6 +1,5 @@
 """Parser for VS Code Copilot Chat log files."""
 
-import dataclasses
 import os
 import re
 import sys
@@ -124,58 +123,75 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest] | None:
     return requests
 
 
-def build_vscode_summary(requests: list[VSCodeRequest]) -> VSCodeLogSummary:
-    """Aggregate a list of parsed requests into a summary."""
-    total_requests = 0
-    total_duration_ms = 0
-    requests_by_model: dict[str, int] = {}
-    duration_by_model: dict[str, int] = {}
-    requests_by_category: dict[str, int] = {}
-    requests_by_date: dict[str, int] = {}
+@dataclass(slots=True)
+class _SummaryAccumulator:
+    """Mutable accumulator for incremental VSCodeLogSummary construction."""
+
+    total_requests: int = 0
+    total_duration_ms: int = 0
+    requests_by_model: dict[str, int] = field(default_factory=lambda: {})
+    duration_by_model: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_category: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_date: dict[str, int] = field(default_factory=lambda: {})
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
+    log_files_parsed: int = 0
 
+
+def _update_vscode_summary(
+    acc: _SummaryAccumulator, requests: list[VSCodeRequest]
+) -> None:
+    """Merge *requests* into *acc* in-place, then discard."""
     for req in requests:
-        total_requests += 1
-        total_duration_ms += req.duration_ms
+        acc.total_requests += 1
+        acc.total_duration_ms += req.duration_ms
 
-        requests_by_model[req.model] = requests_by_model.get(req.model, 0) + 1
-        duration_by_model[req.model] = (
-            duration_by_model.get(req.model, 0) + req.duration_ms
+        acc.requests_by_model[req.model] = acc.requests_by_model.get(req.model, 0) + 1
+        acc.duration_by_model[req.model] = (
+            acc.duration_by_model.get(req.model, 0) + req.duration_ms
         )
-        requests_by_category[req.category] = (
-            requests_by_category.get(req.category, 0) + 1
+        acc.requests_by_category[req.category] = (
+            acc.requests_by_category.get(req.category, 0) + 1
         )
 
         date_key = req.timestamp.strftime("%Y-%m-%d")
-        requests_by_date[date_key] = requests_by_date.get(date_key, 0) + 1
+        acc.requests_by_date[date_key] = acc.requests_by_date.get(date_key, 0) + 1
 
-        if first_timestamp is None or req.timestamp < first_timestamp:
-            first_timestamp = req.timestamp
-        if last_timestamp is None or req.timestamp > last_timestamp:
-            last_timestamp = req.timestamp
+        if acc.first_timestamp is None or req.timestamp < acc.first_timestamp:
+            acc.first_timestamp = req.timestamp
+        if acc.last_timestamp is None or req.timestamp > acc.last_timestamp:
+            acc.last_timestamp = req.timestamp
 
+
+def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
+    """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``."""
     return VSCodeLogSummary(
-        total_requests=total_requests,
-        total_duration_ms=total_duration_ms,
-        requests_by_model=requests_by_model,
-        duration_by_model=duration_by_model,
-        requests_by_category=requests_by_category,
-        requests_by_date=requests_by_date,
-        first_timestamp=first_timestamp,
-        last_timestamp=last_timestamp,
+        total_requests=acc.total_requests,
+        total_duration_ms=acc.total_duration_ms,
+        requests_by_model=acc.requests_by_model,
+        duration_by_model=acc.duration_by_model,
+        requests_by_category=acc.requests_by_category,
+        requests_by_date=acc.requests_by_date,
+        first_timestamp=acc.first_timestamp,
+        last_timestamp=acc.last_timestamp,
+        log_files_parsed=acc.log_files_parsed,
     )
+
+
+def build_vscode_summary(requests: list[VSCodeRequest]) -> VSCodeLogSummary:
+    """Aggregate a list of parsed requests into a summary."""
+    acc = _SummaryAccumulator()
+    _update_vscode_summary(acc, requests)
+    return _finalize_summary(acc)
 
 
 def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs."""
     logs = discover_vscode_logs(base_path)
-    all_requests: list[VSCodeRequest] = []
-    parsed_count = 0
+    acc = _SummaryAccumulator()
     for log_path in logs:
         result = parse_vscode_log(log_path)
         if result is not None:
-            all_requests.extend(result)
-            parsed_count += 1
-    summary = build_vscode_summary(all_requests)
-    return dataclasses.replace(summary, log_files_parsed=parsed_count)
+            _update_vscode_summary(acc, result)
+            acc.log_files_parsed += 1
+    return _finalize_summary(acc)
