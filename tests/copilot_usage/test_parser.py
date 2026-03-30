@@ -4237,6 +4237,68 @@ class TestDetectResumeDirect:
 
 
 # ---------------------------------------------------------------------------
+# Issue #553 — _detect_resume must not allocate an O(n) list slice
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeNoListSlice:
+    """Verify _detect_resume uses itertools.islice (zero-copy) instead of a list slice."""
+
+    def test_no_intermediate_list_allocation(self, tmp_path: Path) -> None:
+        """Build a session with an early shutdown and 1 000+ post-shutdown events.
+
+        Uses tracemalloc to assert that _detect_resume does NOT allocate a
+        list of length >= 1 000 for the post-shutdown slice.
+        """
+        import tracemalloc
+
+        # Build a synthetic events.jsonl: start → user → shutdown → 1200 user messages
+        post_events: list[str] = [
+            json.dumps(
+                {
+                    "type": "user.message",
+                    "data": {
+                        "content": f"msg-{i}",
+                        "transformedContent": f"msg-{i}",
+                        "attachments": [],
+                        "interactionId": f"int-post-{i}",
+                    },
+                    "id": f"ev-post-user-{i}",
+                    "timestamp": "2026-03-07T12:01:00.000Z",
+                    "parentId": "ev-shutdown",
+                }
+            )
+            for i in range(1_200)
+        ]
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, *post_events)
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        # Measure peak memory during _detect_resume.
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        try:
+            result = _detect_resume(events, fp.all_shutdowns)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        # The call should have counted all post-shutdown user messages
+        assert result.post_shutdown_user_messages == 1_200
+
+        # Assert that peak memory usage stays below what we'd expect from
+        # allocating a list slice of 1000+ elements. On 64-bit, a list of
+        # 1000 pointers is ~8 KB, so a 1200-element slice would be >9.6 KB
+        # plus list overhead. Keeping the threshold at 8 KB ensures we would
+        # catch such a large temporary list allocation.
+        assert peak < 8_000, (
+            f"Unexpected high peak memory in _detect_resume: {peak} bytes"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Issue #470 — _build_active_summary model from config.json fallback
 # ---------------------------------------------------------------------------
 
