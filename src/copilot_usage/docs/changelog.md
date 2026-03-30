@@ -70,7 +70,7 @@ Manual work only — autonomous agent pipeline PRs are not tracked here.
 - Fixed premium total consistency across views
 - Fixed active-in-historical leak (active sessions no longer bleed into historical section)
 - Fixed parent `--path` fallback propagation
-- Fixed TOCTOU race in session discovery (`_safe_mtime()` + catch in `get_all_sessions()`)
+- Fixed TOCTOU race in session discovery (`_safe_file_identity()` + catch in `get_all_sessions()`)
 - Removed Start Time column from sessions table
 - Added `last_resume_time` for accurate Running duration display
 - Created `docs/implementation.md` — deep-dive into internals (shutdown aggregation, active detection, edge cases)
