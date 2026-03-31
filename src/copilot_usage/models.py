@@ -188,9 +188,7 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[ToolRequest] = Field(
-        default_factory=lambda: list[ToolRequest](),
-    )
+    toolRequests: list[ToolRequest] = Field(default_factory=list[ToolRequest])
 
 
 class SessionShutdownData(BaseModel):
