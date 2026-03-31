@@ -604,9 +604,8 @@ class TestAsSessionStart:
 
     def test_invalid_data_raises_validation_error(self) -> None:
         ev = SessionEvent(type=EventType.SESSION_START, data={})
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ev.as_session_start()
-        assert type(exc_info.value) is not ValueError
 
 
 class TestAsSessionShutdown:
@@ -628,9 +627,8 @@ class TestAsSessionShutdown:
             type=EventType.SESSION_SHUTDOWN,
             data={"totalPremiumRequests": "not-an-int"},
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ev.as_session_shutdown()
-        assert type(exc_info.value) is not ValueError
 
 
 class TestAsAssistantMessage:
@@ -652,9 +650,8 @@ class TestAsAssistantMessage:
             type=EventType.ASSISTANT_MESSAGE,
             data={"outputTokens": [1, 2, 3]},
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ev.as_assistant_message()
-        assert type(exc_info.value) is not ValueError
 
 
 class TestAsUserMessage:
@@ -676,9 +673,8 @@ class TestAsUserMessage:
             type=EventType.USER_MESSAGE,
             data={"attachments": 99},
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ev.as_user_message()
-        assert type(exc_info.value) is not ValueError
 
 
 class TestAsToolExecution:
@@ -701,9 +697,8 @@ class TestAsToolExecution:
             type=EventType.TOOL_EXECUTION_COMPLETE,
             data={"success": "maybe"},
         )
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ev.as_tool_execution()
-        assert type(exc_info.value) is not ValueError
 
 
 # ---------------------------------------------------------------------------
