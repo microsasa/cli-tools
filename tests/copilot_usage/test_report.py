@@ -1036,7 +1036,7 @@ def _make_summary_session(
         total_api_duration_ms=duration_ms,
         model_metrics=metrics
         if metrics is not None
-        else {"claude-opus-4.6-1m": _OPUS_METRICS},
+        else {"claude-opus-4.6-1m": copy_model_metrics(_OPUS_METRICS)},
         user_messages=user_messages,
         model_calls=model_calls,
         is_active=is_active,
@@ -1090,8 +1090,8 @@ class TestRenderSummary:
     def test_multiple_models(self) -> None:
         session = _make_summary_session(
             metrics={
-                "claude-opus-4.6-1m": _OPUS_METRICS,
-                "claude-sonnet-4.5": _SONNET_METRICS,
+                "claude-opus-4.6-1m": copy_model_metrics(_OPUS_METRICS),
+                "claude-sonnet-4.5": copy_model_metrics(_SONNET_METRICS),
             }
         )
         output = _capture_summary([session])
@@ -1103,6 +1103,13 @@ class TestRenderSummary:
         output = _capture_summary([session])
         assert "Copilot Usage Summary" in output
         assert "0" in output
+
+    def test_make_summary_session_returns_isolated_metrics(self) -> None:
+        """Two default sessions must not share the same ModelMetrics object."""
+        s1 = _make_summary_session()
+        s2 = _make_summary_session()
+        opus_key = "claude-opus-4.6-1m"
+        assert s1.model_metrics[opus_key] is not s2.model_metrics[opus_key]
 
     def test_since_filter(self) -> None:
         old = _make_summary_session(
