@@ -294,11 +294,19 @@ class TestAddToModelMetrics:
     """Unit tests for the add_to_model_metrics helper."""
 
     def test_all_fields_accumulated(self) -> None:
-        # Use model_fields so any new numeric fields are automatically covered.
-        target_requests_kwargs = dict.fromkeys(RequestMetrics.model_fields, 1)
-        target_usage_kwargs = dict.fromkeys(TokenUsage.model_fields, 10)
-        source_requests_kwargs = dict.fromkeys(RequestMetrics.model_fields, 2)
-        source_usage_kwargs = dict.fromkeys(TokenUsage.model_fields, 20)
+        # Assign distinct values per field so mis-mapped fields will fail the test.
+        target_requests_kwargs = {
+            name: idx + 1 for idx, name in enumerate(RequestMetrics.model_fields)
+        }
+        source_requests_kwargs = {
+            name: (idx + 1) * 10 for idx, name in enumerate(RequestMetrics.model_fields)
+        }
+        target_usage_kwargs = {
+            name: idx + 100 for idx, name in enumerate(TokenUsage.model_fields)
+        }
+        source_usage_kwargs = {
+            name: (idx + 1) * 1000 for idx, name in enumerate(TokenUsage.model_fields)
+        }
 
         target = ModelMetrics(
             requests=RequestMetrics(**target_requests_kwargs),
