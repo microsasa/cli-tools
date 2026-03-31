@@ -3042,3 +3042,28 @@ class TestValidateSinceUntil:
         expected_until = dt_before.isoformat(sep=" ", timespec="seconds")
         assert expected_since in msg
         assert expected_until in msg
+
+
+# ---------------------------------------------------------------------------
+# vscode happy-path CLI test
+# ---------------------------------------------------------------------------
+
+
+def test_vscode_command(tmp_path: Path) -> None:
+    """vscode command renders summary for a valid log directory."""
+    log_dir = tmp_path / "session_1" / "window1" / "exthost" / "GitHub.copilot-chat"
+    log_dir.mkdir(parents=True)
+    log_file = log_dir / "GitHub Copilot Chat.log"
+    log_file.write_text(
+        "2026-03-15 10:00:00.123 [info] ccreq:abc.copilotmd | success | "
+        "claude-sonnet-4 | 500ms | [chat]\n",
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
+    assert result.exit_code == 0
+    output = result.output
+    assert "VS Code Copilot Chat" in output
+    assert "Per-Model Breakdown" in output
+    assert "claude-sonnet-4" in output
+    assert "By Feature" in output
+    assert "Daily Activity" in output
