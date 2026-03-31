@@ -293,32 +293,35 @@ def test_session_summary_full() -> None:
 class TestAddToModelMetrics:
     """Unit tests for the add_to_model_metrics helper."""
 
-    def test_all_six_fields_accumulated(self) -> None:
+    def test_all_fields_accumulated(self) -> None:
+        # Use model_fields so any new numeric fields are automatically covered.
+        target_requests_kwargs = dict.fromkeys(RequestMetrics.model_fields, 1)
+        target_usage_kwargs = dict.fromkeys(TokenUsage.model_fields, 10)
+        source_requests_kwargs = dict.fromkeys(RequestMetrics.model_fields, 2)
+        source_usage_kwargs = dict.fromkeys(TokenUsage.model_fields, 20)
+
         target = ModelMetrics(
-            requests=RequestMetrics(count=3, cost=2),
-            usage=TokenUsage(
-                inputTokens=100,
-                outputTokens=50,
-                cacheReadTokens=10,
-                cacheWriteTokens=5,
-            ),
+            requests=RequestMetrics(**target_requests_kwargs),
+            usage=TokenUsage(**target_usage_kwargs),
         )
         source = ModelMetrics(
-            requests=RequestMetrics(count=7, cost=4),
-            usage=TokenUsage(
-                inputTokens=200,
-                outputTokens=80,
-                cacheReadTokens=20,
-                cacheWriteTokens=15,
-            ),
+            requests=RequestMetrics(**source_requests_kwargs),
+            usage=TokenUsage(**source_usage_kwargs),
         )
+
         add_to_model_metrics(target, source)
-        assert target.requests.count == 10
-        assert target.requests.cost == 6
-        assert target.usage.inputTokens == 300
-        assert target.usage.outputTokens == 130
-        assert target.usage.cacheReadTokens == 30
-        assert target.usage.cacheWriteTokens == 20
+
+        expected_requests = {
+            name: target_requests_kwargs[name] + source_requests_kwargs[name]
+            for name in RequestMetrics.model_fields
+        }
+        expected_usage = {
+            name: target_usage_kwargs[name] + source_usage_kwargs[name]
+            for name in TokenUsage.model_fields
+        }
+
+        assert target.requests.model_dump() == expected_requests
+        assert target.usage.model_dump() == expected_usage
 
     def test_zero_source_is_identity(self) -> None:
         target = ModelMetrics(
