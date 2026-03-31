@@ -265,17 +265,41 @@ def _render_summary_header(
 
     *sessions* must be non-empty — callers are responsible for the
     empty-list check.
+
+    Exploits the pre-sorted order (newest-first, ``None``-start-time
+    entries last) guaranteed by :func:`~copilot_usage.parser.get_all_sessions`
+    to find the date range while doing only O(1) ``ensure_aware`` conversions
+    and, in the worst case, scanning over at most the trailing ``None``
+    ``start_time`` entries instead of all sessions.
     """
-    earliest: datetime | None = None
     latest: datetime | None = None
-    for s in sessions:
-        if s.start_time is None:
-            continue
-        aware = ensure_aware(s.start_time)
-        if earliest is None or aware < earliest:
-            earliest = aware
-        if latest is None or aware > latest:
-            latest = aware
+    earliest: datetime | None = None
+
+    # Find the first non-None start_time (latest session, newest-first order).
+    first_idx: int | None = None
+    for idx, session in enumerate(sessions):
+        if session.start_time is not None:
+            latest = ensure_aware(session.start_time)
+            first_idx = idx
+            break
+
+    # If no session has a start_time, skip the reverse scan entirely.
+    if latest is not None and first_idx is not None:
+        # Find the last non-None start_time (earliest session, scanning from end).
+        last_idx: int | None = None
+        for rev_idx, session in enumerate(reversed(sessions)):
+            if session.start_time is not None:
+                last_idx = len(sessions) - 1 - rev_idx
+                break
+
+        if last_idx is not None:
+            if last_idx == first_idx:
+                # Single-session range: reuse the already-converted datetime.
+                earliest = latest
+            else:
+                earliest_session = sessions[last_idx]
+                if earliest_session.start_time is not None:
+                    earliest = ensure_aware(earliest_session.start_time)
 
     if earliest is not None and latest is not None:
         subtitle = f"{earliest.strftime('%Y-%m-%d')}  →  {latest.strftime('%Y-%m-%d')}"
