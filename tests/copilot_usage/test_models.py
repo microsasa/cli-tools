@@ -330,16 +330,16 @@ class TestAddToModelMetrics:
                 cacheWriteTokens=5,
             ),
         )
+        before = target.model_dump()
         add_to_model_metrics(target, ModelMetrics())
-        assert target.requests.count == 5
-        assert target.requests.cost == 3
-        assert target.usage.inputTokens == 100
+        assert target.model_dump() == before
 
     def test_source_not_mutated(self) -> None:
         target = ModelMetrics(requests=RequestMetrics(count=1))
         source = ModelMetrics(requests=RequestMetrics(count=5))
+        source_before = source.model_dump()
         add_to_model_metrics(target, source)
-        assert source.requests.count == 5  # source unchanged
+        assert source.model_dump() == source_before  # source unchanged
 
     def test_accumulates_incrementally(self) -> None:
         """Multiple sequential calls accumulate correctly."""
