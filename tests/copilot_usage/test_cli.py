@@ -1332,6 +1332,92 @@ def test_auto_refresh_detail_session_id_none(tmp_path: Path, monkeypatch: Any) -
 
 
 # ---------------------------------------------------------------------------
+# Issue #577 — auto-refresh drops prompt when view=detail & session_id=None
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_invalid_number_then_file_change(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Prompt must be written on file-change when stuck in detail view with no session_id.
+
+    Regression test for #577: entering an out-of-range session number sets
+    view="detail" with detail_session_id=None.  A subsequent file-change event
+    must reset to the home view and write a prompt instead of silently dropping it.
+    """
+    _write_session(tmp_path, "issue577-0000-0000-0000-000000000000", name="Issue577")
+
+    import copilot_usage.cli as cli_mod
+
+    draw_home_calls: list[int] = []
+    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
+        draw_home_calls.append(1)
+        orig_draw_home(console, sessions)
+
+    monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw_home)
+
+    prompt_calls: list[str] = []
+    orig_write_prompt = cli_mod._write_prompt  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_prompt(prompt: str) -> None:
+        prompt_calls.append(prompt)
+        orig_write_prompt(prompt)
+
+    monkeypatch.setattr(cli_mod, "_write_prompt", _tracking_prompt)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(
+        session_path: Path,
+        change_event: threading.Event,  # noqa: ARG001
+    ) -> None:
+        captured_event.append(change_event)
+        return
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "99"  # invalid session number → view=detail, session_id=None
+        if call_count == 2:
+            # Trigger file-change while in detail view with session_id=None
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if call_count == 3:
+            return None  # let auto-refresh fire
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # _draw_home must be called after the file-change event resets to home
+    # Calls: initial render + auto-refresh reset = at least 2
+    assert len(draw_home_calls) >= 2
+
+    # A prompt must have been written after the auto-refresh reset
+    # (The last prompt before quit should be _HOME_PROMPT from the reset)
+    home_prompts_after_back = [
+        p
+        for p in prompt_calls
+        if "session #" in p  # _HOME_PROMPT contains "session #"
+    ]
+    assert len(home_prompts_after_back) >= 2, (
+        "Expected _HOME_PROMPT written after auto-refresh reset; "
+        f"got prompts: {prompt_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Issue #441 — detail view tracks session by ID, not positional index
 # ---------------------------------------------------------------------------
 
