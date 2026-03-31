@@ -115,13 +115,17 @@ for _idx, sd in fp.all_shutdowns:
 
 ### Model metrics merging
 
-When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field. The merging is delegated to `merge_model_metrics()` (in `models.py`):
+When two shutdowns reference the **same model**, their `ModelMetrics` are summed field-by-field. Accumulation is done **in-place** using `add_to_model_metrics()` and `copy_model_metrics()` (in `models.py`):
 
 ```python
-merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
+for model_name, mm in sd.modelMetrics.items():
+    if model_name in merged_metrics:
+        add_to_model_metrics(merged_metrics[model_name], mm)
+    else:
+        merged_metrics[model_name] = copy_model_metrics(mm)
 ```
 
-`merge_model_metrics()` returns a new dict without mutating the inputs. For each model name present in both dicts, it sums all metric fields (`requests.count`, `requests.cost`, and all `TokenUsage` fields). When they reference **different models**, separate entries are kept in the result dict.
+Each model is copied exactly once (on first encounter) and accumulated in-place thereafter, yielding O(M) `copy_model_metrics` calls regardless of the number of shutdown cycles K. When two shutdowns reference **different models**, separate entries are kept in the result dict.
 
 ### Model resolution for shutdowns
 

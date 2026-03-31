@@ -3679,6 +3679,100 @@ class TestThreeShutdownCyclesMergeModelMetrics:
 
 
 # ---------------------------------------------------------------------------
+# Issue #598 — _build_completed_summary uses O(M) copy_model_metrics calls
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCompletedSummaryInPlaceMetrics:
+    """Verify _build_completed_summary copies each model exactly once (O(M)),
+    not once per shutdown cycle (O(K × M))."""
+
+    def test_copy_model_metrics_called_exactly_m_times(self, tmp_path: Path) -> None:
+        """K=5 shutdowns, M=2 models → copy_model_metrics called exactly 2 times."""
+        from copilot_usage.models import copy_model_metrics
+
+        shutdowns: list[str] = []
+        resumes: list[str] = []
+        for k in range(5):
+            sd = json.dumps(
+                {
+                    "type": "session.shutdown",
+                    "data": {
+                        "shutdownType": "routine",
+                        "totalPremiumRequests": k + 1,
+                        "totalApiDurationMs": 1000 * (k + 1),
+                        "sessionStartTime": 0,
+                        "modelMetrics": {
+                            "model-a": {
+                                "requests": {"count": 1, "cost": 1},
+                                "usage": {
+                                    "inputTokens": 100,
+                                    "outputTokens": 50,
+                                    "cacheReadTokens": 10,
+                                    "cacheWriteTokens": 5,
+                                },
+                            },
+                            "model-b": {
+                                "requests": {"count": 2, "cost": 2},
+                                "usage": {
+                                    "inputTokens": 200,
+                                    "outputTokens": 100,
+                                    "cacheReadTokens": 20,
+                                    "cacheWriteTokens": 10,
+                                },
+                            },
+                        },
+                        "currentModel": "model-a",
+                    },
+                    "id": f"ev-sd-{k}",
+                    "timestamp": f"2026-03-07T{10 + k}:00:00.000Z",
+                    "currentModel": "model-a",
+                }
+            )
+            shutdowns.append(sd)
+            if k < 4:
+                resumes.append(
+                    json.dumps(
+                        {
+                            "type": "session.resume",
+                            "data": {},
+                            "id": f"ev-resume-{k}",
+                            "timestamp": f"2026-03-07T{10 + k}:30:00.000Z",
+                        }
+                    )
+                )
+
+        # Interleave: start, user, [shutdown, resume]×4, shutdown (last)
+        lines: list[str] = [_START_EVENT, _USER_MSG]
+        for k in range(5):
+            lines.append(shutdowns[k])
+            if k < 4:
+                lines.append(resumes[k])
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, *lines)
+        events = parse_events(p)
+
+        with patch(
+            "copilot_usage.parser.copy_model_metrics",
+            wraps=copy_model_metrics,
+        ) as spy:
+            summary = build_session_summary(events)
+
+        # M = 2 distinct models → exactly 2 copy calls
+        assert spy.call_count == 2
+
+        # Verify correctness: metrics summed across all 5 shutdowns
+        assert "model-a" in summary.model_metrics
+        assert "model-b" in summary.model_metrics
+        assert summary.model_metrics["model-a"].requests.count == 5
+        assert summary.model_metrics["model-a"].usage.outputTokens == 250
+        assert summary.model_metrics["model-b"].requests.count == 10
+        assert summary.model_metrics["model-b"].usage.outputTokens == 500
+        assert summary.total_premium_requests == 1 + 2 + 3 + 4 + 5
+
+
+# ---------------------------------------------------------------------------
 # _read_config_model — direct unit tests for every branch
 # ---------------------------------------------------------------------------
 

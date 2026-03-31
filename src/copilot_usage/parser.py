@@ -24,7 +24,8 @@ from copilot_usage.models import (
     SessionShutdownData,
     SessionSummary,
     TokenUsage,
-    merge_model_metrics,
+    add_to_model_metrics,
+    copy_model_metrics,
     session_sort_key,
 )
 
@@ -477,7 +478,11 @@ def _build_completed_summary(
         total_api_duration += sd.totalApiDurationMs
         if sd.codeChanges is not None:
             last_code_changes = sd.codeChanges
-        merged_metrics = merge_model_metrics(merged_metrics, sd.modelMetrics)
+        for model_name, mm in sd.modelMetrics.items():
+            if model_name in merged_metrics:
+                add_to_model_metrics(merged_metrics[model_name], mm)
+            else:
+                merged_metrics[model_name] = copy_model_metrics(mm)
 
     return SessionSummary(
         session_id=fp.session_id,
