@@ -516,3 +516,100 @@ class TestBuildVscodeSummaryBulk:
         assert type(summary.duration_by_model) is dict
         assert type(summary.requests_by_category) is dict
         assert type(summary.requests_by_date) is dict
+
+
+# ---------------------------------------------------------------------------
+# Benchmark: parse_vscode_log pre-filter on large synthetic log files
+# ---------------------------------------------------------------------------
+
+_NOISE_LINES: list[str] = [
+    "2026-03-13 21:48:39.404 [info] [GitExtensionServiceImpl]"
+    " Initializing Git extension service.",
+    "2026-03-13 21:48:40.100 [debug] [ExtHost] resolving workspace folder...",
+    "2026-03-13 21:48:41.555 [warning] Slow network detected for telemetry.",
+    "2026-03-13 21:49:00.000 [info] [typescript-language-features] TSServer started.",
+    "2026-03-13 21:49:02.123 [error] ENOENT: no such file or directory,"
+    " open '/tmp/missing.ts'",
+]
+
+
+def _build_synthetic_log(
+    tmp_path: Path, *, total_lines: int, matching_lines: int
+) -> Path:
+    """Create a synthetic VS Code log file with *matching_lines* ccreq lines
+    scattered among *total_lines* of noise.
+    """
+    noise_count = total_lines - matching_lines
+    lines: list[str] = []
+    # Distribute matching lines evenly across the file
+    interval = max(noise_count // max(matching_lines, 1), 1)
+    match_idx = 0
+    for i in range(total_lines):
+        if match_idx < matching_lines and i > 0 and i % interval == 0:
+            ms = 100 + match_idx
+            lines.append(
+                f"2026-03-13 22:10:{match_idx % 60:02d}.{match_idx:03d}"
+                f" [info] ccreq:req{match_idx:05d}.copilotmd"
+                f" | success | gpt-4o-mini | {ms}ms | [panel]"
+            )
+            match_idx += 1
+        else:
+            lines.append(_NOISE_LINES[i % len(_NOISE_LINES)])
+    log_file = tmp_path / "synthetic.log"
+    log_file.write_text("\n".join(lines), encoding="utf-8")
+    return log_file
+
+
+class TestParseVscodeLogPreFilter:
+    """Correctness and performance of the ccreq: pre-filter."""
+
+    def test_synthetic_log_correctness(self, tmp_path: Path) -> None:
+        """parse_vscode_log returns exactly the expected matching requests
+        from a large synthetic log file dominated by noise lines.
+        """
+        total = 50_000
+        expected_matches = 50
+        log_file = _build_synthetic_log(
+            tmp_path, total_lines=total, matching_lines=expected_matches
+        )
+        requests = parse_vscode_log(log_file)
+        assert len(requests) == expected_matches
+        # Verify each returned request has the expected model
+        for req in requests:
+            assert req.model == "gpt-4o-mini"
+            assert req.category == "panel"
+            assert req.duration_ms >= 100
+
+    def test_synthetic_log_performance(self, tmp_path: Path) -> None:
+        """parse_vscode_log completes within 200 ms for a 50 000-line log."""
+        import time
+
+        total = 50_000
+        expected_matches = 50
+        log_file = _build_synthetic_log(
+            tmp_path, total_lines=total, matching_lines=expected_matches
+        )
+        start = time.perf_counter()
+        requests = parse_vscode_log(log_file)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        assert len(requests) == expected_matches
+        assert elapsed_ms < 200, f"Took {elapsed_ms:.1f} ms (limit: 200 ms)"
+
+    def test_no_matching_lines(self, tmp_path: Path) -> None:
+        """A log file with zero ccreq lines returns an empty list."""
+        log_file = _build_synthetic_log(tmp_path, total_lines=10_000, matching_lines=0)
+        assert parse_vscode_log(log_file) == []
+
+    def test_all_lines_match(self, tmp_path: Path) -> None:
+        """A log file where every line is a ccreq line parses all of them."""
+        n = 100
+        lines = [
+            f"2026-03-13 22:10:{i % 60:02d}.{i:03d}"
+            f" [info] ccreq:req{i:05d}.copilotmd"
+            f" | success | claude-opus-4.6 | {100 + i}ms | [inline]"
+            for i in range(n)
+        ]
+        log_file = tmp_path / "all_match.log"
+        log_file.write_text("\n".join(lines), encoding="utf-8")
+        requests = parse_vscode_log(log_file)
+        assert len(requests) == n
