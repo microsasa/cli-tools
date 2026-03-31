@@ -207,6 +207,70 @@ class TestRenderVscodeSummaryByFeatureTable:
 
 
 # ---------------------------------------------------------------------------
+# By-feature percentage guard with total_requests=0
+# ---------------------------------------------------------------------------
+
+
+class TestRenderVscodeSummaryZeroTotals:
+    def test_by_feature_zero_total_requests_shows_zero_percent(self) -> None:
+        """requests_by_category non-empty but total_requests=0 renders 0.0%."""
+        summary = _make_summary(
+            total_requests=0,
+            requests_by_category={"inline": 5},
+        )
+        output = _capture(summary)
+        assert "By Feature" in output
+        assert "0.0%" in output  # not ZeroDivisionError
+
+
+# ---------------------------------------------------------------------------
+# Partial timestamps
+# ---------------------------------------------------------------------------
+
+
+class TestRenderVscodeSummaryPartialTimestamps:
+    def test_first_set_last_none_shows_dash(self) -> None:
+        summary = _make_summary(
+            total_requests=1,
+            first_timestamp=datetime(2026, 3, 13, 10, 0),
+            last_timestamp=None,
+        )
+        output = _capture(summary)
+        assert "—" in output
+        assert "→" not in output
+
+    def test_last_set_first_none_shows_dash(self) -> None:
+        summary = _make_summary(
+            total_requests=1,
+            first_timestamp=None,
+            last_timestamp=datetime(2026, 3, 13, 10, 0),
+        )
+        output = _capture(summary)
+        assert "—" in output
+        assert "→" not in output
+
+
+# ---------------------------------------------------------------------------
+# Per-model table sort order
+# ---------------------------------------------------------------------------
+
+
+class TestRenderVscodeSummaryModelSortOrder:
+    def test_models_sorted_by_request_count_descending(self) -> None:
+        summary = _make_summary(
+            total_requests=6,
+            requests_by_model={"low-model": 1, "high-model": 5},
+            duration_by_model={"low-model": 100, "high-model": 500},
+        )
+        output = _capture(summary)
+        high_pos = output.index("high-model")
+        low_pos = output.index("low-model")
+        assert high_pos < low_pos, (
+            "high-model (5 reqs) must appear before low-model (1 req)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Daily activity table
 # ---------------------------------------------------------------------------
 
