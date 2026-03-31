@@ -21,6 +21,7 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     UserMessageData,
+    add_to_model_metrics,
     copy_model_metrics,
     ensure_aware,
     ensure_aware_opt,
@@ -282,6 +283,88 @@ def test_session_summary_full() -> None:
     )
     assert s.total_premium_requests == 24
     assert s.model_metrics["claude-opus-4.6-1m"].usage.inputTokens == 1627935
+
+
+# ---------------------------------------------------------------------------
+# add_to_model_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestAddToModelMetrics:
+    """Unit tests for the add_to_model_metrics helper."""
+
+    def test_all_fields_accumulated(self) -> None:
+        # Assign distinct values per field so mis-mapped fields will fail the test.
+        target_requests_kwargs = {
+            name: idx + 1 for idx, name in enumerate(RequestMetrics.model_fields)
+        }
+        source_requests_kwargs = {
+            name: (idx + 1) * 10 for idx, name in enumerate(RequestMetrics.model_fields)
+        }
+        target_usage_kwargs = {
+            name: idx + 100 for idx, name in enumerate(TokenUsage.model_fields)
+        }
+        source_usage_kwargs = {
+            name: (idx + 1) * 1000 for idx, name in enumerate(TokenUsage.model_fields)
+        }
+
+        target = ModelMetrics(
+            requests=RequestMetrics(**target_requests_kwargs),
+            usage=TokenUsage(**target_usage_kwargs),
+        )
+        source = ModelMetrics(
+            requests=RequestMetrics(**source_requests_kwargs),
+            usage=TokenUsage(**source_usage_kwargs),
+        )
+
+        add_to_model_metrics(target, source)
+
+        expected_requests = {
+            name: target_requests_kwargs[name] + source_requests_kwargs[name]
+            for name in RequestMetrics.model_fields
+        }
+        expected_usage = {
+            name: target_usage_kwargs[name] + source_usage_kwargs[name]
+            for name in TokenUsage.model_fields
+        }
+
+        assert target.requests.model_dump() == expected_requests
+        assert target.usage.model_dump() == expected_usage
+
+    def test_zero_source_is_identity(self) -> None:
+        target = ModelMetrics(
+            requests=RequestMetrics(count=5, cost=3),
+            usage=TokenUsage(
+                inputTokens=100,
+                outputTokens=50,
+                cacheReadTokens=10,
+                cacheWriteTokens=5,
+            ),
+        )
+        before = target.model_dump()
+        add_to_model_metrics(target, ModelMetrics())
+        assert target.model_dump() == before
+
+    def test_source_not_mutated(self) -> None:
+        target = ModelMetrics(requests=RequestMetrics(count=1))
+        source = ModelMetrics(requests=RequestMetrics(count=5))
+        source_before = source.model_dump()
+        add_to_model_metrics(target, source)
+        assert source.model_dump() == source_before  # source unchanged
+
+    def test_accumulates_incrementally(self) -> None:
+        """Multiple sequential calls accumulate correctly."""
+        target = ModelMetrics()
+        for _ in range(3):
+            add_to_model_metrics(
+                target,
+                ModelMetrics(
+                    requests=RequestMetrics(count=2),
+                    usage=TokenUsage(outputTokens=10),
+                ),
+            )
+        assert target.requests.count == 6
+        assert target.usage.outputTokens == 30
 
 
 # ---------------------------------------------------------------------------
