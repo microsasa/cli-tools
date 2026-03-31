@@ -1,18 +1,28 @@
-"""Tests for copilot_usage.render_detail — private helper coverage (issue #470)."""
+"""Tests for copilot_usage.render_detail — private helper coverage (issue #470, #562)."""
 
 # pyright: reportPrivateUsage=false
 
 import io
+from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
 
 from copilot_usage.models import (
     CodeChanges,
+    EventType,
+    SessionEvent,
+    SessionSummary,
     ToolExecutionData,
     ToolTelemetry,
 )
-from copilot_usage.render_detail import _extract_tool_name, _render_code_changes
+from copilot_usage.render_detail import (
+    _extract_tool_name,
+    _render_code_changes,
+    _render_recent_events,
+    _render_shutdown_cycles,
+    render_session_detail,
+)
 
 # ---------------------------------------------------------------------------
 # _extract_tool_name — all branches
@@ -79,3 +89,90 @@ class TestRenderCodeChanges:
         assert "Files modified" in output
         assert "+10" in output
         assert "-2" in output
+
+
+# ---------------------------------------------------------------------------
+# Helper to build a buffered console for test assertions
+# ---------------------------------------------------------------------------
+
+
+def _buf_console() -> tuple[io.StringIO, Console]:
+    buf = io.StringIO()
+    return buf, Console(file=buf, force_terminal=True, width=120)
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — _render_recent_events with timestamp=None (issue #562)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderRecentEventsTimestampNone:
+    """Events with timestamp=None must produce '—' in the Time column."""
+
+    def test_event_without_timestamp_shows_dash(self) -> None:
+        """Events with timestamp=None must produce '—' in the Time column."""
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": "hi"})
+        assert ev.timestamp is None
+
+        buf, console = _buf_console()
+        _render_recent_events(
+            [ev],
+            session_start=datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC),
+            target_console=console,
+        )
+        output = buf.getvalue()
+        assert "—" in output
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 — render_session_detail fallback when both timestamps are None (#562)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailBothTimestampsNone:
+    """render_session_detail must not raise when start_time and all
+    event timestamps are None (falls back to datetime.now)."""
+
+    def test_no_start_time_no_event_timestamps_does_not_raise(self) -> None:
+        """render_session_detail must not raise when start_time and all
+        event timestamps are None (falls back to datetime.now).
+        """
+        summary = SessionSummary(session_id="fallback-test", start_time=None)
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": "hi"})
+        assert ev.timestamp is None
+
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        # Rendered without error; at minimum the header must appear
+        assert "Session Detail" in buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — _render_shutdown_cycles with empty modelMetrics (issue #562)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderShutdownCyclesEmptyModelMetrics:
+    """A SESSION_SHUTDOWN event with empty modelMetrics must not crash
+    and must produce a table row with zero counts."""
+
+    def test_shutdown_with_empty_metrics_renders_row(self) -> None:
+        """A SESSION_SHUTDOWN event with empty modelMetrics must not crash
+        and must produce a table row with zero counts.
+        """
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=datetime(2026, 3, 7, 11, 0, 0, tzinfo=UTC),
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+                "modelMetrics": {},
+            },
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles([ev], target_console=console)
+        output = buf.getvalue()
+        assert "Shutdown Cycles" in output
+        # totals from empty modelMetrics → 0
+        assert "0" in output
