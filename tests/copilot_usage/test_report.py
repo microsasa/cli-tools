@@ -27,6 +27,7 @@ from copilot_usage.models import (
     SessionSummary,
     TokenUsage,
     copy_model_metrics,
+    ensure_aware,
     has_active_period_stats,
     merge_model_metrics,
     shutdown_output_tokens,
@@ -1416,19 +1417,23 @@ class TestReportCoverageGaps:
     def test_summary_header_shows_date_range(self) -> None:
         """_render_summary_header date range: earliest date → latest date."""
         s1 = _make_summary_session(
-            session_id="early",
-            start_time=datetime(2025, 3, 1, tzinfo=UTC),
-        )
-        s2 = _make_summary_session(
             session_id="late",
             start_time=datetime(2025, 11, 30, tzinfo=UTC),
+        )
+        s2 = _make_summary_session(
+            session_id="early",
+            start_time=datetime(2025, 3, 1, tzinfo=UTC),
         )
         output = _capture_summary([s1, s2])
         assert "2025-03-01  →  2025-11-30" in output
 
     def test_summary_header_date_range_order_is_min_max(self) -> None:
-        """Date range shows min date first even when sessions are not in order."""
+        """Date range shows min date first (sessions in descending start_time order)."""
         sessions = [
+            _make_summary_session(
+                session_id="late",
+                start_time=datetime(2025, 12, 31, tzinfo=UTC),
+            ),
             _make_summary_session(
                 session_id="mid",
                 start_time=datetime(2025, 6, 15, tzinfo=UTC),
@@ -1436,10 +1441,6 @@ class TestReportCoverageGaps:
             _make_summary_session(
                 session_id="early",
                 start_time=datetime(2025, 1, 1, tzinfo=UTC),
-            ),
-            _make_summary_session(
-                session_id="late",
-                start_time=datetime(2025, 12, 31, tzinfo=UTC),
             ),
         ]
         output = _capture_summary(sessions)
@@ -5118,15 +5119,17 @@ class TestMergeAndAggregateConsistency:
 class TestRenderSummaryHeaderSinglePass:
     """Single-pass _render_summary_header finds correct earliest/latest dates."""
 
-    def test_large_random_order_sessions(self) -> None:
-        """≥100 sessions in random order produce the correct date range."""
+    def test_large_sorted_sessions(self) -> None:
+        """≥100 sessions in descending start_time order produce the correct date range."""
+        base = datetime(2024, 1, 1, tzinfo=UTC)
+        # Build 120 sessions in descending start_time order (newest first)
+        # using a deterministic set of day offsets.
         import random
 
         rng = random.Random(42)  # noqa: S311
-        base = datetime(2024, 1, 1, tzinfo=UTC)
         days = list(range(365))
         rng.shuffle(days)
-        selected = days[:120]
+        selected = sorted(days[:120], reverse=True)
 
         sessions = [
             _make_summary_session(
@@ -5142,24 +5145,24 @@ class TestRenderSummaryHeaderSinglePass:
         output = _capture_summary(sessions)
         assert f"{expected_earliest}  →  {expected_latest}" in output
 
-    def test_none_start_times_interspersed(self) -> None:
-        """None start_time entries mixed in still yield correct range."""
+    def test_none_start_times_at_end(self) -> None:
+        """None start_time entries at the end still yield correct range."""
         sessions = [
-            SessionSummary(session_id="none-1", start_time=None),
-            _make_summary_session(
-                session_id="mid",
-                start_time=datetime(2025, 6, 15, tzinfo=UTC),
-            ),
-            SessionSummary(session_id="none-2", start_time=None),
-            _make_summary_session(
-                session_id="early",
-                start_time=datetime(2025, 1, 10, tzinfo=UTC),
-            ),
-            SessionSummary(session_id="none-3", start_time=None),
             _make_summary_session(
                 session_id="late",
                 start_time=datetime(2025, 12, 25, tzinfo=UTC),
             ),
+            _make_summary_session(
+                session_id="mid",
+                start_time=datetime(2025, 6, 15, tzinfo=UTC),
+            ),
+            _make_summary_session(
+                session_id="early",
+                start_time=datetime(2025, 1, 10, tzinfo=UTC),
+            ),
+            SessionSummary(session_id="none-1", start_time=None),
+            SessionSummary(session_id="none-2", start_time=None),
+            SessionSummary(session_id="none-3", start_time=None),
         ]
         output = _capture_summary(sessions)
         assert "2025-01-10  →  2025-12-25" in output
@@ -5182,3 +5185,48 @@ class TestRenderSummaryHeaderSinglePass:
         ]
         output = _capture_summary(sessions)
         assert "2025-07-04  →  2025-07-04" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #597 — _render_summary_header O(1) date range on pre-sorted sessions
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSummaryHeaderO1DateRange:
+    """_render_summary_header uses O(1) lookups on pre-sorted sessions."""
+
+    def test_ensure_aware_called_at_most_twice(self) -> None:
+        """With 200+ sessions, ensure_aware is called at most twice."""
+        base = datetime(2024, 1, 1, tzinfo=UTC)
+        # Build 250 sessions in descending start_time order (newest first),
+        # with None-start-time entries at the end — the contract from
+        # get_all_sessions.
+        sessions = [
+            _make_summary_session(
+                session_id=f"s-{i}",
+                start_time=base + timedelta(days=249 - i),
+            )
+            for i in range(250)
+        ] + [SessionSummary(session_id=f"none-{i}", start_time=None) for i in range(10)]
+
+        expected_earliest = base.strftime("%Y-%m-%d")
+        expected_latest = (base + timedelta(days=249)).strftime("%Y-%m-%d")
+
+        call_count = 0
+        original_ensure_aware = ensure_aware
+
+        def counting_ensure_aware(dt: datetime) -> datetime:
+            nonlocal call_count
+            call_count += 1
+            return original_ensure_aware(dt)
+
+        with patch(
+            "copilot_usage.report.ensure_aware",
+            side_effect=counting_ensure_aware,
+        ):
+            output = _capture_full_summary(sessions)
+
+        assert f"{expected_earliest}  →  {expected_latest}" in output
+        assert call_count <= 2, (
+            f"ensure_aware called {call_count} times, expected at most 2"
+        )

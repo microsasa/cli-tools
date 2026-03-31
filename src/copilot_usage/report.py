@@ -265,17 +265,23 @@ def _render_summary_header(
 
     *sessions* must be non-empty — callers are responsible for the
     empty-list check.
+
+    Exploits the pre-sorted order (newest-first, ``None``-start-time
+    entries last) guaranteed by :func:`~copilot_usage.parser.get_all_sessions`
+    to find the date range in O(1) instead of scanning all sessions.
     """
-    earliest: datetime | None = None
-    latest: datetime | None = None
-    for s in sessions:
-        if s.start_time is None:
-            continue
-        aware = ensure_aware(s.start_time)
-        if earliest is None or aware < earliest:
-            earliest = aware
-        if latest is None or aware > latest:
-            latest = aware
+    latest = next(
+        (ensure_aware(s.start_time) for s in sessions if s.start_time is not None),
+        None,
+    )
+    earliest = next(
+        (
+            ensure_aware(s.start_time)
+            for s in reversed(sessions)
+            if s.start_time is not None
+        ),
+        None,
+    )
 
     if earliest is not None and latest is not None:
         subtitle = f"{earliest.strftime('%Y-%m-%d')}  →  {latest.strftime('%Y-%m-%d')}"
