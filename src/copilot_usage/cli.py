@@ -26,6 +26,7 @@ from copilot_usage.parser import (
     build_session_summary,
     discover_sessions,
     get_all_sessions,
+    get_cached_events,
     parse_events,
 )
 from copilot_usage.report import (
@@ -144,7 +145,7 @@ def _show_session_by_index(
         return
 
     try:
-        events = parse_events(s.events_path)
+        events = get_cached_events(s.events_path)
     except (FileNotFoundError, OSError) as exc:
         console.print(f"[red]Session file no longer available: {exc}[/red]")
         return

@@ -28,8 +28,11 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _EVENTS_CACHE,
+    _MAX_CACHED_EVENTS,
     _SESSION_CACHE,
     _build_active_summary,
+    _CachedEvents,
     _CachedSession,
     _detect_resume,
     _extract_session_name,
@@ -41,6 +44,7 @@ from copilot_usage.parser import (
     build_session_summary,
     discover_sessions,
     get_all_sessions,
+    get_cached_events,
     parse_events,
 )
 
@@ -49,6 +53,7 @@ from copilot_usage.parser import (
 def _clear_session_cache() -> None:
     """Isolate tests from the module-level mtime cache."""
     _SESSION_CACHE.clear()
+    _EVENTS_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -4926,3 +4931,123 @@ class TestActiveSessionCaching:
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
                 assert spy.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# get_cached_events — parsed-events cache
+# ---------------------------------------------------------------------------
+
+
+def _make_user_event(index: int) -> str:
+    """Return a unique user.message JSON line for synthetic events files."""
+    return json.dumps(
+        {
+            "type": "user.message",
+            "data": {
+                "content": f"message-{index}",
+                "transformedContent": f"message-{index}",
+                "attachments": [],
+                "interactionId": f"int-{index}",
+            },
+            "id": f"ev-user-{index}",
+            "timestamp": "2026-03-07T10:01:00.000Z",
+            "parentId": "ev-start",
+        }
+    )
+
+
+def _write_large_events_file(path: Path, count: int) -> Path:
+    """Write a synthetic events.jsonl with *count* user message events."""
+    lines = [_START_EVENT] + [_make_user_event(i) for i in range(count)]
+    return _write_events(path, *lines)
+
+
+class TestGetCachedEvents:
+    """Tests for the get_cached_events parsed-events cache."""
+
+    def test_cache_hit_returns_same_object(self, tmp_path: Path) -> None:
+        """Second call with unchanged file returns the same list object."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        first = get_cached_events(p)
+        second = get_cached_events(p)
+
+        assert first is second
+        assert len(first) == 3
+
+    def test_cache_miss_on_file_change(self, tmp_path: Path) -> None:
+        """Modifying the file invalidates the cache."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        first = get_cached_events(p)
+        assert len(first) == 2
+
+        # Append another event to change file identity
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_ASSISTANT_MSG + "\n")
+
+        second = get_cached_events(p)
+        assert second is not first
+        assert len(second) == 3
+
+    def test_large_file_cache_hit_no_reparse(self, tmp_path: Path) -> None:
+        """Cache hit on a ≥ 1000-event file does not call parse_events."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_large_events_file(p, 1_000)
+
+        first = get_cached_events(p)
+        assert len(first) == 1_001  # 1 start + 1000 user messages
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            second = get_cached_events(p)
+            assert spy.call_count == 0
+
+        assert second is first
+
+    def test_cache_eviction_bounds_memory(self, tmp_path: Path) -> None:
+        """Cache evicts oldest entry when _MAX_CACHED_EVENTS is exceeded."""
+        paths: list[Path] = []
+        for i in range(_MAX_CACHED_EVENTS + 1):
+            p = tmp_path / f"s{i}" / "events.jsonl"
+            _write_events(p, _START_EVENT, _USER_MSG)
+            get_cached_events(p)
+            paths.append(p)
+
+        assert len(_EVENTS_CACHE) == _MAX_CACHED_EVENTS
+        # The first path should have been evicted
+        assert paths[0] not in _EVENTS_CACHE
+        # The last path should still be cached
+        assert paths[-1] in _EVENTS_CACHE
+
+    def test_cache_populates_entry(self, tmp_path: Path) -> None:
+        """After a call, _EVENTS_CACHE contains a _CachedEvents entry."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        get_cached_events(p)
+
+        assert p in _EVENTS_CACHE
+        entry = _EVENTS_CACHE[p]
+        assert isinstance(entry, _CachedEvents)
+        assert entry.file_id == _safe_file_identity(p)
+        assert len(entry.events) == 2
+
+    def test_cached_reads_skip_parsing(self, tmp_path: Path) -> None:
+        """Repeated cached reads never re-invoke parse_events."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_large_events_file(p, 1_000)
+
+        # Prime the cache with a cold read
+        first = get_cached_events(p)
+
+        # Subsequent reads must not call parse_events at all
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            second = get_cached_events(p)
+            third = get_cached_events(p)
+            assert spy.call_count == 0
+
+        # All reads return the exact same cached list object
+        assert second is first
+        assert third is first

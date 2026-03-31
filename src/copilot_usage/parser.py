@@ -62,6 +62,46 @@ class _CachedSession:
 # Avoids re-parsing unchanged files on every interactive refresh.
 _SESSION_CACHE: dict[Path, _CachedSession] = {}
 
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CachedEvents:
+    """Cache entry pairing a file identity with parsed events."""
+
+    file_id: tuple[int, int]
+    events: list[SessionEvent]
+
+
+# Module-level parsed-events cache: events_path → _CachedEvents.
+# Avoids re-parsing the raw event list on every detail-view render.
+_MAX_CACHED_EVENTS: Final[int] = 8
+_EVENTS_CACHE: dict[Path, _CachedEvents] = {}
+
+
+def get_cached_events(events_path: Path) -> list[SessionEvent]:
+    """Return parsed events, using cache when file identity is unchanged.
+
+    Delegates to :func:`parse_events` on a cache miss and stores the
+    result keyed by ``(events_path, file_identity)``.  The cache is
+    bounded to :data:`_MAX_CACHED_EVENTS` entries; the least-recently
+    inserted entry is evicted when the limit is reached.
+
+    Raises:
+        OSError: Propagated from :func:`parse_events` when the file
+            cannot be opened or read.
+    """
+    file_id = _safe_file_identity(events_path)
+    cached = _EVENTS_CACHE.get(events_path)
+    if cached is not None and cached.file_id == file_id:
+        return cached.events
+    events = parse_events(events_path)
+    # Evict oldest entry when cache is full
+    if len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS and events_path not in _EVENTS_CACHE:
+        oldest_key = next(iter(_EVENTS_CACHE))
+        del _EVENTS_CACHE[oldest_key]
+    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
+    return events
+
+
 _RESUME_INDICATOR_TYPES: Final[frozenset[EventType]] = frozenset(
     {
         EventType.SESSION_RESUME,
