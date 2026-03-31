@@ -174,20 +174,24 @@ def _safe_file_identity(path: Path) -> tuple[int, int]:
 
 def _discover_with_identity(
     base_path: Path | None = None,
-) -> list[tuple[Path, tuple[int, int]]]:
-    """Find session ``events.jsonl`` files paired with their file identity.
+) -> list[tuple[Path, tuple[int, int], tuple[int, int]]]:
+    """Find session ``events.jsonl`` files paired with their file identities.
 
-    Returns ``(path, (st_mtime_ns, st_size))`` tuples sorted by file
-    identity (mtime descending, then size as tie-breaker).  Each file is
-    stat'd exactly once, so callers that also need the file-identity for
-    caching avoid a redundant stat.
+    Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
+    by *events_file_id* (mtime descending, then size as tie-breaker).
+    Both identities are computed in a single directory scan, so callers
+    pay zero extra stat calls for ``plan.md``.
     """
     root = base_path or _DEFAULT_BASE
     if not root.is_dir():
         return []
-    pairs = [(p, _safe_file_identity(p)) for p in root.glob("*/events.jsonl")]
-    pairs.sort(key=lambda t: t[1], reverse=True)
-    return pairs
+    result: list[tuple[Path, tuple[int, int], tuple[int, int]]] = []
+    for p in root.glob("*/events.jsonl"):
+        events_id = _safe_file_identity(p)
+        plan_id = _safe_file_identity(p.parent / "plan.md")
+        result.append((p, events_id, plan_id))
+    result.sort(key=lambda t: t[1], reverse=True)
+    return result
 
 
 def discover_sessions(base_path: Path | None = None) -> list[Path]:
@@ -201,7 +205,7 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     Tolerates directories deleted between the glob and the stat call
     (TOCTOU race) by returning a zero identity for vanished paths.
     """
-    return [p for p, _identity in _discover_with_identity(base_path)]
+    return [p for p, _eid, _pid in _discover_with_identity(base_path)]
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +646,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
-    for events_path, file_id in discovered:
+    for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         if cached is not None and cached.file_id == file_id:
             # Only sessions whose model was sourced from config need
@@ -652,7 +656,6 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             if cached.depends_on_config and cached.config_model != current_config_model:
                 pass  # stale config — fall through to re-parse
             else:
-                plan_id = _safe_file_identity(events_path.parent / "plan.md")
                 if plan_id != cached.plan_id:
                     fresh_name = _extract_session_name(events_path.parent)
                     summary = cached.summary.model_copy(update={"name": fresh_name})
@@ -678,7 +681,6 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             events, session_dir=events_path.parent, events_path=events_path
         )
         summary = meta.summary
-        plan_id = _safe_file_identity(events_path.parent / "plan.md")
         _SESSION_CACHE[events_path] = _CachedSession(
             file_id,
             plan_id,
