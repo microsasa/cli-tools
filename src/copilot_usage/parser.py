@@ -662,28 +662,27 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     summaries: list[SessionSummary] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
-        if cached is not None and cached.file_id == file_id:
-            # Only sessions whose model was sourced from config need
-            # invalidation when the config changes.  Sessions that
-            # derived their model from events or shutdown data are
-            # immune to config edits.
-            if cached.depends_on_config and cached.config_model != current_config_model:
-                pass  # stale config — fall through to re-parse
+        if (
+            cached is not None
+            and cached.file_id == file_id
+            and not (
+                cached.depends_on_config and cached.config_model != current_config_model
+            )
+        ):
+            if plan_id != cached.plan_id:
+                fresh_name = _extract_session_name(events_path.parent)
+                summary = cached.summary.model_copy(update={"name": fresh_name})
+                _SESSION_CACHE[events_path] = _CachedSession(
+                    file_id,
+                    plan_id,
+                    cached.config_model,
+                    cached.depends_on_config,
+                    summary,
+                )
             else:
-                if plan_id != cached.plan_id:
-                    fresh_name = _extract_session_name(events_path.parent)
-                    summary = cached.summary.model_copy(update={"name": fresh_name})
-                    _SESSION_CACHE[events_path] = _CachedSession(
-                        file_id,
-                        plan_id,
-                        cached.config_model,
-                        cached.depends_on_config,
-                        summary,
-                    )
-                else:
-                    summary = cached.summary
-                summaries.append(summary)
-                continue
+                summary = cached.summary
+            summaries.append(summary)
+            continue
         try:
             events = parse_events(events_path)
         except OSError as exc:
