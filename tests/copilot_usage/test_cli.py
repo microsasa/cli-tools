@@ -3067,3 +3067,102 @@ def test_vscode_command(tmp_path: Path) -> None:
     assert "claude-sonnet-4" in output
     assert "By Feature" in output
     assert "Daily Activity" in output
+
+
+# ---------------------------------------------------------------------------
+# session_index O(1) lookup – regression test for #585
+# ---------------------------------------------------------------------------
+
+
+def test_auto_refresh_detail_session_index_lookup(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Auto-refresh in detail view uses O(1) dict lookup for session ID.
+
+    Constructs ≥ 200 sessions and triggers a file-change event while viewing
+    the *last* session (worst case for a linear scan).  Asserts the correct
+    detail_idx is resolved and the right session is rendered.
+    """
+    import time as time_mod
+
+    import copilot_usage.cli as cli_mod
+
+    num_sessions = 200
+    # Create 200 sessions with unique IDs; stagger start_time so ordering is
+    # deterministic (newest first after sort).
+    base_dt = datetime(2025, 1, 15, 8, 0, 0, tzinfo=UTC)
+    for i in range(num_sessions):
+        sid = f"{i:08x}-0000-0000-0000-{i:012x}"
+        ts = (base_dt + timedelta(minutes=i)).isoformat()
+        _write_session(tmp_path, sid, name=f"Sess{i}", start_time=ts)
+
+    # The last session (oldest) will be at the end of the sorted list.
+    last_session_id = f"{0:08x}-0000-0000-0000-{0:012x}"
+
+    # Track which session_ids are rendered in _show_session_by_index.
+    rendered_session_ids: list[str] = []
+    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_show(console: Console, sessions: list[Any], index: int) -> None:
+        if 1 <= index <= len(sessions):
+            rendered_session_ids.append(sessions[index - 1].session_id)
+        orig_show(console, sessions, index)
+
+    monkeypatch.setattr(cli_mod, "_show_session_by_index", _tracking_show)
+
+    # Capture change_event via _start_observer stub.
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(
+        session_path: Path,  # noqa: ARG001
+        change_event: threading.Event,
+    ) -> object:
+        captured_event.append(change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                return
+
+        return _StubObserver()
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            # Navigate to the last session (oldest — worst case for linear scan).
+            return str(num_sessions)
+        if read_call == 2:
+            # Trigger auto-refresh while on detail view.
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 3:
+            return ""  # go back to home
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    start = time_mod.perf_counter()
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    elapsed_ms = (time_mod.perf_counter() - start) * 1000
+
+    assert result.exit_code == 0
+
+    # Both the initial navigation and the auto-refresh must render the same
+    # (last/oldest) session.
+    assert len(rendered_session_ids) >= 2
+    assert all(sid == last_session_id for sid in rendered_session_ids), (
+        f"Expected {last_session_id} every time, got: {rendered_session_ids}"
+    )
+
+    # Sanity guard: the lookup itself should be well under 1 s for 200
+    # sessions; a generous budget avoids flakiness in CI.
+    assert elapsed_ms < 60_000, f"Interactive loop took {elapsed_ms:.0f} ms"
