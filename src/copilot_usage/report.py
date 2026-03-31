@@ -268,7 +268,9 @@ def _render_summary_header(
 
     Exploits the pre-sorted order (newest-first, ``None``-start-time
     entries last) guaranteed by :func:`~copilot_usage.parser.get_all_sessions`
-    to find the date range in O(1) instead of scanning all sessions.
+    to find the date range while doing only O(1) ``ensure_aware`` conversions
+    and, in the worst case, scanning over at most the trailing ``None``
+    ``start_time`` entries instead of all sessions.
     """
     latest: datetime | None = None
     earliest: datetime | None = None
