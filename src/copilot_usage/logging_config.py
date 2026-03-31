@@ -1,7 +1,5 @@
 """Logging configuration — console-only for CLI tool."""
 
-from __future__ import annotations
-
 import sys
 from typing import Final
 
@@ -26,7 +24,7 @@ CONSOLE_FORMAT: Final[str] = (
 )
 
 
-def _emoji_patcher(record: loguru.Record) -> None:
+def _emoji_patcher(record: "loguru.Record") -> None:
     """Inject a level-specific emoji into the log record's extras."""
     record["extra"]["emoji"] = LEVEL_EMOJI.get(record["level"].name, "  ")
 

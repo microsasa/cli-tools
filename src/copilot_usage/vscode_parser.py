@@ -190,9 +190,13 @@ def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     )
 
 
-def build_vscode_summary(requests: list[VSCodeRequest]) -> VSCodeLogSummary:
+def build_vscode_summary(
+    requests: list[VSCodeRequest],
+    *,
+    log_files_parsed: int = 0,
+) -> VSCodeLogSummary:
     """Aggregate a list of parsed requests into a summary."""
-    acc = _SummaryAccumulator()
+    acc = _SummaryAccumulator(log_files_parsed=log_files_parsed)
     _update_vscode_summary(acc, requests)
     return _finalize_summary(acc)
 
