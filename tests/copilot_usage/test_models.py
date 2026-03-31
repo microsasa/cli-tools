@@ -21,6 +21,7 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     UserMessageData,
+    add_to_model_metrics,
     copy_model_metrics,
     ensure_aware,
     ensure_aware_opt,
@@ -282,6 +283,77 @@ def test_session_summary_full() -> None:
     )
     assert s.total_premium_requests == 24
     assert s.model_metrics["claude-opus-4.6-1m"].usage.inputTokens == 1627935
+
+
+# ---------------------------------------------------------------------------
+# add_to_model_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestAddToModelMetrics:
+    """Unit tests for the add_to_model_metrics helper."""
+
+    def test_all_six_fields_accumulated(self) -> None:
+        target = ModelMetrics(
+            requests=RequestMetrics(count=3, cost=2),
+            usage=TokenUsage(
+                inputTokens=100,
+                outputTokens=50,
+                cacheReadTokens=10,
+                cacheWriteTokens=5,
+            ),
+        )
+        source = ModelMetrics(
+            requests=RequestMetrics(count=7, cost=4),
+            usage=TokenUsage(
+                inputTokens=200,
+                outputTokens=80,
+                cacheReadTokens=20,
+                cacheWriteTokens=15,
+            ),
+        )
+        add_to_model_metrics(target, source)
+        assert target.requests.count == 10
+        assert target.requests.cost == 6
+        assert target.usage.inputTokens == 300
+        assert target.usage.outputTokens == 130
+        assert target.usage.cacheReadTokens == 30
+        assert target.usage.cacheWriteTokens == 20
+
+    def test_zero_source_is_identity(self) -> None:
+        target = ModelMetrics(
+            requests=RequestMetrics(count=5, cost=3),
+            usage=TokenUsage(
+                inputTokens=100,
+                outputTokens=50,
+                cacheReadTokens=10,
+                cacheWriteTokens=5,
+            ),
+        )
+        add_to_model_metrics(target, ModelMetrics())
+        assert target.requests.count == 5
+        assert target.requests.cost == 3
+        assert target.usage.inputTokens == 100
+
+    def test_source_not_mutated(self) -> None:
+        target = ModelMetrics(requests=RequestMetrics(count=1))
+        source = ModelMetrics(requests=RequestMetrics(count=5))
+        add_to_model_metrics(target, source)
+        assert source.requests.count == 5  # source unchanged
+
+    def test_accumulates_incrementally(self) -> None:
+        """Multiple sequential calls accumulate correctly."""
+        target = ModelMetrics()
+        for _ in range(3):
+            add_to_model_metrics(
+                target,
+                ModelMetrics(
+                    requests=RequestMetrics(count=2),
+                    usage=TokenUsage(outputTokens=10),
+                ),
+            )
+        assert target.requests.count == 6
+        assert target.usage.outputTokens == 30
 
 
 # ---------------------------------------------------------------------------
