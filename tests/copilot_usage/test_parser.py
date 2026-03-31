@@ -1667,6 +1667,12 @@ class TestAssistantMessageDataModel:
         assert d.reasoningText is None
         assert d.toolRequests == []
 
+    def test_tool_requests_default_factory_isolation(self) -> None:
+        """Two instances must not share the same toolRequests list object."""
+        a = AssistantMessageData()
+        b = AssistantMessageData()
+        assert a.toolRequests is not b.toolRequests
+
     def test_nonempty_tool_requests_round_trip(self) -> None:
         raw = {
             "messageId": "msg-1",
