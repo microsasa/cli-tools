@@ -5106,9 +5106,5 @@ class TestMergeAndAggregateConsistency:
         for model_name in merged:
             m = merged[model_name]
             a = aggregated[model_name]
-            assert m.requests.count == a.requests.count
-            assert m.requests.cost == a.requests.cost
-            assert m.usage.inputTokens == a.usage.inputTokens
-            assert m.usage.outputTokens == a.usage.outputTokens
-            assert m.usage.cacheReadTokens == a.usage.cacheReadTokens
-            assert m.usage.cacheWriteTokens == a.usage.cacheWriteTokens
+            # Compare full ModelMetrics contents to catch any future field additions
+            assert m.model_dump() == a.model_dump()
