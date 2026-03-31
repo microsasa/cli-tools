@@ -101,6 +101,9 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     requests: list[VSCodeRequest] = []
     with log_path.open(encoding="utf-8", errors="replace") as f:
         for line in f:
+            # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
+            if "ccreq:" not in line:
+                continue
             m = CCREQ_RE.match(line)
             if m is None:
                 continue
