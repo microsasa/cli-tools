@@ -179,6 +179,10 @@ class ToolRequest(BaseModel):
     type: str = ""
 
 
+def _tool_requests_default() -> list[ToolRequest]:
+    return []
+
+
 class AssistantMessageData(BaseModel):
     """Payload for ``assistant.message`` events."""
 
@@ -188,7 +192,9 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[ToolRequest] = Field(default=[])
+    toolRequests: list[ToolRequest] = Field(
+        default_factory=_tool_requests_default,
+    )
 
 
 class SessionShutdownData(BaseModel):

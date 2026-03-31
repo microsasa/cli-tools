@@ -1700,6 +1700,13 @@ class TestAssistantMessageDataModel:
         assert second.name == "report_intent"
         assert second.arguments == {"intent": "Planning"}
 
+        # Complete the round-trip: dump back to dict and re-validate
+        dumped = d.model_dump()
+        d2 = AssistantMessageData.model_validate(dumped)
+        assert d2 == d
+        assert d2.toolRequests[0].toolCallId == first.toolCallId
+        assert d2.toolRequests[1].arguments == second.arguments
+
     def test_tool_request_defaults(self) -> None:
         tr = ToolRequest()
         assert tr.toolCallId == ""
