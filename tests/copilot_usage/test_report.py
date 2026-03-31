@@ -5108,3 +5108,77 @@ class TestMergeAndAggregateConsistency:
             a = aggregated[model_name]
             # Compare full ModelMetrics contents to catch any future field additions
             assert m.model_dump() == a.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Issue #574 — _render_summary_header single-pass date range
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSummaryHeaderSinglePass:
+    """Single-pass _render_summary_header finds correct earliest/latest dates."""
+
+    def test_large_random_order_sessions(self) -> None:
+        """≥100 sessions in random order produce the correct date range."""
+        import random
+
+        rng = random.Random(42)  # noqa: S311
+        base = datetime(2024, 1, 1, tzinfo=UTC)
+        days = list(range(365))
+        rng.shuffle(days)
+        selected = days[:120]
+
+        sessions = [
+            _make_summary_session(
+                session_id=f"s-{i}",
+                start_time=base + timedelta(days=d),
+            )
+            for i, d in enumerate(selected)
+        ]
+
+        expected_earliest = (base + timedelta(days=min(selected))).strftime("%Y-%m-%d")
+        expected_latest = (base + timedelta(days=max(selected))).strftime("%Y-%m-%d")
+
+        output = _capture_summary(sessions)
+        assert f"{expected_earliest}  →  {expected_latest}" in output
+
+    def test_none_start_times_interspersed(self) -> None:
+        """None start_time entries mixed in still yield correct range."""
+        sessions = [
+            SessionSummary(session_id="none-1", start_time=None),
+            _make_summary_session(
+                session_id="mid",
+                start_time=datetime(2025, 6, 15, tzinfo=UTC),
+            ),
+            SessionSummary(session_id="none-2", start_time=None),
+            _make_summary_session(
+                session_id="early",
+                start_time=datetime(2025, 1, 10, tzinfo=UTC),
+            ),
+            SessionSummary(session_id="none-3", start_time=None),
+            _make_summary_session(
+                session_id="late",
+                start_time=datetime(2025, 12, 25, tzinfo=UTC),
+            ),
+        ]
+        output = _capture_summary(sessions)
+        assert "2025-01-10  →  2025-12-25" in output
+
+    def test_all_none_start_times(self) -> None:
+        """All-None start_time produces 'dates unavailable'."""
+        sessions = [
+            SessionSummary(session_id=f"none-{i}", start_time=None) for i in range(5)
+        ]
+        output = _capture_summary(sessions)
+        assert "dates unavailable" in output
+
+    def test_single_session_same_earliest_latest(self) -> None:
+        """Single session shows same date for both endpoints."""
+        sessions = [
+            _make_summary_session(
+                session_id="only",
+                start_time=datetime(2025, 7, 4, tzinfo=UTC),
+            ),
+        ]
+        output = _capture_summary(sessions)
+        assert "2025-07-04  →  2025-07-04" in output
