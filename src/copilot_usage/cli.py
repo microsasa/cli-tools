@@ -254,7 +254,6 @@ def _interactive_loop(path: Path | None) -> None:
     detail_session_id: str | None = None
 
     sessions = get_all_sessions(path)
-    session_index: dict[str, int] = {s.session_id: i for i, s in enumerate(sessions)}
     _draw_home(console, sessions)
     _write_prompt(_HOME_PROMPT)
 
@@ -265,7 +264,6 @@ def _interactive_loop(path: Path | None) -> None:
                 change_event.clear()
                 try:
                     sessions = get_all_sessions(path)
-                    session_index = {s.session_id: i for i, s in enumerate(sessions)}
                     if view == "home":
                         _draw_home(console, sessions)
                         _write_prompt(_HOME_PROMPT)
@@ -275,6 +273,9 @@ def _interactive_loop(path: Path | None) -> None:
                         render_cost_view(sessions, target_console=console)
                         _write_prompt(_BACK_PROMPT)
                     elif view == "detail" and detail_session_id is not None:
+                        session_index = {
+                            s.session_id: i for i, s in enumerate(sessions)
+                        }
                         detail_idx = session_index.get(detail_session_id)
                         if detail_idx is None:
                             view = "home"
@@ -325,7 +326,6 @@ def _interactive_loop(path: Path | None) -> None:
                 view = "home"
                 detail_session_id = None
                 sessions = get_all_sessions(path)
-                session_index = {s.session_id: i for i, s in enumerate(sessions)}
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
                 continue
@@ -348,7 +348,6 @@ def _interactive_loop(path: Path | None) -> None:
 
             if line in ("r", "R"):
                 sessions = get_all_sessions(path)
-                session_index = {s.session_id: i for i, s in enumerate(sessions)}
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
                 continue

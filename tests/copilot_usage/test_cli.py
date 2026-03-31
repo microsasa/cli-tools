@@ -3070,21 +3070,19 @@ def test_vscode_command(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# session_index O(1) lookup – regression test for #585
+# session_index lookup – behavioral regression test for #585
 # ---------------------------------------------------------------------------
 
 
 def test_auto_refresh_detail_session_index_lookup(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Auto-refresh in detail view uses O(1) dict lookup for session ID.
+    """Auto-refresh in detail view preserves the correct session selection.
 
     Constructs ≥ 200 sessions and triggers a file-change event while viewing
-    the *last* session (worst case for a linear scan).  Asserts the correct
-    detail_idx is resolved and the right session is rendered.
+    the *last* session (worst case positionally). Ensures the correct
+    detail_idx is resolved and the expected session is rendered after refresh.
     """
-    import time as time_mod
-
     import copilot_usage.cli as cli_mod
 
     num_sessions = 200
@@ -3149,10 +3147,8 @@ def test_auto_refresh_detail_session_index_lookup(
 
     monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
 
-    start = time_mod.perf_counter()
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
-    elapsed_ms = (time_mod.perf_counter() - start) * 1000
 
     assert result.exit_code == 0
 
@@ -3162,7 +3158,3 @@ def test_auto_refresh_detail_session_index_lookup(
     assert all(sid == last_session_id for sid in rendered_session_ids), (
         f"Expected {last_session_id} every time, got: {rendered_session_ids}"
     )
-
-    # Sanity guard: the lookup itself should be well under 1 s for 200
-    # sessions; a generous budget avoids flakiness in CI.
-    assert elapsed_ms < 60_000, f"Interactive loop took {elapsed_ms:.0f} ms"
