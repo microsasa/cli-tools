@@ -293,22 +293,21 @@ class TestCopyModelMetrics:
     """Unit tests for the copy_model_metrics helper."""
 
     def test_returns_equal_value(self) -> None:
+        """All fields are faithfully copied, including any future additions."""
+        # Build kwargs with non-default values for every field so newly-added
+        # fields are automatically covered by the model_dump() comparison.
+        req_kwargs = {
+            name: idx + 1 for idx, name in enumerate(RequestMetrics.model_fields)
+        }
+        usage_kwargs = {
+            name: (idx + 1) * 100 for idx, name in enumerate(TokenUsage.model_fields)
+        }
         mm = ModelMetrics(
-            requests=RequestMetrics(count=5, cost=3),
-            usage=TokenUsage(
-                inputTokens=100,
-                outputTokens=50,
-                cacheReadTokens=20,
-                cacheWriteTokens=10,
-            ),
+            requests=RequestMetrics(**req_kwargs),
+            usage=TokenUsage(**usage_kwargs),
         )
         result = copy_model_metrics(mm)
-        assert result.requests.count == 5
-        assert result.requests.cost == 3
-        assert result.usage.inputTokens == 100
-        assert result.usage.outputTokens == 50
-        assert result.usage.cacheReadTokens == 20
-        assert result.usage.cacheWriteTokens == 10
+        assert result.model_dump() == mm.model_dump()
 
     def test_requests_copy_is_independent(self) -> None:
         """Mutating the copy's requests must not affect the original."""
@@ -347,15 +346,11 @@ class TestCopyModelMetrics:
         assert copy.requests.count == 5
 
     def test_defaults_copied_correctly(self) -> None:
-        """Default (zero) values are preserved in the copy."""
+        """Default (zero) values are preserved in the copy for all fields."""
         mm = ModelMetrics()
         copy = copy_model_metrics(mm)
-        assert copy.requests.count == 0
-        assert copy.requests.cost == 0
-        assert copy.usage.inputTokens == 0
-        assert copy.usage.outputTokens == 0
-        assert copy.usage.cacheReadTokens == 0
-        assert copy.usage.cacheWriteTokens == 0
+        # Ensure *all* default values (including any future fields) are preserved
+        assert copy.model_dump() == mm.model_dump()
 
 
 # ---------------------------------------------------------------------------
