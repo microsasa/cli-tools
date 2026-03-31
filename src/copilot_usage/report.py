@@ -266,13 +266,19 @@ def _render_summary_header(
     *sessions* must be non-empty — callers are responsible for the
     empty-list check.
     """
-    start_times = [
-        ensure_aware(s.start_time) for s in sessions if s.start_time is not None
-    ]
-    if start_times:
-        earliest = min(start_times).strftime("%Y-%m-%d")
-        latest = max(start_times).strftime("%Y-%m-%d")
-        subtitle = f"{earliest}  →  {latest}"
+    earliest: datetime | None = None
+    latest: datetime | None = None
+    for s in sessions:
+        if s.start_time is None:
+            continue
+        aware = ensure_aware(s.start_time)
+        if earliest is None or aware < earliest:
+            earliest = aware
+        if latest is None or aware > latest:
+            latest = aware
+
+    if earliest is not None and latest is not None:
+        subtitle = f"{earliest.strftime('%Y-%m-%d')}  →  {latest.strftime('%Y-%m-%d')}"
     else:
         subtitle = "dates unavailable"
     console.print()
