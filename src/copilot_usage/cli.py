@@ -273,10 +273,11 @@ def _interactive_loop(path: Path | None) -> None:
                         render_cost_view(sessions, target_console=console)
                         _write_prompt(_BACK_PROMPT)
                     elif view == "detail" and detail_session_id is not None:
-                        session_index = {
-                            s.session_id: i for i, s in enumerate(sessions)
-                        }
-                        detail_idx = session_index.get(detail_session_id)
+                        detail_idx = None
+                        for i, s in enumerate(sessions):
+                            if s.session_id == detail_session_id:
+                                detail_idx = i
+                                break
                         if detail_idx is None:
                             view = "home"
                             detail_session_id = None
