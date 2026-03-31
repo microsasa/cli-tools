@@ -1,7 +1,9 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
 import re
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -427,6 +429,25 @@ class TestVscodeCliCommand:
         assert result.exit_code == 1
         assert "No VS Code Copilot Chat requests found" in result.output
 
+    def test_vscode_oserror_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """OSError in get_vscode_summary produces a friendly error and exit 1."""
+
+        def _raise_oserror(*_a: object, **_kw: object) -> object:
+            msg = "Permission denied"
+            raise OSError(msg)
+
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser.get_vscode_summary", _raise_oserror
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "Error reading VS Code logs" in result.output
+        assert "Permission denied" in result.output
+        assert "Traceback" not in (result.output or "")
+
     def test_vscode_logs_option_passed(self, tmp_path: Path) -> None:
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
@@ -525,6 +546,47 @@ class TestBuildVscodeSummaryBulk:
         assert type(summary.duration_by_model) is dict
         assert type(summary.requests_by_category) is dict
         assert type(summary.requests_by_date) is dict
+
+
+# ---------------------------------------------------------------------------
+# Non-chronological request ordering
+# ---------------------------------------------------------------------------
+
+
+class TestNonChronologicalRequests:
+    """_update_vscode_summary handles out-of-order timestamps correctly."""
+
+    def test_non_chronological_date_accumulation(self) -> None:
+        """Requests arriving Mar 5 → Mar 3 → Mar 5 are aggregated by date value."""
+        mar5_a = VSCodeRequest(
+            timestamp=datetime(2026, 3, 5, 10, 0, 0),
+            request_id="r1",
+            model="gpt-4o",
+            duration_ms=100,
+            category="panel",
+        )
+        mar3 = VSCodeRequest(
+            timestamp=datetime(2026, 3, 3, 14, 0, 0),
+            request_id="r2",
+            model="gpt-4o",
+            duration_ms=200,
+            category="panel",
+        )
+        mar5_b = VSCodeRequest(
+            timestamp=datetime(2026, 3, 5, 18, 0, 0),
+            request_id="r3",
+            model="gpt-4o",
+            duration_ms=150,
+            category="panel",
+        )
+
+        summary = build_vscode_summary([mar5_a, mar3, mar5_b])
+
+        assert summary.requests_by_date["2026-03-05"] == 2
+        assert summary.requests_by_date["2026-03-03"] == 1
+        assert summary.first_timestamp == mar3.timestamp
+        assert summary.last_timestamp == mar5_b.timestamp
+        assert summary.total_requests == 3
 
 
 # ---------------------------------------------------------------------------
