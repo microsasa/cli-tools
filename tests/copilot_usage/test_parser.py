@@ -24,6 +24,7 @@ from copilot_usage.models import (
     SessionSummary,
     TokenUsage,
     ToolExecutionData,
+    ToolRequest,
     ToolTelemetry,
     UserMessageData,
 )
@@ -1665,6 +1666,72 @@ class TestAssistantMessageDataModel:
         assert d.outputTokens == 0
         assert d.reasoningText is None
         assert d.toolRequests == []
+
+    def test_nonempty_tool_requests_round_trip(self) -> None:
+        raw = {
+            "messageId": "msg-1",
+            "content": "Let me ask you something.",
+            "outputTokens": 205,
+            "interactionId": "int-1",
+            "toolRequests": [
+                {
+                    "toolCallId": "toolu_vrtx_01BcqbS8Lv6dReRDKqt2SKaD",
+                    "name": "ask_user",
+                    "arguments": {"question": "Which framework?"},
+                    "type": "function",
+                },
+                {
+                    "toolCallId": "toolu_vrtx_01ThGGHY1fU4YkDoNkgyhxJg",
+                    "name": "report_intent",
+                    "arguments": {"intent": "Planning"},
+                    "type": "function",
+                },
+            ],
+        }
+        d = AssistantMessageData.model_validate(raw)
+        assert len(d.toolRequests) == 2
+        first = d.toolRequests[0]
+        assert isinstance(first, ToolRequest)
+        assert first.toolCallId == "toolu_vrtx_01BcqbS8Lv6dReRDKqt2SKaD"
+        assert first.name == "ask_user"
+        assert first.type == "function"
+        assert first.arguments == {"question": "Which framework?"}
+        second = d.toolRequests[1]
+        assert second.name == "report_intent"
+        assert second.arguments == {"intent": "Planning"}
+
+        # Complete the round-trip: dump back to dict and re-validate
+        dumped = d.model_dump()
+        d2 = AssistantMessageData.model_validate(dumped)
+        assert d2 == d
+        assert d2.toolRequests[0].toolCallId == first.toolCallId
+        assert d2.toolRequests[1].arguments == second.arguments
+
+    def test_tool_request_defaults(self) -> None:
+        tr = ToolRequest()
+        assert tr.toolCallId == ""
+        assert tr.name == ""
+        assert tr.arguments == {}
+        assert tr.type == ""
+
+    def test_tool_request_all_known_fields(self) -> None:
+        tr = ToolRequest.model_validate(
+            {
+                "toolCallId": "toolu_vrtx_01CfcEZckzE3qUrR6k97KG5X",
+                "name": "ask_user",
+                "arguments": {
+                    "question": "Pick one",
+                    "choices": ["A", "B"],
+                    "allow_freeform": True,
+                },
+                "type": "function",
+            }
+        )
+        assert tr.toolCallId == "toolu_vrtx_01CfcEZckzE3qUrR6k97KG5X"
+        assert tr.name == "ask_user"
+        assert tr.type == "function"
+        assert tr.arguments["choices"] == ["A", "B"]
+        assert tr.arguments["allow_freeform"] is True
 
     def test_optional_reasoning(self) -> None:
         d = AssistantMessageData(reasoningText="thinking...", reasoningOpaque="x")
