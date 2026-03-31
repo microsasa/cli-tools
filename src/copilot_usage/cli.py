@@ -239,11 +239,6 @@ def _stop_observer(observer: _Stoppable | None) -> None:
         observer.join(timeout=2)
 
 
-def _build_session_index(sessions: list[SessionSummary]) -> dict[str, int]:
-    """Return an O(1) session-ID → list-position map for *sessions*."""
-    return {s.session_id: i for i, s in enumerate(sessions)}
-
-
 def _interactive_loop(path: Path | None) -> None:
     """Run the interactive Rich session loop with auto-refresh on file changes."""
     console = Console()
@@ -259,7 +254,6 @@ def _interactive_loop(path: Path | None) -> None:
     detail_session_id: str | None = None
 
     sessions = get_all_sessions(path)
-    session_index = _build_session_index(sessions)
     _draw_home(console, sessions)
     _write_prompt(_HOME_PROMPT)
 
@@ -270,7 +264,6 @@ def _interactive_loop(path: Path | None) -> None:
                 change_event.clear()
                 try:
                     sessions = get_all_sessions(path)
-                    session_index = _build_session_index(sessions)
                     if view == "home":
                         _draw_home(console, sessions)
                         _write_prompt(_HOME_PROMPT)
@@ -280,7 +273,14 @@ def _interactive_loop(path: Path | None) -> None:
                         render_cost_view(sessions, target_console=console)
                         _write_prompt(_BACK_PROMPT)
                     elif view == "detail" and detail_session_id is not None:
-                        detail_idx = session_index.get(detail_session_id)
+                        detail_idx = next(
+                            (
+                                i
+                                for i, s in enumerate(sessions)
+                                if s.session_id == detail_session_id
+                            ),
+                            None,
+                        )
                         if detail_idx is None:
                             view = "home"
                             detail_session_id = None
@@ -330,7 +330,6 @@ def _interactive_loop(path: Path | None) -> None:
                 view = "home"
                 detail_session_id = None
                 sessions = get_all_sessions(path)
-                session_index = _build_session_index(sessions)
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
                 continue
@@ -353,7 +352,6 @@ def _interactive_loop(path: Path | None) -> None:
 
             if line in ("r", "R"):
                 sessions = get_all_sessions(path)
-                session_index = _build_session_index(sessions)
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
                 continue
