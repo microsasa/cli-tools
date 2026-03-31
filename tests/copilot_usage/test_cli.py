@@ -3070,11 +3070,11 @@ def test_vscode_command(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# session_index lookup – behavioral regression test for #585
+# detail view auto-refresh – preserves selected session (regression test for #585)
 # ---------------------------------------------------------------------------
 
 
-def test_auto_refresh_detail_session_index_lookup(
+def test_auto_refresh_detail_preserves_selection(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     """Auto-refresh in detail view preserves the correct session selection.
