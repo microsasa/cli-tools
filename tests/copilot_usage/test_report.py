@@ -5112,12 +5112,12 @@ class TestMergeAndAggregateConsistency:
 
 
 # ---------------------------------------------------------------------------
-# Issue #574 — _render_summary_header single-pass date range
+# _render_summary_header date range on pre-sorted sessions
 # ---------------------------------------------------------------------------
 
 
-class TestRenderSummaryHeaderSinglePass:
-    """Single-pass _render_summary_header finds correct earliest/latest dates."""
+class TestRenderSummaryHeaderDateRange:
+    """_render_summary_header finds correct earliest/latest dates from pre-sorted sessions."""
 
     def test_large_sorted_sessions(self) -> None:
         """≥100 sessions in descending start_time order produce the correct date range."""
