@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import click
 import pytest
 from click.testing import CliRunner
 from rich.console import Console
@@ -22,6 +23,7 @@ from copilot_usage.cli import (
     _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
     _start_observer,  # pyright: ignore[reportPrivateUsage]
     _stop_observer,  # pyright: ignore[reportPrivateUsage]
+    _validate_since_until,  # pyright: ignore[reportPrivateUsage]
     main,
 )
 from copilot_usage.models import ensure_aware_opt
@@ -2892,3 +2894,65 @@ class TestReversedSinceUntilCliError:
         output = _strip_ansi(result.output)
         assert "--since" in output
         assert "after" in output
+
+
+class TestValidateSinceUntil:
+    """Direct unit tests for _validate_since_until composition logic."""
+
+    def test_both_none(self) -> None:
+        """since=None, until=None → (None, None)."""
+        result = _validate_since_until(None, None)  # pyright: ignore[reportPrivateUsage]
+        assert result == (None, None)
+
+    def test_naive_since_made_aware(self) -> None:
+        """Naive since is made UTC-aware; until stays None."""
+        naive_since = datetime(2026, 3, 7, 10, 0, 0)
+        aware_since, aware_until = _validate_since_until(naive_since, None)  # pyright: ignore[reportPrivateUsage]
+        assert aware_until is None
+        assert aware_since is not None
+        assert aware_since.tzinfo is not None
+        assert aware_since.tzinfo == UTC
+        assert aware_since.replace(tzinfo=None) == naive_since
+
+    def test_midnight_until_expanded_to_end_of_day(self) -> None:
+        """Midnight until is expanded to 23:59:59.999999 — regression guard."""
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        aware_since, aware_until = _validate_since_until(None, midnight)  # pyright: ignore[reportPrivateUsage]
+        assert aware_since is None
+        assert aware_until is not None
+        assert aware_until.hour == 23
+        assert aware_until.minute == 59
+        assert aware_until.second == 59
+        assert aware_until.microsecond == 999999
+        assert aware_until.date() == midnight.date()
+        assert aware_until.tzinfo == UTC
+
+    def test_non_midnight_until_unchanged(self) -> None:
+        """Non-midnight until is returned as-is (already aware)."""
+        non_midnight = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
+        aware_since, aware_until = _validate_since_until(None, non_midnight)  # pyright: ignore[reportPrivateUsage]
+        assert aware_since is None
+        assert aware_until == non_midnight
+
+    def test_valid_range_no_error(self) -> None:
+        """since < until → both returned without error."""
+        dt_before = datetime(2026, 3, 1, 0, 0, 0, tzinfo=UTC)
+        dt_after = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
+        aware_since, aware_until = _validate_since_until(dt_before, dt_after)  # pyright: ignore[reportPrivateUsage]
+        assert aware_since is not None
+        assert aware_until is not None
+        assert aware_since <= aware_until
+
+    def test_reversed_range_raises_usage_error(self) -> None:
+        """since > until → click.UsageError with --since, after, and isoformat timestamps."""
+        dt_after = datetime(2026, 12, 31, 0, 0, 0, tzinfo=UTC)
+        dt_before = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        with pytest.raises(click.UsageError, match="--since") as exc_info:
+            _validate_since_until(dt_after, dt_before)  # pyright: ignore[reportPrivateUsage]
+        msg = str(exc_info.value)
+        assert "after" in msg
+        # Verify isoformat timestamps with sep=' ' and timespec='seconds'
+        expected_since = dt_after.isoformat(sep=" ", timespec="seconds")
+        expected_until = dt_before.isoformat(sep=" ", timespec="seconds")
+        assert expected_since in msg
+        assert expected_until in msg
