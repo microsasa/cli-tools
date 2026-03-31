@@ -662,13 +662,16 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     summaries: list[SessionSummary] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
-        if (
+        # Config changes only invalidate cached entries that declared a
+        # dependency on the config and were parsed with a different
+        # config model. Entries that do not depend on config remain valid
+        # across config changes.
+        config_is_stale = (
             cached is not None
-            and cached.file_id == file_id
-            and not (
-                cached.depends_on_config and cached.config_model != current_config_model
-            )
-        ):
+            and cached.depends_on_config
+            and cached.config_model != current_config_model
+        )
+        if cached is not None and cached.file_id == file_id and not config_is_stale:
             if plan_id != cached.plan_id:
                 fresh_name = _extract_session_name(events_path.parent)
                 summary = cached.summary.model_copy(update={"name": fresh_name})
