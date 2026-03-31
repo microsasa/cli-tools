@@ -4755,13 +4755,13 @@ class TestSessionCacheMtime:
         assert entry.summary.name == "Test"
 
     def test_cached_sessions_no_redundant_plan_stat(self, tmp_path: Path) -> None:
-        """Cached refresh uses at most N stat calls for N sessions (no extra plan.md stat).
+        """Cached refresh uses at most 2N stat calls for N sessions (no extra plan.md stat).
 
         After the initial call populates the cache, a second call must
         not issue separate stat calls for plan.md — those are folded
         into ``_discover_with_identity``.  Total stat calls for the
-        cached path: 2 per session (events.jsonl + plan.md in discovery),
-        zero additional.
+        cached path are 2 per session (events.jsonl + plan.md in discovery),
+        with zero additional calls during the cached refresh.
         """
         n = 5
         for i in range(n):
@@ -4778,7 +4778,7 @@ class TestSessionCacheMtime:
             assert len(results) == n
             # 2 per session from _discover_with_identity (events + plan),
             # no additional stat calls in the main loop.
-            assert spy.call_count <= 2 * n
+            assert spy.call_count == 2 * n
 
 
 # ---------------------------------------------------------------------------

@@ -174,21 +174,28 @@ def _safe_file_identity(path: Path) -> tuple[int, int]:
 
 def _discover_with_identity(
     base_path: Path | None = None,
+    *,
+    include_plan: bool = True,
 ) -> list[tuple[Path, tuple[int, int], tuple[int, int]]]:
     """Find session ``events.jsonl`` files paired with their file identities.
 
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
     by *events_file_id* (mtime descending, then size as tie-breaker).
-    Both identities are computed in a single directory scan, so callers
-    pay zero extra stat calls for ``plan.md``.
+
+    When *include_plan* is ``True`` (default) both identities are computed
+    in a single directory scan, so callers pay zero extra stat calls for
+    ``plan.md``.  When ``False``, the ``plan_file_id`` element is always
+    ``(0, 0)`` and the ``plan.md`` stat is skipped entirely — useful for
+    callers that only need event ordering.
     """
     root = base_path or _DEFAULT_BASE
     if not root.is_dir():
         return []
+    _zero: tuple[int, int] = (0, 0)
     result: list[tuple[Path, tuple[int, int], tuple[int, int]]] = []
     for p in root.glob("*/events.jsonl"):
         events_id = _safe_file_identity(p)
-        plan_id = _safe_file_identity(p.parent / "plan.md")
+        plan_id = _safe_file_identity(p.parent / "plan.md") if include_plan else _zero
         result.append((p, events_id, plan_id))
     result.sort(key=lambda t: t[1], reverse=True)
     return result
@@ -205,7 +212,9 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     Tolerates directories deleted between the glob and the stat call
     (TOCTOU race) by returning a zero identity for vanished paths.
     """
-    return [p for p, _eid, _pid in _discover_with_identity(base_path)]
+    return [
+        p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)
+    ]
 
 
 # ---------------------------------------------------------------------------
