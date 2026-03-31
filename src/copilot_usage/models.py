@@ -99,6 +99,16 @@ class ModelMetrics(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+def add_to_model_metrics(target: ModelMetrics, source: ModelMetrics) -> None:
+    """Add *source* fields into *target* in-place."""
+    target.requests.count += source.requests.count
+    target.requests.cost += source.requests.cost
+    target.usage.inputTokens += source.usage.inputTokens
+    target.usage.outputTokens += source.usage.outputTokens
+    target.usage.cacheReadTokens += source.usage.cacheReadTokens
+    target.usage.cacheWriteTokens += source.usage.cacheWriteTokens
+
+
 def copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
     """Create an independent copy of *mm* via explicit construction.
 
@@ -125,13 +135,7 @@ def merge_model_metrics(
     result = {name: copy_model_metrics(mm) for name, mm in base.items()}
     for name, mm in additional.items():
         if name in result:
-            existing = result[name]
-            existing.requests.count += mm.requests.count
-            existing.requests.cost += mm.requests.cost
-            existing.usage.inputTokens += mm.usage.inputTokens
-            existing.usage.outputTokens += mm.usage.outputTokens
-            existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
-            existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
+            add_to_model_metrics(result[name], mm)
         else:
             result[name] = copy_model_metrics(mm)
     return result

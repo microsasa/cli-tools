@@ -28,6 +28,7 @@ from copilot_usage.models import (
     TokenUsage,
     copy_model_metrics,
     has_active_period_stats,
+    merge_model_metrics,
     shutdown_output_tokens,
     total_output_tokens,
 )
@@ -5061,3 +5062,49 @@ class TestRenderSessionTablePreSorted:
                 found_indices.append(int(m.group(1)))
         # Should be re-sorted into descending start_time (index 0 first)
         assert found_indices == list(range(10))
+
+
+class TestMergeAndAggregateConsistency:
+    """Regression: merge_model_metrics and _aggregate_model_metrics must agree."""
+
+    _METRICS: dict[str, ModelMetrics] = {
+        "claude-sonnet-4": ModelMetrics(
+            requests=RequestMetrics(count=5, cost=3),
+            usage=TokenUsage(
+                inputTokens=1000,
+                outputTokens=500,
+                cacheReadTokens=200,
+                cacheWriteTokens=100,
+            ),
+        ),
+        "gpt-5.1": ModelMetrics(
+            requests=RequestMetrics(count=2, cost=1),
+            usage=TokenUsage(
+                inputTokens=400,
+                outputTokens=150,
+                cacheReadTokens=80,
+                cacheWriteTokens=40,
+            ),
+        ),
+    }
+
+    def test_identical_field_values(self) -> None:
+        """merge_model_metrics({}, data) and _aggregate_model_metrics([session])
+        must produce identical field values for the same input.
+
+        This catches future field additions that update only one call-site.
+        """
+        merged = merge_model_metrics({}, self._METRICS)
+
+        session = SessionSummary(
+            session_id="consistency",
+            model_metrics=self._METRICS,
+        )
+        aggregated = _aggregate_model_metrics([session])
+
+        assert set(merged.keys()) == set(aggregated.keys())
+        for model_name in merged:
+            m = merged[model_name]
+            a = aggregated[model_name]
+            # Compare full ModelMetrics contents to catch any future field additions
+            assert m.model_dump() == a.model_dump()
