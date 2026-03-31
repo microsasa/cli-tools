@@ -289,6 +289,12 @@ def _interactive_loop(path: Path | None) -> None:
                             _print_version_header(console)
                             _show_session_by_index(console, sessions, detail_idx + 1)
                             _write_prompt(_BACK_PROMPT)
+                    else:
+                        # detail view with no valid session — reset to home
+                        view = "home"
+                        detail_session_id = None
+                        _draw_home(console, sessions)
+                        _write_prompt(_HOME_PROMPT)
                 except KeyboardInterrupt:
                     raise
                 except Exception:
