@@ -207,6 +207,14 @@ class TestBuildVscodeSummary:
         assert summary.first_timestamp is None
         assert summary.last_timestamp is None
 
+    def test_log_files_parsed_default_is_zero(self) -> None:
+        summary = build_vscode_summary(self._make_requests())
+        assert summary.log_files_parsed == 0
+
+    def test_log_files_parsed_keyword(self) -> None:
+        summary = build_vscode_summary(self._make_requests(), log_files_parsed=3)
+        assert summary.log_files_parsed == 3
+
 
 # ---------------------------------------------------------------------------
 # discover_vscode_logs — platform defaults
