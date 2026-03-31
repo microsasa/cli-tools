@@ -27,6 +27,7 @@ from copilot_usage._formatting import (
 from copilot_usage.models import (
     ModelMetrics,
     SessionSummary,
+    add_to_model_metrics,
     copy_model_metrics,
     ensure_aware,
     has_active_period_stats,
@@ -250,13 +251,7 @@ def _aggregate_model_metrics(
     for s in sessions:
         for model_name, mm in s.model_metrics.items():
             if model_name in result:
-                existing = result[model_name]
-                existing.requests.count += mm.requests.count
-                existing.requests.cost += mm.requests.cost
-                existing.usage.inputTokens += mm.usage.inputTokens
-                existing.usage.outputTokens += mm.usage.outputTokens
-                existing.usage.cacheReadTokens += mm.usage.cacheReadTokens
-                existing.usage.cacheWriteTokens += mm.usage.cacheWriteTokens
+                add_to_model_metrics(result[model_name], mm)
             else:
                 result[model_name] = copy_model_metrics(mm)
     return result
