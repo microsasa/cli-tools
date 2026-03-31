@@ -109,7 +109,7 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
                 continue
             ts_str, req_id, model, duration_str, category = m.groups()
             try:
-                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
+                ts = datetime.fromisoformat(ts_str)
             except ValueError:
                 continue
             requests.append(
