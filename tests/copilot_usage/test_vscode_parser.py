@@ -437,9 +437,7 @@ class TestVscodeCliCommand:
             msg = "Permission denied"
             raise OSError(msg)
 
-        monkeypatch.setattr(
-            "copilot_usage.vscode_parser.get_vscode_summary", _raise_oserror
-        )
+        monkeypatch.setattr("copilot_usage.cli.get_vscode_summary", _raise_oserror)
         runner = CliRunner()
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
         assert result.exit_code == 1
