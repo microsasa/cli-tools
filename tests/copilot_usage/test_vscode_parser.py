@@ -3,7 +3,6 @@
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -430,7 +429,7 @@ class TestVscodeCliCommand:
         assert "No VS Code Copilot Chat requests found" in result.output
 
     def test_vscode_oserror_exits_nonzero(
-        self, tmp_path: Path, monkeypatch: Any
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """OSError in get_vscode_summary produces a friendly error and exit 1."""
 
