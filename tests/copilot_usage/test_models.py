@@ -21,6 +21,7 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     UserMessageData,
+    copy_model_metrics,
     ensure_aware,
     ensure_aware_opt,
     has_active_period_stats,
@@ -281,6 +282,80 @@ def test_session_summary_full() -> None:
     )
     assert s.total_premium_requests == 24
     assert s.model_metrics["claude-opus-4.6-1m"].usage.inputTokens == 1627935
+
+
+# ---------------------------------------------------------------------------
+# copy_model_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestCopyModelMetrics:
+    """Unit tests for the copy_model_metrics helper."""
+
+    def test_returns_equal_value(self) -> None:
+        mm = ModelMetrics(
+            requests=RequestMetrics(count=5, cost=3),
+            usage=TokenUsage(
+                inputTokens=100,
+                outputTokens=50,
+                cacheReadTokens=20,
+                cacheWriteTokens=10,
+            ),
+        )
+        result = copy_model_metrics(mm)
+        assert result.requests.count == 5
+        assert result.requests.cost == 3
+        assert result.usage.inputTokens == 100
+        assert result.usage.outputTokens == 50
+        assert result.usage.cacheReadTokens == 20
+        assert result.usage.cacheWriteTokens == 10
+
+    def test_requests_copy_is_independent(self) -> None:
+        """Mutating the copy's requests must not affect the original."""
+        mm = ModelMetrics(requests=RequestMetrics(count=5, cost=3))
+        copy = copy_model_metrics(mm)
+        copy.requests.count = 999
+        copy.requests.cost = 888
+        assert mm.requests.count == 5
+        assert mm.requests.cost == 3
+
+    def test_usage_copy_is_independent(self) -> None:
+        """Mutating the copy's usage must not affect the original."""
+        mm = ModelMetrics(
+            usage=TokenUsage(
+                inputTokens=100,
+                outputTokens=50,
+                cacheReadTokens=20,
+                cacheWriteTokens=10,
+            ),
+        )
+        copy = copy_model_metrics(mm)
+        copy.usage.inputTokens = 999
+        copy.usage.outputTokens = 888
+        copy.usage.cacheReadTokens = 777
+        copy.usage.cacheWriteTokens = 666
+        assert mm.usage.inputTokens == 100
+        assert mm.usage.outputTokens == 50
+        assert mm.usage.cacheReadTokens == 20
+        assert mm.usage.cacheWriteTokens == 10
+
+    def test_original_is_independent_of_copy_mutations(self) -> None:
+        """Mutating the original must not affect the copy."""
+        mm = ModelMetrics(requests=RequestMetrics(count=5))
+        copy = copy_model_metrics(mm)
+        mm.requests.count = 999
+        assert copy.requests.count == 5
+
+    def test_defaults_copied_correctly(self) -> None:
+        """Default (zero) values are preserved in the copy."""
+        mm = ModelMetrics()
+        copy = copy_model_metrics(mm)
+        assert copy.requests.count == 0
+        assert copy.requests.cost == 0
+        assert copy.usage.inputTokens == 0
+        assert copy.usage.outputTokens == 0
+        assert copy.usage.cacheReadTokens == 0
+        assert copy.usage.cacheWriteTokens == 0
 
 
 # ---------------------------------------------------------------------------
