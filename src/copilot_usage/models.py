@@ -161,6 +161,24 @@ class SessionStartData(BaseModel):
     context: SessionContext = Field(default_factory=SessionContext)
 
 
+class ToolRequest(BaseModel):
+    """A single tool-call request embedded in an assistant message.
+
+    Maps the well-defined structure observed in ``events.jsonl``::
+
+        {"toolCallId": "toolu_…", "name": "ask_user",
+         "arguments": {…}, "type": "function"}
+
+    ``arguments`` is kept as ``dict[str, object]`` because the shape varies
+    per tool.
+    """
+
+    toolCallId: str = ""
+    name: str = ""
+    arguments: dict[str, object] = Field(default_factory=dict)
+    type: str = ""
+
+
 class AssistantMessageData(BaseModel):
     """Payload for ``assistant.message`` events."""
 
@@ -170,7 +188,7 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[dict[str, object]] = Field(default_factory=lambda: [])
+    toolRequests: list[ToolRequest] = Field(default=[])
 
 
 class SessionShutdownData(BaseModel):
