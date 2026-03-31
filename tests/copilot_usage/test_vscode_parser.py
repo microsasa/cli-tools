@@ -706,3 +706,24 @@ class TestParseVscodeLogPreFilter:
             assert req.model == "claude-opus-4.6"
             assert req.duration_ms == 100 + i
             assert req.category == "inline"
+
+
+class TestParseVscodeLogFromisoformat:
+    """Verify that fromisoformat correctly parses all timestamps at scale."""
+
+    def test_1000_matching_lines_parsed(self, tmp_path: Path) -> None:
+        """A log file with 1 000 ccreq lines is fully parsed without ValueError."""
+        n = 1_000
+        lines = [
+            f"2026-03-13 {(i // 3600) % 24:02d}:{(i // 60) % 60:02d}:{i % 60:02d}.{i % 1_000_000:06d}"
+            f" [info] ccreq:req{i:05d}.copilotmd"
+            f" | success | gpt-4o-mini | {50 + i}ms | [panel/editAgent]"
+            for i in range(n)
+        ]
+        log_file = tmp_path / "fromisoformat_1000.log"
+        log_file.write_text("\n".join(lines), encoding="utf-8")
+        requests = parse_vscode_log(log_file)
+        assert len(requests) == n
+        for i, req in enumerate(requests):
+            assert req.request_id == f"req{i:05d}"
+            assert req.duration_ms == 50 + i
