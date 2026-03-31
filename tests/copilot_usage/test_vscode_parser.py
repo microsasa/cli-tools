@@ -1,5 +1,6 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -580,20 +581,40 @@ class TestParseVscodeLogPreFilter:
             assert req.category == "panel"
             assert req.duration_ms >= 100
 
-    def test_synthetic_log_performance(self, tmp_path: Path) -> None:
-        """parse_vscode_log completes within 200 ms for a 50 000-line log."""
-        import time
+    def test_synthetic_log_prefilter_uses_regex_only_for_matching_lines(
+        self, tmp_path: Path
+    ) -> None:
+        """parse_vscode_log only applies CCREQ_RE to lines containing 'ccreq:'."""
 
-        total = 50_000
+        class _SpyRegex:
+            """Spy wrapper around the real CCREQ_RE to verify pre-filtering."""
+
+            def __init__(self, real_re: re.Pattern[str]) -> None:
+                self._real_re = real_re
+                self.calls: list[str] = []
+
+            def match(self, text: str) -> re.Match[str] | None:
+                # Enforce that regex is only invoked for ccreq lines
+                assert "ccreq:" in text
+                self.calls.append(text)
+                return self._real_re.match(text)
+
+        total = 5_000
         expected_matches = 50
         log_file = _build_synthetic_log(
             tmp_path, total_lines=total, matching_lines=expected_matches
         )
-        start = time.perf_counter()
-        requests = parse_vscode_log(log_file)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        spy = _SpyRegex(CCREQ_RE)
+        with patch("copilot_usage.vscode_parser.CCREQ_RE", spy):
+            requests = parse_vscode_log(log_file)
+
+        # We still parse the expected number of requests.
         assert len(requests) == expected_matches
-        assert elapsed_ms < 200, f"Took {elapsed_ms:.1f} ms (limit: 200 ms)"
+        # The regex should be invoked exactly once per matching ccreq line.
+        assert len(spy.calls) == expected_matches
+        # And every call should indeed be on a ccreq line.
+        assert all("ccreq:" in line for line in spy.calls)
 
     def test_no_matching_lines(self, tmp_path: Path) -> None:
         """A log file with zero ccreq lines returns an empty list."""
@@ -601,7 +622,7 @@ class TestParseVscodeLogPreFilter:
         assert parse_vscode_log(log_file) == []
 
     def test_all_lines_match(self, tmp_path: Path) -> None:
-        """A log file where every line is a ccreq line parses all of them."""
+        """A log file where every line is a ccreq line parses all correctly."""
         n = 100
         lines = [
             f"2026-03-13 22:10:{i % 60:02d}.{i:03d}"
@@ -613,3 +634,8 @@ class TestParseVscodeLogPreFilter:
         log_file.write_text("\n".join(lines), encoding="utf-8")
         requests = parse_vscode_log(log_file)
         assert len(requests) == n
+        for i, req in enumerate(requests):
+            assert req.request_id == f"req{i:05d}"
+            assert req.model == "claude-opus-4.6"
+            assert req.duration_ms == 100 + i
+            assert req.category == "inline"
