@@ -231,11 +231,15 @@ cli-tools/
 ├── src/
 │   └── copilot_usage/
 │       ├── cli.py              # Click commands + interactive loop + watchdog auto-refresh
-│       ├── models.py           # Pydantic data models
-│       ├── parser.py           # events.jsonl parsing
-│       ├── pricing.py          # Model cost multipliers
+│       ├── models.py           # Pydantic data models and session-level helpers
+│       ├── parser.py           # events.jsonl parsing and session summary builder
+│       ├── pricing.py          # Model cost multipliers and lookup helpers
+│       ├── report.py           # Rich terminal output (summary, cost, live views)
+│       ├── render_detail.py    # Session-detail rendering (extracted from report.py)
+│       ├── _formatting.py      # Shared pure formatting utilities (tokens, durations)
+│       ├── vscode_parser.py    # VS Code Copilot Chat log parser
+│       ├── vscode_report.py    # Rich rendering for VS Code usage data
 │       ├── logging_config.py   # Loguru configuration
-│       ├── report.py           # Rich terminal output
 │       └── docs/               # Developer docs
 │           ├── architecture.md
 │           ├── changelog.md
