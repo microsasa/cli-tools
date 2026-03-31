@@ -5034,24 +5034,20 @@ class TestGetCachedEvents:
         assert entry.file_id == _safe_file_identity(p)
         assert len(entry.events) == 2
 
-    def test_cached_reads_faster_than_cold_reads(self, tmp_path: Path) -> None:
-        """Two cached reads should be significantly faster than two cold reads."""
+    def test_cached_reads_skip_parsing(self, tmp_path: Path) -> None:
+        """Repeated cached reads never re-invoke parse_events."""
         p = tmp_path / "s1" / "events.jsonl"
         _write_large_events_file(p, 1_000)
 
-        # Cold reads (cache is empty)
-        _EVENTS_CACHE.clear()
-        cold_start = time.perf_counter()
-        get_cached_events(p)
-        _EVENTS_CACHE.clear()
-        get_cached_events(p)
-        cold_elapsed = time.perf_counter() - cold_start
+        # Prime the cache with a cold read
+        first = get_cached_events(p)
 
-        # Warm reads (cache is populated from last call above)
-        warm_start = time.perf_counter()
-        get_cached_events(p)
-        get_cached_events(p)
-        warm_elapsed = time.perf_counter() - warm_start
+        # Subsequent reads must not call parse_events at all
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            second = get_cached_events(p)
+            third = get_cached_events(p)
+            assert spy.call_count == 0
 
-        # Cached reads should be at least 10× faster
-        assert warm_elapsed * 10 < cold_elapsed
+        # All reads return the exact same cached list object
+        assert second is first
+        assert third is first
