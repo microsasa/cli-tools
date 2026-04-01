@@ -57,10 +57,10 @@ class VSCodeLogSummary:
     duration_by_model: dict[str, int] = field(default_factory=lambda: {})
     requests_by_category: dict[str, int] = field(default_factory=lambda: {})
     requests_by_date: dict[str, int] = field(default_factory=lambda: {})
+    # Earliest timestamp seen (head of the first batch).
     first_timestamp: datetime | None = None
-    """Earliest timestamp seen (head of the first batch)."""
+    # Latest timestamp seen (tail of the last batch).
     last_timestamp: datetime | None = None
-    """Latest timestamp seen (tail of the last batch)."""
     log_files_parsed: int = 0
 
 
