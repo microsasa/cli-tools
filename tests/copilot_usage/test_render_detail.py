@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 import io
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -23,6 +24,14 @@ from copilot_usage.render_detail import (
     _render_shutdown_cycles,
     render_session_detail,
 )
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so assertions match visible text only."""
+    return _ANSI_RE.sub("", text)
+
 
 # ---------------------------------------------------------------------------
 # _extract_tool_name — all branches
@@ -176,3 +185,89 @@ class TestRenderShutdownCyclesEmptyModelMetrics:
         assert "Shutdown Cycles" in output
         # totals from empty modelMetrics → 0
         assert "0" in output
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 — _render_shutdown_cycles multi-model per-cycle aggregation (#622)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderShutdownCyclesMultiModelAggregation:
+    """Multi-model modelMetrics must be summed for Model Calls and
+    Output Tokens columns in the Shutdown Cycles table."""
+
+    def test_multi_model_sums_model_calls_and_output_tokens(self) -> None:
+        """Two models in one shutdown event → totals are summed."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 10,
+                "totalApiDurationMs": 60_000,
+                "modelMetrics": {
+                    "claude-sonnet-4": {
+                        "requests": {"count": 3, "cost": 7},
+                        "usage": {"outputTokens": 500},
+                    },
+                    "claude-haiku-4.5": {
+                        "requests": {"count": 4, "cost": 3},
+                        "usage": {"outputTokens": 300},
+                    },
+                },
+            },
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles([ev], target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Shutdown Cycles" in output
+        # Assert against the shutdown-cycle row (contains timestamp)
+        row = next(line for line in output.splitlines() if "2025-01-01 00:00" in line)
+        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — Multi-model aggregation via render_session_detail end-to-end (#622)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailMultiModelShutdown:
+    """Multi-model shutdown totals must propagate through
+    render_session_detail end-to-end."""
+
+    def test_multi_model_shutdown_via_full_render(self) -> None:
+        """render_session_detail must show summed model calls and
+        output tokens for a multi-model shutdown event."""
+        summary = SessionSummary(
+            session_id="multi-model-e2e",
+            start_time=datetime(2025, 1, 1, tzinfo=UTC),
+            is_active=False,
+        )
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=datetime(2025, 1, 1, 1, 0, 0, tzinfo=UTC),
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 10,
+                "totalApiDurationMs": 60_000,
+                "modelMetrics": {
+                    "claude-sonnet-4": {
+                        "requests": {"count": 3, "cost": 7},
+                        "usage": {"outputTokens": 500},
+                    },
+                    "claude-haiku-4.5": {
+                        "requests": {"count": 4, "cost": 3},
+                        "usage": {"outputTokens": 300},
+                    },
+                },
+            },
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Shutdown Cycles" in output
+        # Assert against the shutdown-cycle row (contains timestamp)
+        row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
+        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
