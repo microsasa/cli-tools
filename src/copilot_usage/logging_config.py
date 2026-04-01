@@ -5,6 +5,8 @@ from typing import Final, Protocol, TypedDict
 
 from loguru import logger
 
+__all__: Final[list[str]] = ["setup_logging"]
+
 LEVEL_EMOJI: Final[dict[str, str]] = {
     "TRACE": "🔍",
     "DEBUG": "🐛",
