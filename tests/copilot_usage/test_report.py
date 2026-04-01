@@ -5251,3 +5251,75 @@ class TestRenderSummaryHeaderO1DateRange:
         assert call_count <= 2, (
             f"ensure_aware called {call_count} times, expected at most 2"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #615 — _compute_session_totals single-pass optimisation
+# ---------------------------------------------------------------------------
+
+
+class TestComputeSessionTotalsSinglePass:
+    """Issue #615 — verify single-pass accumulator correctness at scale."""
+
+    @staticmethod
+    def _make_stubs(n: int) -> list[SessionSummary]:
+        """Build *n* SessionSummary stubs with deterministic field values."""
+        return [
+            SessionSummary(
+                session_id=f"perf-{i}",
+                total_premium_requests=i,
+                model_calls=i * 2,
+                user_messages=i * 3,
+                total_api_duration_ms=i * 10,
+                model_metrics={
+                    "gpt-4": ModelMetrics(
+                        usage=TokenUsage(outputTokens=i * 5),
+                    ),
+                },
+            )
+            for i in range(n)
+        ]
+
+    def test_large_batch_correctness(self) -> None:
+        """1 000-session batch returns the same totals a naive sum would."""
+        n = 1_000
+        sessions = self._make_stubs(n)
+        totals = _compute_session_totals(sessions)
+
+        # Expected values using the triangular-number formula: sum(0..n-1)
+        tri = n * (n - 1) // 2
+        assert totals.premium == tri
+        assert totals.model_calls == tri * 2
+        assert totals.user_messages == tri * 3
+        assert totals.api_duration_ms == tri * 10
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == n
+
+    def test_large_batch_custom_token_fn(self) -> None:
+        """Custom *token_fn* is respected for a large batch."""
+        sessions = self._make_stubs(500)
+        totals = _compute_session_totals(sessions, token_fn=shutdown_output_tokens)
+        tri = 500 * 499 // 2
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == 500
+
+    def test_single_pass_performance(self) -> None:
+        """500-session totals complete within 50 ms (regression guard)."""
+        import time
+
+        sessions = self._make_stubs(500)
+
+        # Warm-up run
+        _compute_session_totals(sessions)
+
+        iterations = 100
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _compute_session_totals(sessions)
+        elapsed_ms = (time.perf_counter() - start) * 1_000
+
+        per_call_ms = elapsed_ms / iterations
+        assert per_call_ms < 50, (
+            f"_compute_session_totals took {per_call_ms:.2f} ms per call "
+            f"(expected < 50 ms for 500 sessions)"
+        )
