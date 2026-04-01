@@ -3075,13 +3075,22 @@ def test_watchdog_not_imported_at_module_level() -> None:
     """Importing copilot_usage.cli must NOT pull in watchdog eagerly."""
     import sys
 
+    saved_modules = sys.modules.copy()
+
     # Remove any already-loaded copilot_usage / watchdog modules so we can
     # observe a fresh import of the cli module.
     mods_to_remove = [k for k in sys.modules if "copilot_usage" in k or "watchdog" in k]
     for m in mods_to_remove:
         del sys.modules[m]
 
-    import copilot_usage.cli  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    try:
+        import copilot_usage.cli  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
-    assert "watchdog.observers" not in sys.modules
-    assert "watchdog.events" not in sys.modules
+        assert "watchdog.observers" not in sys.modules
+        assert "watchdog.events" not in sys.modules
+    finally:
+        # Restore original module state so subsequent tests are unaffected.
+        for key in list(sys.modules):
+            if key not in saved_modules:
+                del sys.modules[key]
+        sys.modules.update(saved_modules)
