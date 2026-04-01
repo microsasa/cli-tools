@@ -16,6 +16,14 @@ from typing import Final
 from loguru import logger
 from pydantic import ValidationError
 
+__all__: Final[list[str]] = [
+    "build_session_summary",
+    "discover_sessions",
+    "get_all_sessions",
+    "get_cached_events",
+    "parse_events",
+]
+
 from copilot_usage.models import (
     CodeChanges,
     EventType,

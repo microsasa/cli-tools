@@ -13,6 +13,36 @@ from typing import Final, Self
 
 from pydantic import BaseModel, Field, model_validator
 
+__all__: Final[list[str]] = [
+    "EPOCH",
+    "CodeChanges",
+    "EventType",
+    "ModelMetrics",
+    "RequestMetrics",
+    "SessionContext",
+    "SessionEvent",
+    "SessionShutdownData",
+    "SessionStartData",
+    "SessionSummary",
+    "AssistantMessageData",
+    "ToolExecutionData",
+    "ToolRequest",
+    "ToolTelemetry",
+    "TokenUsage",
+    "UserMessageData",
+    "GenericEventData",
+    "EventData",
+    "add_to_model_metrics",
+    "copy_model_metrics",
+    "ensure_aware",
+    "ensure_aware_opt",
+    "has_active_period_stats",
+    "merge_model_metrics",
+    "session_sort_key",
+    "shutdown_output_tokens",
+    "total_output_tokens",
+]
+
 # ---------------------------------------------------------------------------
 # Shared datetime utilities
 # ---------------------------------------------------------------------------
