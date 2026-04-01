@@ -223,8 +223,8 @@ class TestRenderShutdownCyclesMultiModelAggregation:
         assert "Shutdown Cycles" in output
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 00:00" in line)
-        assert "7" in row  # total model calls = 3 + 4
-        assert "800" in row  # total output tokens = 500 + 300
+        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
 
 
 # ---------------------------------------------------------------------------
@@ -269,5 +269,5 @@ class TestRenderSessionDetailMultiModelShutdown:
         assert "Shutdown Cycles" in output
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
-        assert "7" in row  # total model calls = 3 + 4
-        assert "800" in row  # total output tokens = 500 + 300
+        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
