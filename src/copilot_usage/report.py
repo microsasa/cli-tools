@@ -105,18 +105,25 @@ def _compute_session_totals(
     *,
     token_fn: Callable[[SessionSummary], int] = total_output_tokens,
 ) -> _SessionTotals:
-    """Compute aggregated totals across *sessions*.
+    """Compute aggregated totals across *sessions* in a single pass.
 
     *token_fn* controls how output tokens are counted per session.  Defaults
     to :func:`total_output_tokens` (includes active tokens for resumed
     sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
     """
+    premium = model_calls = user_messages = api_duration_ms = output_tokens = 0
+    for s in sessions:
+        premium += s.total_premium_requests
+        model_calls += s.model_calls
+        user_messages += s.user_messages
+        api_duration_ms += s.total_api_duration_ms
+        output_tokens += token_fn(s)
     return _SessionTotals(
-        premium=sum(s.total_premium_requests for s in sessions),
-        model_calls=sum(s.model_calls for s in sessions),
-        user_messages=sum(s.user_messages for s in sessions),
-        api_duration_ms=sum(s.total_api_duration_ms for s in sessions),
-        output_tokens=sum(token_fn(s) for s in sessions),
+        premium=premium,
+        model_calls=model_calls,
+        user_messages=user_messages,
+        api_duration_ms=api_duration_ms,
+        output_tokens=output_tokens,
         session_count=len(sessions),
     )
 

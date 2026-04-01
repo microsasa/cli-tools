@@ -5251,3 +5251,88 @@ class TestRenderSummaryHeaderO1DateRange:
         assert call_count <= 2, (
             f"ensure_aware called {call_count} times, expected at most 2"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #615 — _compute_session_totals single-pass optimisation
+# ---------------------------------------------------------------------------
+
+
+class TestComputeSessionTotalsSinglePass:
+    """Issue #615 — verify single-pass accumulator correctness at scale."""
+
+    @staticmethod
+    def _make_stubs(n: int) -> list[SessionSummary]:
+        """Build *n* SessionSummary stubs with deterministic field values."""
+        return [
+            SessionSummary(
+                session_id=f"perf-{i}",
+                total_premium_requests=i,
+                model_calls=i * 2,
+                user_messages=i * 3,
+                total_api_duration_ms=i * 10,
+                model_metrics={
+                    "gpt-4": ModelMetrics(
+                        usage=TokenUsage(outputTokens=i * 5),
+                    ),
+                },
+            )
+            for i in range(n)
+        ]
+
+    def test_large_batch_correctness(self) -> None:
+        """1 000-session batch returns the same totals a naive sum would."""
+        n = 1_000
+        sessions = self._make_stubs(n)
+        totals = _compute_session_totals(sessions)
+
+        # Expected values using the triangular-number formula: sum(0..n-1)
+        tri = n * (n - 1) // 2
+        assert totals.premium == tri
+        assert totals.model_calls == tri * 2
+        assert totals.user_messages == tri * 3
+        assert totals.api_duration_ms == tri * 10
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == n
+
+    def test_large_batch_custom_token_fn(self) -> None:
+        """Custom *token_fn* is respected for a large batch."""
+        sessions = self._make_stubs(500)
+        totals = _compute_session_totals(sessions, token_fn=shutdown_output_tokens)
+        tri = 500 * 499 // 2
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == 500
+
+    class _SinglePassIterable:
+        """Iterable wrapper that enforces a single pass over the data."""
+
+        def __init__(self, items: list[SessionSummary]) -> None:
+            self._items = items
+            self.iter_count = 0
+
+        def __iter__(self):
+            if self.iter_count >= 1:
+                raise AssertionError("sessions iterable was iterated more than once")
+            self.iter_count += 1
+            return iter(self._items)
+
+        def __len__(self) -> int:
+            return len(self._items)
+
+    def test_sessions_iterated_only_once(self) -> None:
+        """_compute_session_totals performs a single pass over the iterable."""
+        sessions = self._make_stubs(500)
+        wrapped = self._SinglePassIterable(sessions)
+        totals = _compute_session_totals(wrapped)  # type: ignore[arg-type]
+
+        # Verify we only iterated once over the sessions iterable.
+        assert wrapped.iter_count == 1
+
+        # Sanity-check that totals are still correct for the wrapped iterable.
+        tri = 500 * 499 // 2
+        assert totals.premium == tri
+        assert totals.model_calls == tri * 2
+        assert totals.user_messages == tri * 3
+        assert totals.api_duration_ms == tri * 10
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == 500
