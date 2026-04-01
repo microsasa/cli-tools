@@ -709,7 +709,12 @@ class TestRenderSessionDetail:
         from copilot_usage.report import render_session_detail
 
         start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
-        summary = _make_session(start_time=start, is_active=False)
+        summary = _make_session(
+            start_time=start,
+            is_active=False,
+            model_calls=0,
+            output_tokens=0,
+        )
         events = [
             _make_event(
                 EventType.SESSION_SHUTDOWN,
@@ -729,9 +734,11 @@ class TestRenderSessionDetail:
         ]
         output = _capture_console(render_session_detail, events, summary)
         assert "Shutdown Cycles" in output
-        assert "5" in output  # premium requests
-        assert "3" in output  # model calls
-        assert "800" in output  # output tokens
+        # Assert against the shutdown-cycle row (contains timestamp)
+        row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
+        assert "5" in row  # premium requests
+        assert "3" in row  # model calls
+        assert "800" in row  # output tokens
 
     def test_renders_recent_events_title(self) -> None:
         from copilot_usage.report import render_session_detail

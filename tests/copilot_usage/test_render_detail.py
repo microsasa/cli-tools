@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 import io
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -23,6 +24,14 @@ from copilot_usage.render_detail import (
     _render_shutdown_cycles,
     render_session_detail,
 )
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so assertions match visible text only."""
+    return _ANSI_RE.sub("", text)
+
 
 # ---------------------------------------------------------------------------
 # _extract_tool_name — all branches
@@ -210,10 +219,12 @@ class TestRenderShutdownCyclesMultiModelAggregation:
         )
         buf, console = _buf_console()
         _render_shutdown_cycles([ev], target_console=console)
-        output = buf.getvalue()
+        output = _strip_ansi(buf.getvalue())
         assert "Shutdown Cycles" in output
-        assert "7" in output  # total model calls = 3 + 4
-        assert "800" in output  # total output tokens = 500 + 300
+        # Assert against the shutdown-cycle row (contains timestamp)
+        row = next(line for line in output.splitlines() if "2025-01-01 00:00" in line)
+        assert "7" in row  # total model calls = 3 + 4
+        assert "800" in row  # total output tokens = 500 + 300
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +265,9 @@ class TestRenderSessionDetailMultiModelShutdown:
         )
         buf, console = _buf_console()
         render_session_detail([ev], summary, target_console=console)
-        output = buf.getvalue()
+        output = _strip_ansi(buf.getvalue())
         assert "Shutdown Cycles" in output
-        assert "7" in output  # total model calls = 3 + 4
-        assert "800" in output  # total output tokens = 500 + 300
+        # Assert against the shutdown-cycle row (contains timestamp)
+        row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
+        assert "7" in row  # total model calls = 3 + 4
+        assert "800" in row  # total output tokens = 500 + 300
