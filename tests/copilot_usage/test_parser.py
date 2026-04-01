@@ -5244,3 +5244,9 @@ class TestGetCachedEvents:
         # All reads return the exact same cached list object
         assert second is first
         assert third is first
+
+    def test_oserror_propagated_on_missing_file(self, tmp_path: Path) -> None:
+        """get_cached_events raises OSError when the file does not exist."""
+        missing = tmp_path / "ghost" / "events.jsonl"
+        with pytest.raises(OSError):
+            get_cached_events(missing)
