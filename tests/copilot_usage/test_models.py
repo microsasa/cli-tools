@@ -12,6 +12,7 @@ from copilot_usage.models import (
     AssistantMessageData,
     CodeChanges,
     EventType,
+    GenericEventData,
     ModelMetrics,
     RequestMetrics,
     SessionEvent,
@@ -245,7 +246,28 @@ def test_session_event_unknown_type() -> None:
     raw = {"type": "some.future.event", "data": {"foo": "bar"}, "id": "x"}
     ev = SessionEvent.model_validate(raw)
     data = ev.parse_data()
-    assert data is not None
+    assert isinstance(data, GenericEventData)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        EventType.SESSION_RESUME,
+        EventType.SESSION_ERROR,
+        EventType.SESSION_PLAN_CHANGED,
+        EventType.SESSION_WORKSPACE_FILE_CHANGED,
+        EventType.ASSISTANT_TURN_START,
+        EventType.ASSISTANT_TURN_END,
+        EventType.TOOL_EXECUTION_START,
+        EventType.ABORT,
+    ],
+)
+def test_parse_data_known_unmodeled_types_return_generic(
+    event_type: EventType,
+) -> None:
+    ev = SessionEvent(type=event_type, data={"foo": "bar"}, id="x")
+    data = ev.parse_data()
+    assert isinstance(data, GenericEventData)
 
 
 # ---------------------------------------------------------------------------
