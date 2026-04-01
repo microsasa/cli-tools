@@ -588,7 +588,10 @@ class TestNonChronologicalRequests:
 
         assert summary.requests_by_date["2026-03-05"] == 2
         assert summary.requests_by_date["2026-03-03"] == 1
-        # Timestamp bounds come from head/tail of the (chronological) batch.
+        # Timestamp bounds come from head/tail of the provided batch (assumed
+        # chronological in production).  This test intentionally uses an
+        # out-of-order list to verify that date-bucketing still works; the
+        # first/last assertions reflect head/tail indexing, not global min/max.
         assert summary.first_timestamp == mar5_a.timestamp
         assert summary.last_timestamp == mar5_b.timestamp
         assert summary.total_requests == 3

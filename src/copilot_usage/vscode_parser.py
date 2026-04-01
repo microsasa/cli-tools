@@ -43,7 +43,13 @@ class VSCodeRequest:
 
 @dataclass(frozen=True, slots=True)
 class VSCodeLogSummary:
-    """Aggregated stats from VS Code Copilot Chat logs."""
+    """Aggregated stats from VS Code Copilot Chat logs.
+
+    ``first_timestamp`` and ``last_timestamp`` are derived from the head and
+    tail of each request batch, **not** from a global min/max scan.  This is
+    correct when the input requests are in chronological order (the normal
+    case for VS Code log files).
+    """
 
     total_requests: int = 0
     total_duration_ms: int = 0
@@ -52,7 +58,9 @@ class VSCodeLogSummary:
     requests_by_category: dict[str, int] = field(default_factory=lambda: {})
     requests_by_date: dict[str, int] = field(default_factory=lambda: {})
     first_timestamp: datetime | None = None
+    """Earliest timestamp seen (head of the first batch)."""
     last_timestamp: datetime | None = None
+    """Latest timestamp seen (tail of the last batch)."""
     log_files_parsed: int = 0
 
 
@@ -198,7 +206,13 @@ def build_vscode_summary(
     *,
     log_files_parsed: int = 0,
 ) -> VSCodeLogSummary:
-    """Aggregate a list of parsed requests into a summary."""
+    """Aggregate a list of parsed requests into a summary.
+
+    *requests* **must** be in chronological order.  Timestamp bounds are
+    derived from the head and tail of the list (O(1)) rather than a full
+    min/max scan, so out-of-order inputs will produce incorrect
+    ``first_timestamp`` / ``last_timestamp`` values.
+    """
     acc = _SummaryAccumulator(log_files_parsed=log_files_parsed)
     _update_vscode_summary(acc, requests)
     return _finalize_summary(acc)
