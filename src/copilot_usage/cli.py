@@ -17,8 +17,6 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-from watchdog.events import FileSystemEventHandler  # type: ignore[import-untyped]
-from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from copilot_usage import __version__
 from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
@@ -178,11 +176,16 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     return None
 
 
-class _FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
-    """Watchdog handler that triggers refresh on any session-state change."""
+class _FileChangeHandler:
+    """Watchdog-compatible handler that triggers refresh on session-state changes.
+
+    Implements the ``dispatch(event)`` interface expected by watchdog's
+    ``Observer.schedule`` via duck typing — no inheritance from
+    ``FileSystemEventHandler`` needed.  This avoids importing the heavy
+    ``watchdog`` package at module level.
+    """
 
     def __init__(self, change_event: threading.Event) -> None:
-        super().__init__()
         self._change_event = change_event
         self._last_trigger = 0.0
 
@@ -211,9 +214,11 @@ def _start_observer(
     treat a ``None`` return as "auto-refresh unavailable" and continue
     without it.
     """
+    from watchdog.observers import Observer  # type: ignore[import-untyped]
+
     handler = _FileChangeHandler(change_event)
     observer = Observer()
-    observer.schedule(handler, str(session_path), recursive=True)
+    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
     observer.daemon = True
     try:
         observer.start()

@@ -766,7 +766,7 @@ def test_start_observer_returns_none_on_startup_error(tmp_path: Path) -> None:
 
     try:
         with patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=RuntimeError("inotify limit exceeded"),
         ):
             result = _start_observer(tmp_path, change_event)
@@ -788,7 +788,7 @@ def test_start_observer_returns_none_on_os_error(tmp_path: Path) -> None:
 
     try:
         with patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=OSError("Permission denied"),
         ):
             result = _start_observer(tmp_path, change_event)
@@ -810,12 +810,12 @@ def test_start_observer_cleanup_when_alive_after_failure(tmp_path: Path) -> None
     try:
         with (
             patch(
-                "copilot_usage.cli.Observer.start",
+                "watchdog.observers.Observer.start",
                 side_effect=RuntimeError("partial start failure"),
             ),
-            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
-            patch("copilot_usage.cli.Observer.stop") as mock_stop,
-            patch("copilot_usage.cli.Observer.join") as mock_join,
+            patch("watchdog.observers.Observer.is_alive", return_value=True),
+            patch("watchdog.observers.Observer.stop") as mock_stop,
+            patch("watchdog.observers.Observer.join") as mock_join,
         ):
             result = _start_observer(tmp_path, change_event)
     finally:
@@ -837,12 +837,12 @@ def test_start_observer_cleanup_failure_logged_as_debug(tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "copilot_usage.cli.Observer.start",
+                "watchdog.observers.Observer.start",
                 side_effect=RuntimeError("start failed"),
             ),
-            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
+            patch("watchdog.observers.Observer.is_alive", return_value=True),
             patch(
-                "copilot_usage.cli.Observer.stop",
+                "watchdog.observers.Observer.stop",
                 side_effect=RuntimeError("cleanup failed"),
             ),
         ):
@@ -860,7 +860,7 @@ def test_start_observer_propagates_unexpected_exception(tmp_path: Path) -> None:
 
     with (
         patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=TypeError("unexpected"),
         ),
         pytest.raises(TypeError, match="unexpected"),
@@ -935,19 +935,16 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
-    def test_inherits_from_filesystemeventhandler(self) -> None:
-        """_FileChangeHandler inherits from watchdog FileSystemEventHandler."""
-        from watchdog.events import (
-            FileSystemEventHandler,  # type: ignore[import-untyped]
-        )
-
+    def test_duck_typed_dispatch_interface(self) -> None:
+        """_FileChangeHandler provides a dispatch(event) interface (duck typing)."""
         from copilot_usage.cli import (
             _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
         )
 
         event = threading.Event()
         handler = _FileChangeHandler(event)
-        assert isinstance(handler, FileSystemEventHandler)
+        # dispatch is callable and accepts an arbitrary event object
+        assert callable(handler.dispatch)
         handler.dispatch(object())
         assert event.is_set()
 
@@ -3067,3 +3064,24 @@ def test_vscode_command(tmp_path: Path) -> None:
     assert "claude-sonnet-4" in output
     assert "By Feature" in output
     assert "Daily Activity" in output
+
+
+# ---------------------------------------------------------------------------
+# Lazy watchdog import
+# ---------------------------------------------------------------------------
+
+
+def test_watchdog_not_imported_at_module_level() -> None:
+    """Importing copilot_usage.cli must NOT pull in watchdog eagerly."""
+    import sys
+
+    # Remove any already-loaded copilot_usage / watchdog modules so we can
+    # observe a fresh import of the cli module.
+    mods_to_remove = [k for k in sys.modules if "copilot_usage" in k or "watchdog" in k]
+    for m in mods_to_remove:
+        del sys.modules[m]
+
+    import copilot_usage.cli  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+    assert "watchdog.observers" not in sys.modules
+    assert "watchdog.events" not in sys.modules
