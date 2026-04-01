@@ -1,5 +1,6 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
+import contextlib
 import json
 import os
 import re
@@ -766,7 +767,7 @@ def test_start_observer_returns_none_on_startup_error(tmp_path: Path) -> None:
 
     try:
         with patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=RuntimeError("inotify limit exceeded"),
         ):
             result = _start_observer(tmp_path, change_event)
@@ -788,7 +789,7 @@ def test_start_observer_returns_none_on_os_error(tmp_path: Path) -> None:
 
     try:
         with patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=OSError("Permission denied"),
         ):
             result = _start_observer(tmp_path, change_event)
@@ -810,12 +811,12 @@ def test_start_observer_cleanup_when_alive_after_failure(tmp_path: Path) -> None
     try:
         with (
             patch(
-                "copilot_usage.cli.Observer.start",
+                "watchdog.observers.Observer.start",
                 side_effect=RuntimeError("partial start failure"),
             ),
-            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
-            patch("copilot_usage.cli.Observer.stop") as mock_stop,
-            patch("copilot_usage.cli.Observer.join") as mock_join,
+            patch("watchdog.observers.Observer.is_alive", return_value=True),
+            patch("watchdog.observers.Observer.stop") as mock_stop,
+            patch("watchdog.observers.Observer.join") as mock_join,
         ):
             result = _start_observer(tmp_path, change_event)
     finally:
@@ -837,12 +838,12 @@ def test_start_observer_cleanup_failure_logged_as_debug(tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "copilot_usage.cli.Observer.start",
+                "watchdog.observers.Observer.start",
                 side_effect=RuntimeError("start failed"),
             ),
-            patch("copilot_usage.cli.Observer.is_alive", return_value=True),
+            patch("watchdog.observers.Observer.is_alive", return_value=True),
             patch(
-                "copilot_usage.cli.Observer.stop",
+                "watchdog.observers.Observer.stop",
                 side_effect=RuntimeError("cleanup failed"),
             ),
         ):
@@ -860,7 +861,7 @@ def test_start_observer_propagates_unexpected_exception(tmp_path: Path) -> None:
 
     with (
         patch(
-            "copilot_usage.cli.Observer.start",
+            "watchdog.observers.Observer.start",
             side_effect=TypeError("unexpected"),
         ),
         pytest.raises(TypeError, match="unexpected"),
@@ -935,19 +936,16 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
-    def test_inherits_from_filesystemeventhandler(self) -> None:
-        """_FileChangeHandler inherits from watchdog FileSystemEventHandler."""
-        from watchdog.events import (
-            FileSystemEventHandler,  # type: ignore[import-untyped]
-        )
-
+    def test_dispatch_interface(self) -> None:
+        """_FileChangeHandler provides a dispatch(event) interface compatible with watchdog handlers."""
         from copilot_usage.cli import (
             _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
         )
 
         event = threading.Event()
         handler = _FileChangeHandler(event)
-        assert isinstance(handler, FileSystemEventHandler)
+        # dispatch is callable and accepts an arbitrary event object
+        assert callable(handler.dispatch)
         handler.dispatch(object())
         assert event.is_set()
 
@@ -3067,3 +3065,63 @@ def test_vscode_command(tmp_path: Path) -> None:
     assert "claude-sonnet-4" in output
     assert "By Feature" in output
     assert "Daily Activity" in output
+
+
+# ---------------------------------------------------------------------------
+# Lazy watchdog import
+# ---------------------------------------------------------------------------
+
+
+def test_watchdog_not_imported_at_module_level() -> None:
+    """Importing copilot_usage.cli must NOT pull in watchdog eagerly."""
+    import sys
+
+    # Snapshot full module state so we can restore everything after the test,
+    # preventing leaked interpreter state from making later tests flaky.
+    saved_modules = sys.modules.copy()
+
+    # Save the parent-package attribute because Python's import machinery
+    # sets ``copilot_usage.cli`` on the parent when the submodule is imported,
+    # and ``sys.modules.update`` alone does not undo that side-effect.
+    import copilot_usage as _pkg
+
+    try:
+        saved_cli_attr = _pkg.cli  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType,reportAttributeAccessIssue]
+        _had_cli_attr = True
+    except AttributeError:
+        saved_cli_attr = None
+        _had_cli_attr = False
+
+    # Only remove the specific modules we need to re-import: the CLI module
+    # (and its submodules) plus watchdog, so we can observe a fresh import.
+    mods_to_remove = [
+        name
+        for name in list(sys.modules)
+        if name == "copilot_usage.cli"
+        or name.startswith("copilot_usage.cli.")
+        or name == "watchdog"
+        or name.startswith("watchdog.")
+    ]
+    for name in mods_to_remove:
+        del sys.modules[name]
+
+    try:
+        import copilot_usage.cli  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+        assert "watchdog.observers" not in sys.modules
+        assert "watchdog.events" not in sys.modules
+    finally:
+        # Restore original module state so subsequent tests are unaffected.
+        for key in list(sys.modules):
+            if key not in saved_modules:
+                del sys.modules[key]
+        sys.modules.update(saved_modules)
+
+        # Restore the parent-package attribute to the original module object.
+        if _had_cli_attr:
+            _pkg.cli = saved_cli_attr  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            # If the attribute did not exist before, remove any attribute that
+            # was added as a side-effect of importing copilot_usage.cli.
+            with contextlib.suppress(AttributeError):
+                del _pkg.cli  # pyright: ignore[reportAttributeAccessIssue]
