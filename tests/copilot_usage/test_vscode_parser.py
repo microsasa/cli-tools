@@ -12,6 +12,8 @@ from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     CCREQ_RE,
     VSCodeRequest,
+    _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
+    _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
     discover_vscode_logs,
     get_vscode_summary,
@@ -546,15 +548,20 @@ class TestBuildVscodeSummaryBulk:
 
 
 # ---------------------------------------------------------------------------
-# Non-chronological request ordering
+# Non-chronological request ordering (date accumulation only)
 # ---------------------------------------------------------------------------
 
 
 class TestNonChronologicalRequests:
-    """_update_vscode_summary handles out-of-order timestamps correctly."""
+    """Date accumulation handles out-of-order timestamps correctly."""
 
     def test_non_chronological_date_accumulation(self) -> None:
-        """Requests arriving Mar 5 → Mar 3 → Mar 5 are aggregated by date value."""
+        """Requests arriving Mar 5 → Mar 3 → Mar 5 are aggregated by date value.
+
+        Note: timestamp bounds (first/last) use O(1) head/tail indexing, so
+        they reflect the first and last element, not the global min/max.
+        Date-bucketing is still correct regardless of ordering.
+        """
         mar5_a = VSCodeRequest(
             timestamp=datetime(2026, 3, 5, 10, 0, 0),
             request_id="r1",
@@ -581,9 +588,74 @@ class TestNonChronologicalRequests:
 
         assert summary.requests_by_date["2026-03-05"] == 2
         assert summary.requests_by_date["2026-03-03"] == 1
-        assert summary.first_timestamp == mar3.timestamp
+        # Timestamp bounds come from head/tail of the (chronological) batch.
+        assert summary.first_timestamp == mar5_a.timestamp
         assert summary.last_timestamp == mar5_b.timestamp
         assert summary.total_requests == 3
+
+
+# ---------------------------------------------------------------------------
+# O(1) timestamp-bounds optimisation
+# ---------------------------------------------------------------------------
+
+
+class TestTimestampBoundsOptimisation:
+    """Timestamp bounds are derived from first/last elements per batch."""
+
+    def test_single_batch_chronological(self) -> None:
+        """first/last timestamps equal the head/tail of a chronological batch."""
+        reqs = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 10, 8, 0, i),
+                request_id=f"r{i}",
+                model="gpt-4o",
+                duration_ms=100 + i,
+                category="panel",
+            )
+            for i in range(5)
+        ]
+
+        summary = build_vscode_summary(reqs)
+
+        assert summary.first_timestamp == reqs[0].timestamp
+        assert summary.last_timestamp == reqs[-1].timestamp
+
+    def test_two_batches_advances_last_only(self) -> None:
+        """Second (later) batch advances last_timestamp but not first_timestamp."""
+        batch1 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 10, 8, 0, i),
+                request_id=f"b1r{i}",
+                model="gpt-4o",
+                duration_ms=100,
+                category="panel",
+            )
+            for i in range(3)
+        ]
+        batch2 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 11, 9, 0, i),
+                request_id=f"b2r{i}",
+                model="gpt-4o",
+                duration_ms=200,
+                category="panel",
+            )
+            for i in range(4)
+        ]
+
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, batch1)
+
+        first_after_batch1 = acc.first_timestamp
+        last_after_batch1 = acc.last_timestamp
+
+        _update_vscode_summary(acc, batch2)
+
+        # first_timestamp unchanged; last_timestamp advances.
+        assert acc.first_timestamp == first_after_batch1
+        assert acc.first_timestamp == batch1[0].timestamp
+        assert acc.last_timestamp == batch2[-1].timestamp
+        assert acc.last_timestamp != last_after_batch1
 
 
 # ---------------------------------------------------------------------------

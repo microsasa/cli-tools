@@ -169,10 +169,13 @@ def _update_vscode_summary(
             last_date_val = ts_date
         acc.requests_by_date[last_date_key] += 1
 
-        if acc.first_timestamp is None or req.timestamp < acc.first_timestamp:
-            acc.first_timestamp = req.timestamp
-        if acc.last_timestamp is None or req.timestamp > acc.last_timestamp:
-            acc.last_timestamp = req.timestamp
+    # Timestamp bounds: within a log file, requests are in chronological order,
+    # so only the first and last entries can affect the running min/max.
+    if requests:
+        if acc.first_timestamp is None or requests[0].timestamp < acc.first_timestamp:
+            acc.first_timestamp = requests[0].timestamp
+        if acc.last_timestamp is None or requests[-1].timestamp > acc.last_timestamp:
+            acc.last_timestamp = requests[-1].timestamp
 
 
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
