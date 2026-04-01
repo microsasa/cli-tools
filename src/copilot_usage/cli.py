@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
-from typing import Any, Final, Literal, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 
 import click
 from loguru import logger
@@ -176,12 +176,18 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     return None
 
 
+class _FileChangeEventHandler(Protocol):
+    """Protocol for minimal filesystem event handlers used with watchdog."""
+
+    def dispatch(self, event: object) -> None:
+        """Handle a filesystem event."""
+
+
 class _FileChangeHandler:
     """Watchdog-compatible handler that triggers refresh on session-state changes.
 
-    Implements the ``dispatch(event)`` interface expected by watchdog's
-    ``Observer.schedule`` via duck typing — no inheritance from
-    ``FileSystemEventHandler`` needed.  This avoids importing the heavy
+    Implements the :class:`_FileChangeEventHandler` ``dispatch(event)``
+    Protocol expected by watchdog observers, without importing the heavy
     ``watchdog`` package at module level.
     """
 
@@ -216,9 +222,9 @@ def _start_observer(
     """
     from watchdog.observers import Observer  # type: ignore[import-untyped]
 
-    handler = _FileChangeHandler(change_event)
+    handler: _FileChangeEventHandler = _FileChangeHandler(change_event)
     observer = Observer()
-    observer.schedule(cast(Any, handler), str(session_path), recursive=True)
+    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
     observer.daemon = True
     try:
         observer.start()

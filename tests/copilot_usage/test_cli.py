@@ -1,5 +1,6 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
+import contextlib
 import json
 import os
 import re
@@ -935,8 +936,8 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
-    def test_duck_typed_dispatch_interface(self) -> None:
-        """_FileChangeHandler provides a dispatch(event) interface (duck typing)."""
+    def test_dispatch_interface(self) -> None:
+        """_FileChangeHandler provides a dispatch(event) interface compatible with watchdog handlers."""
         from copilot_usage.cli import (
             _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
         )
@@ -3084,7 +3085,12 @@ def test_watchdog_not_imported_at_module_level() -> None:
     # and ``sys.modules.update`` alone does not undo that side-effect.
     import copilot_usage as _pkg
 
-    saved_cli_attr = getattr(_pkg, "cli", None)
+    try:
+        saved_cli_attr = _pkg.cli  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType,reportAttributeAccessIssue]
+        _had_cli_attr = True
+    except AttributeError:
+        saved_cli_attr = None
+        _had_cli_attr = False
 
     # Only remove the specific modules we need to re-import: the CLI module
     # (and its submodules) plus watchdog, so we can observe a fresh import.
@@ -3112,10 +3118,10 @@ def test_watchdog_not_imported_at_module_level() -> None:
         sys.modules.update(saved_modules)
 
         # Restore the parent-package attribute to the original module object.
-        if saved_cli_attr is not None:
+        if _had_cli_attr:
             _pkg.cli = saved_cli_attr  # pyright: ignore[reportAttributeAccessIssue]
         else:
             # If the attribute did not exist before, remove any attribute that
             # was added as a side-effect of importing copilot_usage.cli.
-            if hasattr(_pkg, "cli"):
-                delattr(_pkg, "cli")
+            with contextlib.suppress(AttributeError):
+                del _pkg.cli  # pyright: ignore[reportAttributeAccessIssue]
