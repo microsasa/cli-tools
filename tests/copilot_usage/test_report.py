@@ -4955,6 +4955,20 @@ class TestRenderRecentEventsMaxEventsBoundary:
             assert f"m-{i}" not in output
         assert output.count("user message") == 1
 
+    def test_max_events_negative_shows_none(self) -> None:
+        """max_events=-1 produces 'No events to display' — covers the negative branch of the <= 0 guard."""
+        start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        events = [
+            _make_event(
+                EventType.USER_MESSAGE,
+                data={"content": "visible?"},
+                timestamp=start + timedelta(seconds=1),
+            )
+        ]
+        output = _capture_console(_render_recent_events, events, start, max_events=-1)
+        assert "No events to display" in output
+        assert "visible?" not in output
+
 
 # ---------------------------------------------------------------------------
 # Issue #472 — Cleanup: callers guard against empty sessions
