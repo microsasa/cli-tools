@@ -9,7 +9,7 @@ import builtins
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Final, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -381,7 +381,7 @@ class SessionSummary(BaseModel):
     active_output_tokens: int = 0
 
     @model_validator(mode="after")
-    def _check_call_counts(self) -> "SessionSummary":
+    def _check_call_counts(self) -> Self:
         if self.active_model_calls > self.model_calls:
             raise ValueError(
                 f"active_model_calls ({self.active_model_calls}) must be <= "

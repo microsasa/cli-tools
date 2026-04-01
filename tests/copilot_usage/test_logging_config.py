@@ -115,5 +115,5 @@ def test_emoji_patcher_real_loguru_record() -> None:
 
     assert captured, "expected at least one captured record"
     record = captured[0]
-    _emoji_patcher(record)
+    _emoji_patcher(record)  # type: ignore[arg-type]
     assert record["extra"]["emoji"] == LEVEL_EMOJI["INFO"]
