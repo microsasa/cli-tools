@@ -5303,23 +5303,36 @@ class TestComputeSessionTotalsSinglePass:
         assert totals.output_tokens == tri * 5
         assert totals.session_count == 500
 
-    def test_single_pass_performance(self) -> None:
-        """500-session totals complete within 50 ms (regression guard)."""
-        import time
+    class _SinglePassIterable:
+        """Iterable wrapper that enforces a single pass over the data."""
 
+        def __init__(self, items: list[SessionSummary]) -> None:
+            self._items = items
+            self.iter_count = 0
+
+        def __iter__(self):
+            if self.iter_count >= 1:
+                raise AssertionError("sessions iterable was iterated more than once")
+            self.iter_count += 1
+            return iter(self._items)
+
+        def __len__(self) -> int:
+            return len(self._items)
+
+    def test_sessions_iterated_only_once(self) -> None:
+        """_compute_session_totals performs a single pass over the iterable."""
         sessions = self._make_stubs(500)
+        wrapped = self._SinglePassIterable(sessions)
+        totals = _compute_session_totals(wrapped)  # type: ignore[arg-type]
 
-        # Warm-up run
-        _compute_session_totals(sessions)
+        # Verify we only iterated once over the sessions iterable.
+        assert wrapped.iter_count == 1
 
-        iterations = 100
-        start = time.perf_counter()
-        for _ in range(iterations):
-            _compute_session_totals(sessions)
-        elapsed_ms = (time.perf_counter() - start) * 1_000
-
-        per_call_ms = elapsed_ms / iterations
-        assert per_call_ms < 50, (
-            f"_compute_session_totals took {per_call_ms:.2f} ms per call "
-            f"(expected < 50 ms for 500 sessions)"
-        )
+        # Sanity-check that totals are still correct for the wrapped iterable.
+        tri = 500 * 499 // 2
+        assert totals.premium == tri
+        assert totals.model_calls == tri * 2
+        assert totals.user_messages == tri * 3
+        assert totals.api_duration_ms == tri * 10
+        assert totals.output_tokens == tri * 5
+        assert totals.session_count == 500
