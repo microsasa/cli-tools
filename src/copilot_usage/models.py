@@ -408,7 +408,7 @@ class SessionSummary(BaseModel):
     # Per-cycle shutdown data: (timestamp, parsed shutdown payload).
     # Populated at build time so renderers never re-scan the event list.
     shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = Field(
-        default_factory=lambda: list[tuple[datetime | None, SessionShutdownData]]()
+        default_factory=list[tuple[datetime | None, SessionShutdownData]]
     )
 
     # Post-shutdown activity (only populated for resumed/active sessions)
