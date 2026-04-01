@@ -2027,9 +2027,45 @@ class TestRenderCostView:
             },
         )
         output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
         assert "claude-sonnet-4" in output
         assert "claude-haiku-4.5" in output
         assert "Grand Total" in output
+
+        # Gap 1: Session name appears exactly once (cleared after first row)
+        assert clean.count("Multi Model") == 1
+
+        # Parse data rows: split on │ and keep all cells (including empty).
+        # Table columns: Session | Model | Requests | Premium Cost | Model Calls | Output Tokens
+        data_rows = [
+            r
+            for r in clean.split("\n")
+            if "│" in r and "Grand Total" not in r and "Cost Breakdown" not in r
+        ]
+        model_rows = [r for r in data_rows if "claude-" in r]
+        assert len(model_rows) == 2
+
+        def _cells(row: str) -> list[str]:
+            """Split a Rich table row on │ and strip each cell."""
+            return [c.strip() for c in row.split("│")][1:-1]
+
+        first = _cells(model_rows[0])
+        second = _cells(model_rows[1])
+
+        # Gap 2: Model-calls display (column index 4) appears on first row only.
+        assert first[4] == "15"
+        assert second[4] == ""
+
+        # Gap 3: Per-model request count and cost are correct per row.
+        # claude-haiku-4.5 (sorted first): count=5, cost=2
+        assert first[1] == "claude-haiku-4.5"
+        assert first[2] == "5"
+        assert first[3] == "2"
+        # claude-sonnet-4 (sorted second): count=10, cost=10
+        assert second[1] == "claude-sonnet-4"
+        assert second[2] == "10"
+        assert second[3] == "10"
 
     def test_multi_model_active_session_shows_since_last_shutdown_row(self) -> None:
         """Active session with 2+ models in model_metrics renders both model rows
@@ -2058,6 +2094,7 @@ class TestRenderCostView:
             },
         )
         output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
 
         # Both historical model rows must appear
         assert "claude-sonnet-4" in output
@@ -2069,8 +2106,44 @@ class TestRenderCostView:
         # claude-opus-4.6 multiplier = 3.0, active_model_calls = 4 → ~12
         assert "~12" in output
 
+        # Gap 1: Session name appears exactly once (cleared after first row)
+        assert clean.count("Multi + Active") == 1
+
+        def _cells(row: str) -> list[str]:
+            """Split a Rich table row on │ and strip each cell."""
+            return [c.strip() for c in row.split("│")][1:-1]
+
+        # Gap 4: shutdown_model_calls = model_calls - active_model_calls = 12 - 4 = 8
+        # This value appears in the Model Calls column of the first model row only.
+        data_rows = [
+            r
+            for r in clean.split("\n")
+            if "│" in r
+            and "Grand Total" not in r
+            and "Cost Breakdown" not in r
+            and "Since last shutdown" not in r
+        ]
+        model_rows = [r for r in data_rows if "claude-" in r]
+        assert len(model_rows) == 2
+
+        first = _cells(model_rows[0])
+        second = _cells(model_rows[1])
+
+        # Gap 2: Model-calls display appears on first row only (shutdown value = 8)
+        assert first[4] == "8"  # shutdown_model_calls = 12 - 4
+        assert second[4] == ""  # blanked after first row
+
+        # Gap 3: Per-model request count and cost are correct.
+        # claude-opus-4.6 (sorted first): count=5, cost=15
+        assert first[1] == "claude-opus-4.6"
+        assert first[2] == "5"
+        assert first[3] == "15"
+        # claude-sonnet-4 (sorted second): count=7, cost=7
+        assert second[1] == "claude-sonnet-4"
+        assert second[2] == "7"
+        assert second[3] == "7"
+
         # Grand Total model calls = 12 (s.model_calls), NOT 12+4 = 16
-        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
         grand_match = re.search(
             r"Grand Total\s*│[^│]*│\s*\d+\s*│\s*\d+\s*│\s*(\d+)\s*│", clean
         )
