@@ -8,6 +8,7 @@ from __future__ import annotations
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 import sys
+from dataclasses import dataclass
 
 import loguru
 from loguru import logger
@@ -15,8 +16,17 @@ from loguru import logger
 from copilot_usage.logging_config import (
     LEVEL_EMOJI,
     _emoji_patcher,
+    _PatcherRecord,
     setup_logging,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeLevel:
+    """Minimal stand-in satisfying ``_LevelLike`` for unit tests."""
+
+    name: str
+
 
 # ---------------------------------------------------------------------------
 # setup_logging
@@ -58,22 +68,22 @@ def test_setup_logging_level_is_warning() -> None:
 def test_emoji_patcher_known_levels() -> None:
     """_emoji_patcher sets record['extra']['emoji'] for each known level."""
     for level_name, expected_emoji in LEVEL_EMOJI.items():
-        record: dict[str, object] = {
-            "level": type("Level", (), {"name": level_name})(),
+        record: _PatcherRecord = {
+            "level": _FakeLevel(name=level_name),
             "extra": {},
         }
-        _emoji_patcher(record)  # type: ignore[arg-type]
-        assert record["extra"]["emoji"] == expected_emoji  # type: ignore[index]
+        _emoji_patcher(record)
+        assert record["extra"]["emoji"] == expected_emoji
 
 
 def test_emoji_patcher_unknown_level_fallback() -> None:
     """_emoji_patcher falls back to '  ' for an unknown level name."""
-    record: dict[str, object] = {
-        "level": type("Level", (), {"name": "NONEXISTENT"})(),
+    record: _PatcherRecord = {
+        "level": _FakeLevel(name="NONEXISTENT"),
         "extra": {},
     }
-    _emoji_patcher(record)  # type: ignore[arg-type]
-    assert record["extra"]["emoji"] == "  "  # type: ignore[index]
+    _emoji_patcher(record)
+    assert record["extra"]["emoji"] == "  "
 
 
 # ---------------------------------------------------------------------------
@@ -115,5 +125,7 @@ def test_emoji_patcher_real_loguru_record() -> None:
 
     assert captured, "expected at least one captured record"
     record = captured[0]
-    _emoji_patcher(record)
+    # Record ⊃ _PatcherRecord structurally, but TypedDict values are invariant
+    # in pyright, so the narrower _PatcherRecord param triggers arg-type.
+    _emoji_patcher(record)  # type: ignore[arg-type]
     assert record["extra"]["emoji"] == LEVEL_EMOJI["INFO"]
