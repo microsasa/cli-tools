@@ -5125,6 +5125,35 @@ class TestActiveSessionCaching:
                 assert result2[0].model == "claude-sonnet-4"
                 assert spy.call_count == 0
 
+    def test_active_session_real_model_to_none_invalidates(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cache invalidates when config model transitions from a real value to None (file deleted)."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        p = tmp_path / "sessions" / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            result1 = get_all_sessions(tmp_path / "sessions")
+            assert len(result1) == 1
+            assert result1[0].model == "gpt-5.1"
+
+            entry = _SESSION_CACHE[p]
+            assert entry.depends_on_config is True
+            assert entry.config_model == "gpt-5.1"
+
+            # Delete the config file — config_model should now be None
+            config.unlink()
+
+            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+                result2 = get_all_sessions(tmp_path / "sessions")
+                assert len(result2) == 1
+                assert result2[0].model is None  # config-sourced model gone
+                assert spy.call_count == 1  # re-parsed due to staleness
+
 
 # ---------------------------------------------------------------------------
 # get_cached_events — parsed-events cache
