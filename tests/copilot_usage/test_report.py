@@ -24,6 +24,7 @@ from copilot_usage.models import (
     ModelMetrics,
     RequestMetrics,
     SessionEvent,
+    SessionShutdownData,
     SessionSummary,
     TokenUsage,
     copy_model_metrics,
@@ -709,27 +710,30 @@ class TestRenderSessionDetail:
         from copilot_usage.report import render_session_detail
 
         start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=5,
+            totalApiDurationMs=120_000,
+            modelMetrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(outputTokens=800),
+                )
+            },
+        )
+        shutdown_ts = start + timedelta(hours=1)
         summary = _make_session(
             start_time=start,
             is_active=False,
             model_calls=0,
             output_tokens=0,
         )
+        summary.shutdown_cycles = [(shutdown_ts, sd)]
         events = [
             _make_event(
                 EventType.SESSION_SHUTDOWN,
-                data={
-                    "shutdownType": "normal",
-                    "totalPremiumRequests": 5,
-                    "totalApiDurationMs": 120_000,
-                    "modelMetrics": {
-                        "claude-sonnet-4": {
-                            "requests": {"count": 3, "cost": 5},
-                            "usage": {"outputTokens": 800},
-                        }
-                    },
-                },
-                timestamp=start + timedelta(hours=1),
+                data={},
+                timestamp=shutdown_ts,
             ),
         ]
         output = _capture_console(render_session_detail, events, summary)
@@ -1350,16 +1354,19 @@ class TestReportCoverageGaps:
         from copilot_usage.report import render_session_detail
 
         start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
+        sd = SessionShutdownData(
+            shutdownType="",
+            totalPremiumRequests=0,
+            totalApiDurationMs=0,
+        )
+        shutdown_ts = start + timedelta(seconds=60)
         summary = _make_session(start_time=start, is_active=False)
+        summary.shutdown_cycles = [(shutdown_ts, sd)]
         events = [
             _make_event(
                 EventType.SESSION_SHUTDOWN,
-                data={
-                    "shutdownType": "",
-                    "totalPremiumRequests": 0,
-                    "totalApiDurationMs": 0,
-                },
-                timestamp=start + timedelta(seconds=60),
+                data={},
+                timestamp=shutdown_ts,
             ),
         ]
         output = _capture_console(render_session_detail, events, summary)
@@ -2754,35 +2761,26 @@ class TestBuildEventDetails:
 
 
 class TestRenderShutdownCyclesEdgeCases:
-    """Test _render_shutdown_cycles with malformed data and missing fields."""
+    """Test _render_shutdown_cycles with edge-case summaries."""
 
-    def test_malformed_shutdown_event_skipped(self) -> None:
-        events = [
-            _make_event(
-                EventType.SESSION_SHUTDOWN,
-                data={"modelMetrics": "invalid"},
-                timestamp=datetime(2025, 1, 1, tzinfo=UTC),
-            ),
-        ]
-        output = _capture_console(_render_shutdown_cycles, events)
+    def test_empty_shutdown_cycles_shows_no_cycles(self) -> None:
+        summary = SessionSummary(session_id="empty", shutdown_cycles=[])
+        output = _capture_console(_render_shutdown_cycles, summary)
         assert "No shutdown cycles recorded" in output
 
     def test_shutdown_with_no_timestamp_shows_dash(self) -> None:
-        """Session shutdown event with timestamp=None → date column shows '—'."""
-        events = [
-            SessionEvent(
-                type=EventType.SESSION_SHUTDOWN,
-                data={
-                    "shutdownType": "routine",
-                    "totalPremiumRequests": 3,
-                    "totalApiDurationMs": 5000,
-                    "sessionStartTime": 0,
-                    "modelMetrics": {},
-                },
-                timestamp=None,
-            ),
-        ]
-        output = _capture_console(_render_shutdown_cycles, events)
+        """Session shutdown cycle with timestamp=None → date column shows '—'."""
+        sd = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=3,
+            totalApiDurationMs=5000,
+            modelMetrics={},
+        )
+        summary = SessionSummary(
+            session_id="no-ts",
+            shutdown_cycles=[(None, sd)],
+        )
+        output = _capture_console(_render_shutdown_cycles, summary)
         assert "Shutdown Cycles" in output
         assert "—" in output
 
