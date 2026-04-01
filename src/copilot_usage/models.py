@@ -405,6 +405,12 @@ class SessionSummary(BaseModel):
     has_shutdown_metrics: bool = False
     events_path: Path | None = None
 
+    # Per-cycle shutdown data: (timestamp, parsed shutdown payload).
+    # Populated at build time so renderers never re-scan the event list.
+    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = Field(
+        default_factory=lambda: list[tuple[datetime | None, SessionShutdownData]]()
+    )
+
     # Post-shutdown activity (only populated for resumed/active sessions)
     active_model_calls: int = 0
     active_user_messages: int = 0

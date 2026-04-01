@@ -4,7 +4,7 @@
 
 import io
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from rich.console import Console
@@ -12,8 +12,12 @@ from rich.console import Console
 from copilot_usage.models import (
     CodeChanges,
     EventType,
+    ModelMetrics,
+    RequestMetrics,
     SessionEvent,
+    SessionShutdownData,
     SessionSummary,
+    TokenUsage,
     ToolExecutionData,
     ToolTelemetry,
 )
@@ -169,18 +173,18 @@ class TestRenderShutdownCyclesEmptyModelMetrics:
         """A SESSION_SHUTDOWN event with empty modelMetrics must not crash
         and must produce a table row with zero counts.
         """
-        ev = SessionEvent(
-            type=EventType.SESSION_SHUTDOWN,
-            timestamp=datetime(2026, 3, 7, 11, 0, 0, tzinfo=UTC),
-            data={
-                "shutdownType": "normal",
-                "totalPremiumRequests": 0,
-                "totalApiDurationMs": 0,
-                "modelMetrics": {},
-            },
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=0,
+            totalApiDurationMs=0,
+            modelMetrics={},
+        )
+        summary = SessionSummary(
+            session_id="empty-metrics",
+            shutdown_cycles=[(datetime(2026, 3, 7, 11, 0, 0, tzinfo=UTC), sd)],
         )
         buf, console = _buf_console()
-        _render_shutdown_cycles([ev], target_console=console)
+        _render_shutdown_cycles(summary, target_console=console)
         output = buf.getvalue()
         assert "Shutdown Cycles" in output
         # totals from empty modelMetrics → 0
@@ -198,33 +202,172 @@ class TestRenderShutdownCyclesMultiModelAggregation:
 
     def test_multi_model_sums_model_calls_and_output_tokens(self) -> None:
         """Two models in one shutdown event → totals are summed."""
-        ev = SessionEvent(
-            type=EventType.SESSION_SHUTDOWN,
-            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
-            data={
-                "shutdownType": "normal",
-                "totalPremiumRequests": 10,
-                "totalApiDurationMs": 60_000,
-                "modelMetrics": {
-                    "claude-sonnet-4": {
-                        "requests": {"count": 3, "cost": 7},
-                        "usage": {"outputTokens": 500},
-                    },
-                    "claude-haiku-4.5": {
-                        "requests": {"count": 4, "cost": 3},
-                        "usage": {"outputTokens": 300},
-                    },
-                },
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=10,
+            totalApiDurationMs=60_000,
+            modelMetrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=7),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+                "claude-haiku-4.5": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=3),
+                    usage=TokenUsage(outputTokens=300),
+                ),
             },
         )
+        summary = SessionSummary(
+            session_id="multi-model",
+            shutdown_cycles=[(datetime(2025, 1, 1, tzinfo=UTC), sd)],
+        )
         buf, console = _buf_console()
-        _render_shutdown_cycles([ev], target_console=console)
+        _render_shutdown_cycles(summary, target_console=console)
         output = _strip_ansi(buf.getvalue())
         assert "Shutdown Cycles" in output
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 00:00" in line)
         assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
         assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
+
+
+# ---------------------------------------------------------------------------
+# Issue #635 — shutdown_cycles populated at build time, O(k) render
+# ---------------------------------------------------------------------------
+
+
+def _make_shutdown_data(premium: int = 1) -> SessionShutdownData:
+    """Build a minimal SessionShutdownData for testing."""
+    return SessionShutdownData(
+        shutdownType="normal",
+        totalPremiumRequests=premium,
+        totalApiDurationMs=1000,
+        modelMetrics={
+            "test-model": ModelMetrics(
+                requests=RequestMetrics(count=2, cost=1),
+                usage=TokenUsage(outputTokens=100),
+            ),
+        },
+    )
+
+
+class TestShutdownCyclesPopulated:
+    """Verify that shutdown_cycles is populated at build time and used
+    by _render_shutdown_cycles without scanning the event list."""
+
+    def test_build_session_summary_populates_shutdown_cycles(self) -> None:
+        """build_session_summary produces a SessionSummary whose
+        shutdown_cycles list matches the number of shutdown events."""
+        from copilot_usage.parser import build_session_summary
+
+        start = datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
+        n_filler = 5_000
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.SESSION_START,
+                data={
+                    "sessionId": "perf-test",
+                    "startTime": start.isoformat(),
+                },
+                timestamp=start,
+            ),
+        ]
+        # Filler events (user messages) — should be ignored by shutdown_cycles
+        events.extend(
+            SessionEvent(
+                type=EventType.USER_MESSAGE,
+                data={"content": f"msg-{i}"},
+                timestamp=start + timedelta(seconds=i + 1),
+            )
+            for i in range(n_filler)
+        )
+        # Three shutdown cycles
+        for c in range(3):
+            ts = start + timedelta(hours=c + 1)
+            events.append(
+                SessionEvent(
+                    type=EventType.SESSION_SHUTDOWN,
+                    timestamp=ts,
+                    data={
+                        "shutdownType": "normal",
+                        "totalPremiumRequests": c + 1,
+                        "totalApiDurationMs": 500 * (c + 1),
+                        "modelMetrics": {
+                            "test-model": {
+                                "requests": {"count": c + 1, "cost": 1},
+                                "usage": {"outputTokens": (c + 1) * 100},
+                            },
+                        },
+                    },
+                )
+            )
+        summary = build_session_summary(events)
+        assert len(summary.shutdown_cycles) == 3
+        # Timestamps must match the shutdown events
+        for idx, (ts, sd) in enumerate(summary.shutdown_cycles):
+            assert ts == start + timedelta(hours=idx + 1)
+            assert sd.totalPremiumRequests == idx + 1
+
+    def test_render_shutdown_cycles_uses_summary_not_events(self) -> None:
+        """_render_shutdown_cycles reads summary.shutdown_cycles (O(k))
+        and never iterates an event list."""
+        cycles: list[tuple[datetime | None, SessionShutdownData]] = [
+            (datetime(2025, 1, 1, h, 0, 0, tzinfo=UTC), _make_shutdown_data(h))
+            for h in range(1, 4)
+        ]
+        summary = SessionSummary(
+            session_id="direct-cycles",
+            shutdown_cycles=cycles,
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Shutdown Cycles" in output
+        # All three cycles should appear
+        assert len(summary.shutdown_cycles) == 3
+        for h in range(1, 4):
+            assert f"2025-01-01 0{h}:00" in output
+
+    def test_render_session_detail_shows_precomputed_cycles(self) -> None:
+        """render_session_detail renders shutdown cycles from the summary
+        even when the events list is empty."""
+        sd = _make_shutdown_data(5)
+        ts = datetime(2025, 3, 1, 12, 0, 0, tzinfo=UTC)
+        summary = SessionSummary(
+            session_id="precomputed",
+            start_time=datetime(2025, 3, 1, 11, 0, 0, tzinfo=UTC),
+            is_active=False,
+            shutdown_cycles=[(ts, sd)],
+        )
+        buf, console = _buf_console()
+        render_session_detail([], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Shutdown Cycles" in output
+        row = next(line for line in output.splitlines() if "2025-03-01 12:00" in line)
+        assert re.search(r"\b5\b", row)  # premium requests
+
+    def test_perf_large_event_list_no_scan(self) -> None:
+        """Microbenchmark: _render_shutdown_cycles with 3 pre-built cycles
+        must complete in < 50ms regardless of a hypothetical large event list,
+        demonstrating that the event list is not scanned."""
+        import timeit
+
+        cycles: list[tuple[datetime | None, SessionShutdownData]] = [
+            (datetime(2025, 1, 1, h, 0, 0, tzinfo=UTC), _make_shutdown_data(h))
+            for h in range(1, 4)
+        ]
+        summary = SessionSummary(
+            session_id="perf-bench",
+            shutdown_cycles=cycles,
+        )
+        _buf, console = _buf_console()
+
+        elapsed = timeit.timeit(
+            lambda: _render_shutdown_cycles(summary, target_console=console),
+            number=100,
+        )
+        # 100 iterations should complete well within 5 seconds
+        assert elapsed < 5.0, f"100 iterations took {elapsed:.2f}s — too slow"
 
 
 # ---------------------------------------------------------------------------
@@ -239,29 +382,32 @@ class TestRenderSessionDetailMultiModelShutdown:
     def test_multi_model_shutdown_via_full_render(self) -> None:
         """render_session_detail must show summed model calls and
         output tokens for a multi-model shutdown event."""
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=10,
+            totalApiDurationMs=60_000,
+            modelMetrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=7),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+                "claude-haiku-4.5": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=3),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        ts = datetime(2025, 1, 1, 1, 0, 0, tzinfo=UTC)
         summary = SessionSummary(
             session_id="multi-model-e2e",
             start_time=datetime(2025, 1, 1, tzinfo=UTC),
             is_active=False,
+            shutdown_cycles=[(ts, sd)],
         )
         ev = SessionEvent(
             type=EventType.SESSION_SHUTDOWN,
-            timestamp=datetime(2025, 1, 1, 1, 0, 0, tzinfo=UTC),
-            data={
-                "shutdownType": "normal",
-                "totalPremiumRequests": 10,
-                "totalApiDurationMs": 60_000,
-                "modelMetrics": {
-                    "claude-sonnet-4": {
-                        "requests": {"count": 3, "cost": 7},
-                        "usage": {"outputTokens": 500},
-                    },
-                    "claude-haiku-4.5": {
-                        "requests": {"count": 4, "cost": 3},
-                        "usage": {"outputTokens": 300},
-                    },
-                },
-            },
+            timestamp=ts,
+            data={},
         )
         buf, console = _buf_console()
         render_session_detail([ev], summary, target_console=console)

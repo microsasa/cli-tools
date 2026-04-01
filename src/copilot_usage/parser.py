@@ -472,6 +472,7 @@ def _build_completed_summary(
     fp: _FirstPassResult,
     name: str | None,
     resume: _ResumeInfo,
+    events: list[SessionEvent],
     *,
     events_path: Path | None = None,
 ) -> SessionSummary:
@@ -481,7 +482,9 @@ def _build_completed_summary(
     merged_metrics: dict[str, ModelMetrics] = {}
     last_code_changes: CodeChanges | None = None
 
-    for _idx, sd in fp.all_shutdowns:
+    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = []
+
+    for idx, sd in fp.all_shutdowns:
         total_premium += sd.totalPremiumRequests
         total_api_duration += sd.totalApiDurationMs
         if sd.codeChanges is not None:
@@ -491,6 +494,9 @@ def _build_completed_summary(
                 add_to_model_metrics(merged_metrics[model_name], mm)
             else:
                 merged_metrics[model_name] = copy_model_metrics(mm)
+        shutdown_cycles.append(
+            (events[idx].timestamp if idx < len(events) else None, sd)
+        )
 
     return SessionSummary(
         session_id=fp.session_id,
@@ -511,6 +517,7 @@ def _build_completed_summary(
         active_model_calls=resume.post_shutdown_turn_starts,
         active_user_messages=resume.post_shutdown_user_messages,
         active_output_tokens=resume.post_shutdown_output_tokens,
+        shutdown_cycles=shutdown_cycles,
         events_path=events_path,
     )
 
@@ -587,7 +594,7 @@ def _build_session_summary_with_meta(
     if fp.all_shutdowns:
         resume = _detect_resume(events, fp.all_shutdowns)
         return _BuildMeta(
-            _build_completed_summary(fp, name, resume, events_path=events_path),
+            _build_completed_summary(fp, name, resume, events, events_path=events_path),
             used_config_fallback=False,
         )
 

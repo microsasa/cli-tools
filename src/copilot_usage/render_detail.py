@@ -30,7 +30,6 @@ from copilot_usage.models import (
     CodeChanges,
     EventType,
     SessionEvent,
-    SessionShutdownData,
     SessionSummary,
     ToolExecutionData,
     ensure_aware,
@@ -211,23 +210,14 @@ def _render_aggregate_stats(
 
 
 def _render_shutdown_cycles(
-    events: list[SessionEvent],
+    summary: SessionSummary,
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Render per-shutdown-cycle table from session events."""
+    """Render per-shutdown-cycle table from pre-computed shutdown_cycles."""
     out = target_console or Console()
 
-    shutdown_events: list[SessionShutdownData] = []
-    shutdown_timestamps: list[datetime | None] = []
-    for ev in events:
-        if ev.type == EventType.SESSION_SHUTDOWN:
-            if (data := _safe_event_data(ev, ev.as_session_shutdown)) is None:
-                continue
-            shutdown_events.append(data)
-            shutdown_timestamps.append(ev.timestamp)
-
-    if not shutdown_events:
+    if not summary.shutdown_cycles:
         out.print("[dim]No shutdown cycles recorded.[/dim]")
         return
 
@@ -238,7 +228,7 @@ def _render_shutdown_cycles(
     table.add_column("Output Tokens", justify="right")
     table.add_column("API Duration", justify="right")
 
-    for sd, ts in zip(shutdown_events, shutdown_timestamps, strict=True):
+    for ts, sd in summary.shutdown_cycles:
         date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "—"
         total_requests = sum(mm.requests.count for mm in sd.modelMetrics.values())
         total_output = sum(mm.usage.outputTokens for mm in sd.modelMetrics.values())
@@ -387,7 +377,7 @@ def render_session_detail(
     _render_aggregate_stats(summary, target_console=out)
     out.print()
 
-    _render_shutdown_cycles(events, target_console=out)
+    _render_shutdown_cycles(summary, target_console=out)
     out.print()
 
     _render_active_period(summary, target_console=out)
