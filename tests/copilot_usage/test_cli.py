@@ -3075,13 +3075,29 @@ def test_watchdog_not_imported_at_module_level() -> None:
     """Importing copilot_usage.cli must NOT pull in watchdog eagerly."""
     import sys
 
+    # Snapshot full module state so we can restore everything after the test,
+    # preventing leaked interpreter state from making later tests flaky.
     saved_modules = sys.modules.copy()
 
-    # Remove any already-loaded copilot_usage / watchdog modules so we can
-    # observe a fresh import of the cli module.
-    mods_to_remove = [k for k in sys.modules if "copilot_usage" in k or "watchdog" in k]
-    for m in mods_to_remove:
-        del sys.modules[m]
+    # Save the parent-package attribute because Python's import machinery
+    # sets ``copilot_usage.cli`` on the parent when the submodule is imported,
+    # and ``sys.modules.update`` alone does not undo that side-effect.
+    import copilot_usage as _pkg
+
+    saved_cli_attr = getattr(_pkg, "cli", None)
+
+    # Only remove the specific modules we need to re-import: the CLI module
+    # (and its submodules) plus watchdog, so we can observe a fresh import.
+    mods_to_remove = [
+        name
+        for name in list(sys.modules)
+        if name == "copilot_usage.cli"
+        or name.startswith("copilot_usage.cli.")
+        or name == "watchdog"
+        or name.startswith("watchdog.")
+    ]
+    for name in mods_to_remove:
+        del sys.modules[name]
 
     try:
         import copilot_usage.cli  # noqa: F401  # pyright: ignore[reportUnusedImport]
@@ -3094,3 +3110,7 @@ def test_watchdog_not_imported_at_module_level() -> None:
             if key not in saved_modules:
                 del sys.modules[key]
         sys.modules.update(saved_modules)
+
+        # Restore the parent-package attribute to the original module object.
+        if saved_cli_attr is not None:
+            _pkg.cli = saved_cli_attr  # pyright: ignore[reportAttributeAccessIssue]
