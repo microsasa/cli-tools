@@ -475,23 +475,16 @@ def render_summary(
 # ---------------------------------------------------------------------------
 
 
-def _render_historical_section(
+def _render_historical_section_from(
     console: Console,
-    sessions: list[SessionSummary],
+    historical: list[SessionSummary],
 ) -> None:
-    """Render Section 1: Historical Data from shutdown cycles."""
-    # Include all completed (non-active) sessions so they are never silently
-    # invisible.  Previously, zero-metrics completed sessions were excluded,
-    # causing a count mismatch with ``render_summary()``.
-    # Also include any session with shutdown model_metrics
-    # (has_shutdown_metrics), which covers resumed sessions that used only
-    # free-tier models (total_premium_requests == 0).
-    historical = [
-        s
-        for s in sessions
-        if s.total_premium_requests > 0 or not s.is_active or s.has_shutdown_metrics
-    ]
+    """Render Section 1: Historical Data from a pre-partitioned list.
 
+    *historical* must already contain the relevant sessions (those with
+    ``total_premium_requests > 0``, or not active, or with shutdown
+    metrics).  No filtering is performed here.
+    """
     if not historical:
         console.print("[dim]No historical shutdown data.[/dim]")
         return
@@ -522,13 +515,15 @@ def _render_historical_section(
     )
 
 
-def _render_active_section(
+def _render_active_section_from(
     console: Console,
-    sessions: list[SessionSummary],
+    active: list[SessionSummary],
 ) -> None:
-    """Render Section 2: Active Sessions since last shutdown."""
-    active = [s for s in sessions if s.is_active]
+    """Render Section 2: Active Sessions from a pre-partitioned list.
 
+    *active* must already contain only sessions where ``is_active`` is
+    ``True``.  No filtering is performed here.
+    """
     if not active:
         console.print(
             Panel(
@@ -589,10 +584,19 @@ def render_full_summary(
         console.print("[yellow]No sessions found.[/yellow]")
         return
 
+    # Single pass: partition into historical and active sub-lists.
+    historical: list[SessionSummary] = []
+    active: list[SessionSummary] = []
+    for s in sessions:
+        if s.total_premium_requests > 0 or not s.is_active or s.has_shutdown_metrics:
+            historical.append(s)
+        if s.is_active:
+            active.append(s)
+
     _render_summary_header(console, sessions)
-    _render_historical_section(console, sessions)
+    _render_historical_section_from(console, historical)
     console.print()
-    _render_active_section(console, sessions)
+    _render_active_section_from(console, active)
 
 
 # ---------------------------------------------------------------------------

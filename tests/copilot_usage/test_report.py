@@ -2566,7 +2566,7 @@ class TestEstimatePremiumCost:
 
 
 class TestRenderFullSummaryHelperReuse:
-    """Verify _render_historical_section delegates to shared table helpers."""
+    """Verify _render_historical_section_from delegates to shared table helpers."""
 
     def test_historical_session_table_title(self) -> None:
         """Historical section must use Sessions (Shutdown Data) title."""
@@ -5418,3 +5418,84 @@ class TestComputeSessionTotalsSinglePass:
         assert totals.api_duration_ms == tri * 10
         assert totals.output_tokens == tri * 5
         assert totals.session_count == 500
+
+
+# ---------------------------------------------------------------------------
+# Issue #625 — render_full_summary single-pass partition
+# ---------------------------------------------------------------------------
+
+
+class TestRenderFullSummaryIterationCount:
+    """Verify render_full_summary iterates the input list at most twice.
+
+    Uses a custom list subclass that counts forward ``__iter__`` and
+    ``__reversed__`` traversals to assert that the session list is not
+    traversed redundantly.
+    """
+
+    @staticmethod
+    def _make_sessions(n: int) -> list[SessionSummary]:
+        """Build *n* sessions — mix of active and completed."""
+        sessions: list[SessionSummary] = []
+        for i in range(n):
+            is_active = i % 5 == 0  # 20% active
+            sessions.append(
+                SessionSummary(
+                    session_id=f"iter-{i:04d}-abcdef",
+                    name=f"S{i}",
+                    model="claude-sonnet-4",
+                    start_time=datetime(2025, 3, 1, tzinfo=UTC) - timedelta(hours=i),
+                    is_active=is_active,
+                    total_premium_requests=i,
+                    user_messages=i,
+                    model_calls=i,
+                    model_metrics={
+                        "claude-sonnet-4": ModelMetrics(
+                            requests=RequestMetrics(count=i, cost=i),
+                            usage=TokenUsage(outputTokens=i * 100),
+                        )
+                    }
+                    if i > 0
+                    else {},
+                )
+            )
+        return sessions
+
+    class _CountingList(list[SessionSummary]):
+        """A ``list`` subclass that counts forward and reverse traversals."""
+
+        def __init__(self, items: list[SessionSummary]) -> None:
+            super().__init__(items)
+            self.iter_count: int = 0
+            self.reversed_count: int = 0
+
+        def __iter__(self):  # type: ignore[override]
+            self.iter_count += 1
+            return super().__iter__()
+
+        def __reversed__(self):  # type: ignore[override]
+            self.reversed_count += 1
+            return super().__reversed__()
+
+    def test_input_list_iterated_at_most_twice(self) -> None:
+        """render_full_summary must iterate the sessions list ≤ 2 times."""
+        raw = self._make_sessions(500)
+        counted = self._CountingList(raw)
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        render_full_summary(counted, target_console=console)
+
+        # Forward __iter__ passes: one for the partition loop in
+        # render_full_summary + one in _render_summary_header's
+        # forward scan for the latest start_time.
+        assert counted.iter_count <= 2
+
+        # _render_summary_header also does a reversed() scan to find the
+        # earliest start_time — track that separately.
+        assert counted.reversed_count <= 1
+
+        # Sanity-check that both sections actually rendered.
+        output = buf.getvalue()
+        assert "Historical Totals" in output
+        assert "Active Sessions" in output
