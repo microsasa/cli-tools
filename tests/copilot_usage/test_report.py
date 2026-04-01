@@ -730,6 +730,8 @@ class TestRenderSessionDetail:
         output = _capture_console(render_session_detail, events, summary)
         assert "Shutdown Cycles" in output
         assert "5" in output  # premium requests
+        assert "3" in output  # model calls
+        assert "800" in output  # output tokens
 
     def test_renders_recent_events_title(self) -> None:
         from copilot_usage.report import render_session_detail

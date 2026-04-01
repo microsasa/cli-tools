@@ -176,3 +176,85 @@ class TestRenderShutdownCyclesEmptyModelMetrics:
         assert "Shutdown Cycles" in output
         # totals from empty modelMetrics → 0
         assert "0" in output
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 — _render_shutdown_cycles multi-model per-cycle aggregation (#622)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderShutdownCyclesMultiModelAggregation:
+    """Multi-model modelMetrics must be summed for Model Calls and
+    Output Tokens columns in the Shutdown Cycles table."""
+
+    def test_multi_model_sums_model_calls_and_output_tokens(self) -> None:
+        """Two models in one shutdown event → totals are summed."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 10,
+                "totalApiDurationMs": 60_000,
+                "modelMetrics": {
+                    "claude-sonnet-4": {
+                        "requests": {"count": 3, "cost": 7},
+                        "usage": {"outputTokens": 500},
+                    },
+                    "claude-haiku-4.5": {
+                        "requests": {"count": 4, "cost": 3},
+                        "usage": {"outputTokens": 300},
+                    },
+                },
+            },
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles([ev], target_console=console)
+        output = buf.getvalue()
+        assert "Shutdown Cycles" in output
+        assert "7" in output  # total model calls = 3 + 4
+        assert "800" in output  # total output tokens = 500 + 300
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — Multi-model aggregation via render_session_detail end-to-end (#622)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailMultiModelShutdown:
+    """Multi-model shutdown totals must propagate through
+    render_session_detail end-to-end."""
+
+    def test_multi_model_shutdown_via_full_render(self) -> None:
+        """render_session_detail must show summed model calls and
+        output tokens for a multi-model shutdown event."""
+        summary = SessionSummary(
+            session_id="multi-model-e2e",
+            start_time=datetime(2025, 1, 1, tzinfo=UTC),
+            is_active=False,
+        )
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=datetime(2025, 1, 1, 1, 0, 0, tzinfo=UTC),
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 10,
+                "totalApiDurationMs": 60_000,
+                "modelMetrics": {
+                    "claude-sonnet-4": {
+                        "requests": {"count": 3, "cost": 7},
+                        "usage": {"outputTokens": 500},
+                    },
+                    "claude-haiku-4.5": {
+                        "requests": {"count": 4, "cost": 3},
+                        "usage": {"outputTokens": 300},
+                    },
+                },
+            },
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = buf.getvalue()
+        assert "Shutdown Cycles" in output
+        assert "7" in output  # total model calls = 3 + 4
+        assert "800" in output  # total output tokens = 500 + 300
