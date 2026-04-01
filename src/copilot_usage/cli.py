@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
-from typing import Final, Literal, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 import click
 from loguru import logger
@@ -218,7 +218,7 @@ def _start_observer(
 
     handler = _FileChangeHandler(change_event)
     observer = Observer()
-    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
+    observer.schedule(cast(Any, handler), str(session_path), recursive=True)
     observer.daemon = True
     try:
         observer.start()

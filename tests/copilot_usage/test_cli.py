@@ -3114,3 +3114,8 @@ def test_watchdog_not_imported_at_module_level() -> None:
         # Restore the parent-package attribute to the original module object.
         if saved_cli_attr is not None:
             _pkg.cli = saved_cli_attr  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            # If the attribute did not exist before, remove any attribute that
+            # was added as a side-effect of importing copilot_usage.cli.
+            if hasattr(_pkg, "cli"):
+                delattr(_pkg, "cli")
