@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import SupportsIndex, overload
 from unittest.mock import patch
 
 import pytest
@@ -5288,7 +5289,12 @@ class TestGetCachedEvents:
 
 
 class TestDetectResumeRangeIndex:
-    """Verify _detect_resume uses O(n_remaining) iteration, not O(n_total)."""
+    """Verify _detect_resume correctness and O(n_remaining) index access.
+
+    These tests validate correctness for a large event list and ensure the
+    implementation only accesses post-shutdown indices, preventing both
+    iterator-based scanning and redundant pre-shutdown index access.
+    """
 
     def test_correctness_with_large_event_list(self, tmp_path: Path) -> None:
         """5 000-event session with shutdown at index 4 990.
@@ -5394,23 +5400,51 @@ class TestDetectResumeRangeIndex:
         assert result.last_resume_time is None  # no session.resume event
 
     def test_only_iterates_remaining_events(self) -> None:
-        """Verify _detect_resume uses index-based access, not __iter__.
+        """Verify _detect_resume only accesses post-shutdown indices.
 
-        Uses a list subclass that raises on ``__iter__`` to prove the
-        implementation accesses elements via ``__getitem__`` (range-index
-        loop), not via the iterator protocol.  This would fail if the code
-        ever regressed to ``itertools.islice`` or similar iterator-based
-        scanning.
+        Uses a list subclass that raises on ``__iter__`` and on
+        ``__getitem__`` for indices ≤ ``shutdown_idx``.  This proves the
+        implementation neither uses the iterator protocol nor scans
+        pre-shutdown elements via index, and would fail if the code
+        regressed to ``itertools.islice`` or a naïve index-from-zero loop.
         """
         from copilot_usage.models import SessionEvent
 
-        class _NoIterList(list[SessionEvent]):
-            """list subclass that forbids iteration."""
+        class _NoPreScanList(list[SessionEvent]):
+            """list subclass that forbids iteration and pre-shutdown indexing."""
+
+            def __init__(
+                self,
+                items: list[SessionEvent],
+                *,
+                forbidden_up_to: int,
+            ) -> None:
+                super().__init__(items)
+                self._forbidden_up_to = forbidden_up_to
 
             def __iter__(self) -> Iterator[SessionEvent]:
                 raise AssertionError(
                     "_detect_resume must use index-based access, not __iter__"
                 )
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> SessionEvent: ...
+
+            @overload
+            def __getitem__(self, index: slice, /) -> list[SessionEvent]: ...
+
+            def __getitem__(
+                self, index: SupportsIndex | slice, /
+            ) -> SessionEvent | list[SessionEvent]:
+                if isinstance(index, slice):
+                    return super().__getitem__(index)
+                int_idx = index.__index__()
+                if int_idx <= self._forbidden_up_to:
+                    raise AssertionError(
+                        f"_detect_resume must not access index {int_idx} "
+                        f"(<= shutdown_idx {self._forbidden_up_to})"
+                    )
+                return super().__getitem__(index)
 
         n_total = 5_000
         shutdown_idx = 4_990
@@ -5474,7 +5508,7 @@ class TestDetectResumeRangeIndex:
             ),
         )
 
-        no_iter_events = _NoIterList(events)
+        no_iter_events = _NoPreScanList(events, forbidden_up_to=shutdown_idx)
         result = _detect_resume(no_iter_events, shutdowns)
 
         # Only the 9 post-shutdown user messages should be counted
