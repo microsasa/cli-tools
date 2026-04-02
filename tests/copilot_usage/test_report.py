@@ -2017,11 +2017,12 @@ class TestRenderFullSummary:
         )
 
     def test_resumed_session_no_double_counting(self) -> None:
-        """Grand total across both sections must not double-count tokens.
+        """Rendered output must not double-count tokens across sections.
 
-        Historical uses ``shutdown_output_tokens`` (from model_metrics).
-        Active uses ``_effective_stats`` (``active_output_tokens``).
-        The two values must be disjoint.
+        Historical uses ``shutdown_output_tokens`` (3000 → ``3.0K``).
+        Active uses ``_effective_stats`` (``active_output_tokens`` = 500).
+        The rendered panels must each show only their own pool — the
+        combined value (3500 → ``3.5K``) must not appear anywhere.
         """
         shutdown_tokens = 3000
         active_tokens = 500
@@ -2060,11 +2061,33 @@ class TestRenderFullSummary:
         # The two token counts must not overlap.
         assert hist_tokens + stats.output_tokens == shutdown_tokens + active_tokens
 
-        # And in the rendered output, both sections appear.
+        # Verify the rendered output shows each pool separately.
         output = _capture_full_summary([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        assert "Historical Totals" in clean
-        assert "No active sessions" not in clean
+
+        hist_part, active_part = clean.split("Active Sessions", 1)
+
+        # Historical panel must show shutdown tokens (3.0K),
+        # NOT the combined total (3.5K).
+        assert "3.0K" in hist_part, (
+            "Historical totals should use shutdown_output_tokens (3000 → 3.0K)"
+        )
+        assert "3.5K" not in hist_part, (
+            "Historical totals must NOT include active_output_tokens"
+        )
+
+        # Active table row must show active_output_tokens (500),
+        # not the shutdown total.
+        active_row = next(
+            (line for line in active_part.splitlines() if "NoDup" in line),
+            "",
+        )
+        assert "500" in active_row, (
+            "Active row should display active_output_tokens (500)"
+        )
+        assert "3.0K" not in active_row, (
+            "Active row must NOT display shutdown output tokens"
+        )
 
 
 # ---------------------------------------------------------------------------
