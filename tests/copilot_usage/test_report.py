@@ -1894,6 +1894,205 @@ class TestRenderFullSummary:
         # data"), since there IS a completed session.
         assert "No historical shutdown data" not in output
 
+    @pytest.mark.parametrize(
+        "trigger",
+        ["has_shutdown_metrics", "premium_requests"],
+        ids=["via-shutdown-metrics", "via-premium-requests"],
+    )
+    def test_resumed_session_appears_in_both_sections(self, trigger: str) -> None:
+        """Resumed session must appear in both Historical and Active sections.
+
+        Regression guard for issue #649: the two independent ``if`` statements
+        in ``render_full_summary`` intentionally place a resumed session in
+        both lists.  If someone refactors ``if`` to ``elif``, this test fails.
+
+        Parametrized over the two conditions that qualify an active session for
+        the historical list: ``has_shutdown_metrics=True`` and
+        ``total_premium_requests > 0``.
+        """
+        active_tokens = 350
+        # When premium_requests triggers historical inclusion the real parser
+        # produces model_metrics={} (shutdown cycles exist but no metrics
+        # were recorded yet), so the shutdown-token baseline is 0.
+        if trigger == "has_shutdown_metrics":
+            shutdown_tokens = 2000
+            model_metrics_map: dict[str, ModelMetrics] = {
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=15),
+                    usage=TokenUsage(
+                        inputTokens=800,
+                        outputTokens=shutdown_tokens,
+                    ),
+                )
+            }
+        else:
+            model_metrics_map = {}
+        session = SessionSummary(
+            session_id="resumed-dual-abcdef",
+            name="DualSection",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 6, 1, 8, 0, tzinfo=UTC),
+            last_resume_time=datetime(2025, 6, 1, 9, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=trigger == "has_shutdown_metrics",
+            total_premium_requests=15 if trigger == "premium_requests" else 0,
+            user_messages=10,
+            model_calls=8,
+            active_model_calls=3,
+            active_user_messages=2,
+            active_output_tokens=active_tokens,
+            model_metrics=model_metrics_map,
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # --- Session visible in BOTH sections ---
+        assert "Historical Totals" in clean
+        assert "No historical shutdown data" not in clean
+
+        assert "Active Sessions" in clean
+        assert "No active sessions" not in clean
+
+        # Split output at "Active Sessions" heading to isolate both regions.
+        hist_part, active_part = clean.split("Active Sessions", 1)
+
+        assert "DualSection" in hist_part, (
+            "Resumed session must appear in the historical section"
+        )
+        assert "DualSection" in active_part, (
+            "Resumed session must appear in the active section"
+        )
+
+    def test_resumed_session_historical_shows_shutdown_tokens(self) -> None:
+        """Historical panel totals must reflect shutdown metrics only.
+
+        The active table must show only post-shutdown ``active_*`` values.
+        This ensures no double-counting across sections.
+        """
+        shutdown_tokens = 5000
+        active_tokens = 800
+        session = SessionSummary(
+            session_id="resumed-tok-abcdef",
+            name="TokenSplit",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 6, 1, 8, 0, tzinfo=UTC),
+            last_resume_time=datetime(2025, 6, 1, 9, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=10,
+            user_messages=12,
+            model_calls=9,
+            active_model_calls=4,
+            active_user_messages=3,
+            active_output_tokens=active_tokens,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(
+                        inputTokens=1500,
+                        outputTokens=shutdown_tokens,
+                    ),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # Split output at "Active Sessions" heading.
+        hist_part, active_part = clean.split("Active Sessions", 1)
+
+        # Historical panel should show shutdown_output_tokens (5.0K),
+        # NOT the combined total (5.8K).
+        assert "5.0K" in hist_part, (
+            "Historical totals should use shutdown_output_tokens (5000 → 5.0K)"
+        )
+        assert "5.8K" not in hist_part, (
+            "Historical totals must NOT include active_output_tokens"
+        )
+
+        # Active table row should show active_output_tokens (800), not
+        # the shutdown total.
+        active_row = next(
+            (line for line in active_part.splitlines() if "TokenSplit" in line),
+            "",
+        )
+        assert "800" in active_row, (
+            "Active row should display active_output_tokens (800)"
+        )
+        assert "5.0K" not in active_row, (
+            "Active row must NOT display shutdown output tokens"
+        )
+
+    def test_resumed_session_no_double_counting(self) -> None:
+        """Rendered output must not double-count tokens across sections.
+
+        Historical uses ``shutdown_output_tokens`` (3000 → ``3.0K``).
+        Active uses ``_effective_stats`` (``active_output_tokens`` = 500).
+        The rendered panels must each show only their own pool — the
+        combined value (3500 → ``3.5K``) must not appear anywhere.
+        """
+        shutdown_tokens = 3000
+        active_tokens = 500
+        session = SessionSummary(
+            session_id="resumed-nodup-abcdef",
+            name="NoDup",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 6, 1, 8, 0, tzinfo=UTC),
+            last_resume_time=datetime(2025, 6, 1, 9, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=7,
+            user_messages=8,
+            model_calls=6,
+            active_model_calls=2,
+            active_user_messages=1,
+            active_output_tokens=active_tokens,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=4, cost=7),
+                    usage=TokenUsage(
+                        inputTokens=900,
+                        outputTokens=shutdown_tokens,
+                    ),
+                )
+            },
+        )
+
+        # Verify via the model functions directly: the token pools are disjoint.
+        hist_tokens = shutdown_output_tokens(session)
+        assert hist_tokens == shutdown_tokens
+
+        stats = _effective_stats(session)
+        assert stats.output_tokens == active_tokens
+
+        # Verify the rendered output shows each pool separately.
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        hist_part, active_part = clean.split("Active Sessions", 1)
+
+        # Historical panel must show shutdown tokens (3.0K),
+        # NOT the combined total (3.5K).
+        assert "3.0K" in hist_part, (
+            "Historical totals should use shutdown_output_tokens (3000 → 3.0K)"
+        )
+        assert "3.5K" not in hist_part, (
+            "Historical totals must NOT include active_output_tokens"
+        )
+
+        # Active table row must show active_output_tokens (500),
+        # not the shutdown total.
+        active_row = next(
+            (line for line in active_part.splitlines() if "NoDup" in line),
+            "",
+        )
+        assert "500" in active_row, (
+            "Active row should display active_output_tokens (500)"
+        )
+        assert "3.0K" not in active_row, (
+            "Active row must NOT display shutdown output tokens"
+        )
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
