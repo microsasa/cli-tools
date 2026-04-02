@@ -1,6 +1,7 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
 import contextlib
+import io
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from unittest.mock import patch
 import click
 import pytest
 from click.testing import CliRunner
+from loguru import logger
 from rich.console import Console
 
 from copilot_usage import __version__
@@ -495,7 +497,7 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
 def test_session_command_continues_after_parse_oserror(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """OSError from parse_events for one session is silently skipped;
+    """OSError from parse_events for one session is logged and skipped;
     the command still finds a matching session in another directory."""
     target_session_dir = _write_session(tmp_path, "target-session-aaa", name="Target")
     failing_session_dir = _write_session(
@@ -556,6 +558,50 @@ def test_session_command_all_parse_oserror(tmp_path: Path, monkeypatch: Any) -> 
     assert result.exit_code == 1
     assert "no session matching" in result.output.lower()
     assert "Traceback" not in (result.output or "")
+
+
+def test_session_command_logs_warning_on_parse_oserror(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When parse_events raises OSError, the session command logs a warning
+    instead of silently swallowing the error."""
+    _write_session(tmp_path, "unreadable-sess-000", name="Unreadable")
+
+    def _always_fail(path: Path) -> list[Any]:
+        raise OSError("permission denied")
+
+    def _fake_discover(_base: Path | None = None) -> list[Path]:
+        return sorted(
+            tmp_path.glob("*/events.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    monkeypatch.setattr("copilot_usage.cli.parse_events", _always_fail)
+
+    # Capture loguru warnings: wrap setup_logging so our sink survives the
+    # logger.remove() call inside it.
+    sink = io.StringIO()
+    _real_setup = __import__(
+        "copilot_usage.logging_config", fromlist=["setup_logging"]
+    ).setup_logging
+
+    def _setup_then_add_sink() -> None:
+        _real_setup()
+        logger.add(sink, level="WARNING", format="{message}")
+
+    monkeypatch.setattr(
+        "copilot_usage.logging_config.setup_logging", _setup_then_add_sink
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "unreadable"])
+
+    assert result.exit_code == 1
+    log_output = sink.getvalue()
+    assert "Skipping unreadable session" in log_output
+    assert "permission denied" in log_output
 
 
 def test_cost_no_model_metrics(tmp_path: Path) -> None:
