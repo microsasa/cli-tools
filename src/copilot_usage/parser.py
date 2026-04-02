@@ -6,7 +6,6 @@ aggregates.
 """
 
 import dataclasses
-import itertools
 import json
 from datetime import datetime
 from functools import lru_cache
@@ -444,7 +443,8 @@ def _detect_resume(
     post_shutdown_user_messages = 0
     last_resume_time = None
 
-    for ev in itertools.islice(events, last_shutdown_idx + 1, None):
+    for i in range(last_shutdown_idx + 1, len(events)):
+        ev = events[i]
         if ev.type in _RESUME_INDICATOR_TYPES:
             session_resumed = True
         if ev.type == EventType.SESSION_RESUME and ev.timestamp is not None:
