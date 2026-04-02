@@ -5,8 +5,10 @@
 import io
 import json
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import SupportsIndex, overload
 from unittest.mock import patch
 
 import pytest
@@ -4418,18 +4420,18 @@ class TestDetectResumeDirect:
 
 
 # ---------------------------------------------------------------------------
-# Issue #553 — _detect_resume must not allocate an O(n) list slice
+# Issue #553 / #640 — _detect_resume must not allocate an O(n) list slice
 # ---------------------------------------------------------------------------
 
 
 class TestDetectResumeNoListSlice:
-    """Verify _detect_resume uses itertools.islice (zero-copy) instead of a list slice."""
+    """Verify _detect_resume uses index loop (zero-copy) instead of a list slice."""
 
     def test_no_intermediate_list_allocation(self, tmp_path: Path) -> None:
         """Build a session with an early shutdown and 1 000+ post-shutdown events.
 
         Uses tracemalloc to assert that _detect_resume does NOT allocate a
-        list of length >= 1 000 for the post-shutdown slice.
+        list of length >= 1 000 for the post-shutdown tail.
         """
         import tracemalloc
 
@@ -5279,3 +5281,237 @@ class TestGetCachedEvents:
         missing = tmp_path / "ghost" / "events.jsonl"
         with pytest.raises(OSError):
             get_cached_events(missing)
+
+
+# ---------------------------------------------------------------------------
+# Issue #640 — _detect_resume: replace islice with range-index loop
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeRangeIndex:
+    """Verify _detect_resume correctness and O(n_remaining) index access.
+
+    These tests validate correctness for a large event list and ensure the
+    implementation only accesses post-shutdown indices, preventing both
+    iterator-based scanning and redundant pre-shutdown index access.
+    """
+
+    def test_correctness_with_large_event_list(self, tmp_path: Path) -> None:
+        """5 000-event session with shutdown at index 4 990.
+
+        Builds a synthetic events.jsonl and asserts _detect_resume produces
+        the correct counts for the 10 post-shutdown events (a mix of
+        user messages, assistant turns, and assistant messages with tokens).
+        """
+        # Pre-shutdown padding: 4 988 user messages (indices 2..4989 after
+        # start + first user msg).
+        pre_events: list[str] = [
+            json.dumps(
+                {
+                    "type": "user.message",
+                    "data": {
+                        "content": f"pre-{i}",
+                        "transformedContent": f"pre-{i}",
+                        "attachments": [],
+                        "interactionId": f"int-pre-{i}",
+                    },
+                    "id": f"ev-pre-{i}",
+                    "timestamp": "2026-03-07T10:05:00.000Z",
+                    "parentId": "ev-start",
+                }
+            )
+            for i in range(4_988)
+        ]
+
+        # Post-shutdown: 5 user messages, 3 assistant turn starts,
+        # 2 assistant messages with tokens.
+        post_user: list[str] = [
+            json.dumps(
+                {
+                    "type": "user.message",
+                    "data": {
+                        "content": f"post-u-{i}",
+                        "transformedContent": f"post-u-{i}",
+                        "attachments": [],
+                        "interactionId": f"int-post-u-{i}",
+                    },
+                    "id": f"ev-post-u-{i}",
+                    "timestamp": "2026-03-07T12:01:00.000Z",
+                    "parentId": "ev-shutdown",
+                }
+            )
+            for i in range(5)
+        ]
+        post_turns: list[str] = [
+            json.dumps(
+                {
+                    "type": "assistant.turn_start",
+                    "data": {},
+                    "id": f"ev-post-turn-{i}",
+                    "timestamp": "2026-03-07T12:02:00.000Z",
+                    "parentId": "ev-shutdown",
+                }
+            )
+            for i in range(3)
+        ]
+        post_asst: list[str] = [
+            json.dumps(
+                {
+                    "type": "assistant.message",
+                    "data": {
+                        "messageId": f"pm-{i}",
+                        "content": f"resp-{i}",
+                        "toolRequests": [],
+                        "interactionId": f"int-post-a-{i}",
+                        "outputTokens": 50,
+                    },
+                    "id": f"ev-post-asst-{i}",
+                    "timestamp": "2026-03-07T12:03:00.000Z",
+                    "parentId": "ev-shutdown",
+                }
+            )
+            for i in range(2)
+        ]
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            *pre_events,
+            _SHUTDOWN_EVENT,
+            *post_user,
+            *post_turns,
+            *post_asst,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        # Sanity: total events should be exactly 5 001.
+        # start(1) + user(1) + pre(4988) + shutdown(1) + post(5+3+2) = 5001
+        assert len(events) == 5_001
+
+        result = _detect_resume(events, fp.all_shutdowns)
+
+        assert result.session_resumed is True
+        assert result.post_shutdown_user_messages == 5
+        assert result.post_shutdown_turn_starts == 3
+        assert result.post_shutdown_output_tokens == 100  # 2 × 50
+        assert result.last_resume_time is None  # no session.resume event
+
+    def test_only_iterates_remaining_events(self) -> None:
+        """Verify _detect_resume only accesses post-shutdown indices.
+
+        Uses a list subclass that raises on ``__iter__`` and on
+        ``__getitem__`` for indices ≤ ``shutdown_idx``.  This proves the
+        implementation neither uses the iterator protocol nor scans
+        pre-shutdown elements via index, and would fail if the code
+        regressed to ``itertools.islice`` or a naïve index-from-zero loop.
+        """
+        from copilot_usage.models import SessionEvent
+
+        class _NoPreScanList(list[SessionEvent]):
+            """list subclass that forbids iteration and pre-shutdown indexing."""
+
+            def __init__(
+                self,
+                items: list[SessionEvent],
+                *,
+                forbidden_up_to: int,
+            ) -> None:
+                super().__init__(items)
+                self._forbidden_up_to = forbidden_up_to
+
+            def __iter__(self) -> Iterator[SessionEvent]:
+                raise AssertionError(
+                    "_detect_resume must use index-based access, not __iter__"
+                )
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> SessionEvent: ...
+
+            @overload
+            def __getitem__(self, index: slice, /) -> list[SessionEvent]: ...
+
+            def __getitem__(
+                self, index: SupportsIndex | slice, /
+            ) -> SessionEvent | list[SessionEvent]:
+                if isinstance(index, slice):
+                    return super().__getitem__(index)
+                int_idx = index.__index__()
+                if int_idx <= self._forbidden_up_to:
+                    raise AssertionError(
+                        f"_detect_resume must not access index {int_idx} "
+                        f"(<= shutdown_idx {self._forbidden_up_to})"
+                    )
+                return super().__getitem__(index)
+
+        n_total = 5_000
+        shutdown_idx = 4_990
+
+        events: list[SessionEvent] = []
+        for i in range(n_total):
+            if i < shutdown_idx:
+                events.append(
+                    SessionEvent(
+                        type=EventType.USER_MESSAGE,
+                        data={
+                            "content": f"m-{i}",
+                            "transformedContent": f"m-{i}",
+                            "attachments": [],
+                            "interactionId": f"int-{i}",
+                        },
+                        id=f"ev-{i}",
+                        timestamp=None,
+                        parentId=None,
+                    )
+                )
+            elif i == shutdown_idx:
+                events.append(
+                    SessionEvent(
+                        type=EventType.SESSION_SHUTDOWN,
+                        data={
+                            "shutdownType": "routine",
+                            "totalPremiumRequests": 0,
+                            "totalApiDurationMs": 0,
+                            "sessionStartTime": 0,
+                        },
+                        id=f"ev-shutdown-{i}",
+                        timestamp=None,
+                        parentId=None,
+                    )
+                )
+            else:
+                events.append(
+                    SessionEvent(
+                        type=EventType.USER_MESSAGE,
+                        data={
+                            "content": f"post-{i}",
+                            "transformedContent": f"post-{i}",
+                            "attachments": [],
+                            "interactionId": f"int-post-{i}",
+                        },
+                        id=f"ev-post-{i}",
+                        timestamp=None,
+                        parentId=None,
+                    )
+                )
+
+        shutdowns: tuple[tuple[int, SessionShutdownData], ...] = (
+            (
+                shutdown_idx,
+                SessionShutdownData(
+                    shutdownType="routine",
+                    totalPremiumRequests=0,
+                    totalApiDurationMs=0,
+                ),
+            ),
+        )
+
+        no_iter_events = _NoPreScanList(events, forbidden_up_to=shutdown_idx)
+        result = _detect_resume(no_iter_events, shutdowns)
+
+        # Only the 9 post-shutdown user messages should be counted
+        expected_remaining = n_total - shutdown_idx - 1  # 9
+        assert result.post_shutdown_user_messages == expected_remaining
+        assert result.session_resumed is True
