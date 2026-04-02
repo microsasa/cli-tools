@@ -54,9 +54,10 @@ from copilot_usage.parser import (
 
 @pytest.fixture(autouse=True)
 def _clear_session_cache() -> None:
-    """Isolate tests from the module-level mtime cache."""
+    """Isolate tests from all module-level caches."""
     _SESSION_CACHE.clear()
     _EVENTS_CACHE.clear()
+    _read_config_model.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -4124,6 +4125,58 @@ class TestReadConfigModelCaching:
 
             summaries = get_all_sessions(tmp_path / "sessions")
             assert summaries[0].model == "claude-sonnet-4"
+
+    def test_stale_lru_cache_not_visible_after_fixture_cleanup(
+        self, tmp_path: Path
+    ) -> None:
+        """Autouse fixture clears lru_cache so stale entries don't leak."""
+        # 1. Populate the lru_cache via get_all_sessions with a patched config
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        session_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "stale-test",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {},
+                },
+                "id": "ev-stale",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hello",
+                    "transformedContent": "hello",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": "ev-u-stale",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        events_path = tmp_path / "sessions" / "stale-test" / "events.jsonl"
+        _write_events(events_path, session_start, user_msg)
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            summaries = get_all_sessions(tmp_path / "sessions")
+        assert summaries[0].model == "gpt-5.1"
+
+        # 2. Simulate fixture cleanup (as if a new test started)
+        _SESSION_CACHE.clear()
+        _EVENTS_CACHE.clear()
+        _read_config_model.cache_clear()
+
+        # 3. Directly call build_session_summary (bypassing get_all_sessions)
+        #    on an active session with no model info — model must be None.
+        events = parse_events(events_path)
+        summary = build_session_summary(events, events_path=events_path)
+        assert summary.model is None
 
 
 # ---------------------------------------------------------------------------
