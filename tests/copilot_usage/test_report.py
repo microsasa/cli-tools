@@ -3105,6 +3105,28 @@ class TestFilterSessionsReversedDateRange:
         assert len(result) == 1
         assert len(caught) == 0
 
+    def test_render_summary_reversed_range_shows_no_sessions(self) -> None:
+        """render_summary with since > until prints 'No sessions found'."""
+        session = SessionSummary(
+            session_id="s1",
+            start_time=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+        since = datetime(2026, 12, 31, tzinfo=UTC)
+        until = datetime(2026, 1, 1, tzinfo=UTC)
+        output = _capture_summary([session], since=since, until=until)
+        assert "No sessions found" in output
+
+    def test_render_cost_view_reversed_range_shows_no_sessions(self) -> None:
+        """render_cost_view with since > until prints 'No sessions found'."""
+        session = SessionSummary(
+            session_id="s1",
+            start_time=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+        since = datetime(2026, 12, 31, tzinfo=UTC)
+        until = datetime(2026, 1, 1, tzinfo=UTC)
+        output = _capture_cost_view([session], since=since, until=until)
+        assert "No sessions found" in output
+
 
 # ---------------------------------------------------------------------------
 # Issue #240 — _filter_sessions naive start_time vs aware since/until
@@ -4853,6 +4875,26 @@ class TestFilterSessionsExactBoundary:
         s = SessionSummary(session_id="s", start_time=t)
         result = _filter_sessions([s], since=t, until=t)
         assert len(result) == 1
+
+    def test_session_one_microsecond_before_since_excluded(self) -> None:
+        """Session starting 1µs before since is excluded."""
+        since = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
+        s = SessionSummary(
+            session_id="s",
+            start_time=since - timedelta(microseconds=1),
+        )
+        result = _filter_sessions([s], since=since, until=None)
+        assert result == []
+
+    def test_session_one_microsecond_after_until_excluded(self) -> None:
+        """Session starting 1µs after until is excluded."""
+        until = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
+        s = SessionSummary(
+            session_id="s",
+            start_time=until + timedelta(microseconds=1),
+        )
+        result = _filter_sessions([s], since=None, until=until)
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
