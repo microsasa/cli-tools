@@ -864,6 +864,43 @@ class TestSessionSummaryCallCountInvariant:
         assert s.active_model_calls == 0
 
 
+class TestSessionSummaryUserMessageInvariant:
+    """Tests for the user_messages >= active_user_messages invariant."""
+
+    def test_rejects_active_messages_exceeding_total(self) -> None:
+        """SessionSummary must reject active_user_messages > user_messages."""
+        with pytest.raises(ValidationError):
+            SessionSummary(
+                session_id="inv",
+                user_messages=3,
+                active_user_messages=5,
+            )
+
+    def test_accepts_active_messages_equal_to_total(self) -> None:
+        """SessionSummary allows active_user_messages == user_messages."""
+        s = SessionSummary(
+            session_id="eq",
+            user_messages=5,
+            active_user_messages=5,
+        )
+        assert s.active_user_messages == s.user_messages
+
+    def test_accepts_active_messages_less_than_total(self) -> None:
+        """SessionSummary allows active_user_messages < user_messages."""
+        s = SessionSummary(
+            session_id="lt",
+            user_messages=10,
+            active_user_messages=3,
+        )
+        assert s.active_user_messages < s.user_messages
+
+    def test_accepts_zero_messages(self) -> None:
+        """SessionSummary allows both counts at zero (defaults)."""
+        s = SessionSummary(session_id="zero")
+        assert s.user_messages == 0
+        assert s.active_user_messages == 0
+
+
 # ---------------------------------------------------------------------------
 # shutdown_output_tokens
 # ---------------------------------------------------------------------------
@@ -954,6 +991,7 @@ class TestTotalOutputTokens:
             has_shutdown_metrics=False,
             active_output_tokens=50,
             active_user_messages=1,
+            user_messages=1,
             model_calls=1,
         )
         assert total_output_tokens(session) == 100
@@ -1021,9 +1059,11 @@ class TestHasActivePeriodStats:
             "active_model_calls": 0,
             field: value,
         }
-        # active_model_calls must be <= model_calls
+        # active counters must be <= their totals
         if field == "active_model_calls":
             kwargs["model_calls"] = value
+        if field == "active_user_messages":
+            kwargs["user_messages"] = value
         session = SessionSummary(**kwargs)  # type: ignore[arg-type]
         assert has_active_period_stats(session) is True
 
