@@ -377,6 +377,56 @@ class TestGetVscodeSummary:
         # _update_vscode_summary instead of collecting all requests first.
         mock_build.assert_not_called()
 
+    def test_incremental_aggregation_asserts_timestamp_bounds(self) -> None:
+        """Multi-file aggregation sets first/last timestamp from earliest/latest."""
+        file_a = Path("/fake/log_a.log")
+        file_b = Path("/fake/log_b.log")
+        requests_a = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 13, 10, 0, 0),
+                request_id="a1",
+                model="gpt-4o",
+                duration_ms=100,
+                category="panel",
+            ),
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 13, 10, 1, 0),
+                request_id="a2",
+                model="gpt-4o",
+                duration_ms=200,
+                category="panel",
+            ),
+        ]
+        requests_b = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 12, 0, 0),
+                request_id="b1",
+                model="claude-sonnet-4",
+                duration_ms=300,
+                category="inline",
+            ),
+        ]
+
+        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+            if path == file_a:
+                return list(requests_a)
+            return list(requests_b)
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fake_parse,
+            ),
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.first_timestamp == requests_a[0].timestamp
+        assert summary.last_timestamp == requests_b[-1].timestamp
+
     def test_oserror_skips_file_and_continues(self) -> None:
         """When one log file raises OSError, the other is still processed."""
         from datetime import datetime
@@ -659,6 +709,43 @@ class TestTimestampBoundsOptimisation:
         assert acc.first_timestamp == batch1[0].timestamp
         assert acc.last_timestamp == batch2[-1].timestamp
         assert acc.last_timestamp != last_after_batch1
+
+    def test_first_timestamp_updated_when_second_batch_is_earlier(self) -> None:
+        """Second (earlier) batch moves first_timestamp backward."""
+        batch1 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 11, 9, 0, i),
+                request_id=f"b1r{i}",
+                model="gpt-4o",
+                duration_ms=100,
+                category="panel",
+            )
+            for i in range(3)
+        ]
+        batch2 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 10, 8, 0, i),
+                request_id=f"b2r{i}",
+                model="gpt-4o",
+                duration_ms=200,
+                category="panel",
+            )
+            for i in range(4)
+        ]
+
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, batch1)
+
+        first_after_batch1 = acc.first_timestamp
+        last_after_batch1 = acc.last_timestamp
+
+        _update_vscode_summary(acc, batch2)
+
+        # first_timestamp moves backward to batch2; last_timestamp unchanged.
+        assert acc.first_timestamp == batch2[0].timestamp
+        assert acc.first_timestamp != first_after_batch1
+        assert acc.last_timestamp == batch1[-1].timestamp
+        assert acc.last_timestamp == last_after_batch1
 
 
 # ---------------------------------------------------------------------------
