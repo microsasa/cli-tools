@@ -2441,6 +2441,114 @@ def test_interactive_loop_observer_none_no_auto_refresh(
 
 
 # ---------------------------------------------------------------------------
+# Issue #650 — redundant get_all_sessions on back-navigation
+# ---------------------------------------------------------------------------
+
+
+def test_back_navigation_skips_get_all_sessions_when_no_change(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Returning from detail view should NOT call get_all_sessions when
+    change_event is not set (no file changes detected)."""
+    _write_session(
+        tmp_path, "bk_noref-0000-0000-0000-000000000000", name="BackNoRefresh"
+    )
+
+    import copilot_usage.cli as cli_mod
+
+    # Track get_all_sessions calls after the initial load.
+    gas_calls: list[int] = []
+    orig_gas = cli_mod.get_all_sessions
+
+    def _tracking_gas(*args: Any, **kwargs: Any) -> list[Any]:
+        gas_calls.append(1)
+        return orig_gas(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "get_all_sessions", _tracking_gas)
+
+    # Use a no-op observer so file-system events never fire.
+    def _noop_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _noop_start)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "1"  # navigate to detail view
+        if call_count == 2:
+            return ""  # back-navigation (any input returns home)
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # The initial load calls get_all_sessions once; the back-navigation
+    # must NOT trigger an additional call because change_event was never set.
+    assert len(gas_calls) == 1
+
+
+def test_back_navigation_calls_get_all_sessions_when_change_event_set(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Returning from detail view SHOULD call get_all_sessions exactly once
+    when change_event is set (file changes detected)."""
+    _write_session(
+        tmp_path, "bk_chg00-0000-0000-0000-000000000000", name="BackWithChange"
+    )
+
+    import copilot_usage.cli as cli_mod
+
+    # Track get_all_sessions calls after the initial load.
+    gas_calls: list[int] = []
+    orig_gas = cli_mod.get_all_sessions
+
+    def _tracking_gas(*args: Any, **kwargs: Any) -> list[Any]:
+        gas_calls.append(1)
+        return orig_gas(*args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "get_all_sessions", _tracking_gas)
+
+    # Capture change_event via a no-op observer (no real file watching).
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        captured_event.append(change_event)
+        return
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "1"  # navigate to detail view
+        if call_count == 2:
+            # Set change_event before back-navigation
+            if captured_event:
+                captured_event[0].set()
+            return ""  # back-navigation triggers refresh because event is set
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # Initial load (1) + back-navigation with change_event set (1) = 2 calls
+    assert len(gas_calls) == 2
+
+
+# ---------------------------------------------------------------------------
 # Issue #307 — version header on initial entry to cost / detail views
 # ---------------------------------------------------------------------------
 
