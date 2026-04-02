@@ -340,7 +340,9 @@ def _interactive_loop(path: Path | None) -> None:
             if view in ("detail", "cost"):
                 view = "home"
                 detail_session_id = None
-                sessions = get_all_sessions(path)
+                if change_event.is_set():
+                    change_event.clear()
+                    sessions = get_all_sessions(path)
                 _draw_home(console, sessions)
                 _write_prompt(_HOME_PROMPT)
                 continue
