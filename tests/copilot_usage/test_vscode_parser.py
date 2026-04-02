@@ -316,7 +316,11 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 0
 
     def test_incremental_aggregation(self) -> None:
-        """Per-file incremental processing: requests are aggregated per file."""
+        """Per-file incremental processing: requests are aggregated per file.
+
+        Also verifies that multi-file aggregation sets first/last timestamp
+        from the earliest and latest batches respectively.
+        """
         from datetime import datetime
         from unittest.mock import call
 
@@ -376,54 +380,7 @@ class TestGetVscodeSummary:
         # be called because get_vscode_summary now aggregates per-file via
         # _update_vscode_summary instead of collecting all requests first.
         mock_build.assert_not_called()
-
-    def test_incremental_aggregation_asserts_timestamp_bounds(self) -> None:
-        """Multi-file aggregation sets first/last timestamp from earliest/latest."""
-        file_a = Path("/fake/log_a.log")
-        file_b = Path("/fake/log_b.log")
-        requests_a = [
-            VSCodeRequest(
-                timestamp=datetime(2026, 3, 13, 10, 0, 0),
-                request_id="a1",
-                model="gpt-4o",
-                duration_ms=100,
-                category="panel",
-            ),
-            VSCodeRequest(
-                timestamp=datetime(2026, 3, 13, 10, 1, 0),
-                request_id="a2",
-                model="gpt-4o",
-                duration_ms=200,
-                category="panel",
-            ),
-        ]
-        requests_b = [
-            VSCodeRequest(
-                timestamp=datetime(2026, 3, 14, 12, 0, 0),
-                request_id="b1",
-                model="claude-sonnet-4",
-                duration_ms=300,
-                category="inline",
-            ),
-        ]
-
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
-            if path == file_a:
-                return list(requests_a)
-            return list(requests_b)
-
-        with (
-            patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
-                return_value=[file_a, file_b],
-            ),
-            patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
-                side_effect=_fake_parse,
-            ),
-        ):
-            summary = get_vscode_summary()
-
+        # Timestamp bounds span the earliest and latest batches.
         assert summary.first_timestamp == requests_a[0].timestamp
         assert summary.last_timestamp == requests_b[-1].timestamp
 
