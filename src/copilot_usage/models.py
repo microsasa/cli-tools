@@ -31,7 +31,6 @@ __all__: Final[list[str]] = [
     "TokenUsage",
     "UserMessageData",
     "GenericEventData",
-    "EventData",
     "add_to_model_metrics",
     "copy_model_metrics",
     "ensure_aware",
@@ -271,16 +270,6 @@ class GenericEventData(BaseModel, extra="allow"):
 # ---------------------------------------------------------------------------
 
 
-EventData = (
-    SessionStartData
-    | AssistantMessageData
-    | SessionShutdownData
-    | ToolExecutionData
-    | UserMessageData
-    | GenericEventData
-)
-
-
 # ---------------------------------------------------------------------------
 # Event envelope
 # ---------------------------------------------------------------------------
@@ -289,8 +278,10 @@ EventData = (
 class SessionEvent(BaseModel):
     """A single event from an ``events.jsonl`` file.
 
-    ``data`` is kept as a generic dict-like object; callers can use the
-    helper ``parse_data()`` method to get a typed payload when needed.
+    ``data`` is kept as a generic dict-like object; callers use the
+    typed ``as_*()`` accessors (``as_session_start()``,
+    ``as_assistant_message()``, etc.) to get a validated, narrowly-typed
+    payload for each known event type.
     """
 
     type: str
@@ -300,22 +291,6 @@ class SessionEvent(BaseModel):
     parentId: str | None = None
     # session.shutdown has currentModel at the top level
     currentModel: str | None = None
-
-    def parse_data(self) -> EventData:
-        """Return a strongly-typed data payload based on ``self.type``."""
-        match self.type:
-            case EventType.SESSION_START:
-                return SessionStartData.model_validate(self.data)
-            case EventType.ASSISTANT_MESSAGE:
-                return AssistantMessageData.model_validate(self.data)
-            case EventType.SESSION_SHUTDOWN:
-                return SessionShutdownData.model_validate(self.data)
-            case EventType.TOOL_EXECUTION_COMPLETE:
-                return ToolExecutionData.model_validate(self.data)
-            case EventType.USER_MESSAGE:
-                return UserMessageData.model_validate(self.data)
-            case _:
-                return GenericEventData.model_validate(self.data)
 
     def _as[T: BaseModel](
         self, expected_type: EventType, model_cls: builtins.type[T]

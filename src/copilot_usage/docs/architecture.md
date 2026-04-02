@@ -46,7 +46,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 
 1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
 2. **Parsing** — `parse_events()` reads each line as JSON, creates `SessionEvent` objects via Pydantic validation. Malformed lines are skipped with a warning.
-3. **Typed dispatch** — `SessionEvent.parse_data()` uses match/case on event type to return the correct typed data model (`SessionStartData`, `AssistantMessageData`, etc.)
+3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type
 4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
    - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
    - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`)

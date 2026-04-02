@@ -12,7 +12,6 @@ from copilot_usage.models import (
     AssistantMessageData,
     CodeChanges,
     EventType,
-    GenericEventData,
     ModelMetrics,
     RequestMetrics,
     SessionEvent,
@@ -206,68 +205,55 @@ def test_user_message_data() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SessionEvent envelope + parse_data()
+# SessionEvent envelope + as_*() typed accessors
 # ---------------------------------------------------------------------------
 
 
 def test_session_event_start() -> None:
     ev = SessionEvent.model_validate(RAW_SESSION_START)
     assert ev.type == "session.start"
-    data = ev.parse_data()
+    data = ev.as_session_start()
     assert isinstance(data, SessionStartData)
 
 
 def test_session_event_shutdown() -> None:
     ev = SessionEvent.model_validate(RAW_SHUTDOWN)
     assert ev.currentModel == "claude-opus-4.6-1m"
-    data = ev.parse_data()
+    data = ev.as_session_shutdown()
     assert isinstance(data, SessionShutdownData)
 
 
 def test_session_event_assistant_message() -> None:
     ev = SessionEvent.model_validate(RAW_ASSISTANT_MESSAGE)
-    data = ev.parse_data()
+    data = ev.as_assistant_message()
     assert isinstance(data, AssistantMessageData)
 
 
 def test_session_event_tool_exec() -> None:
     ev = SessionEvent.model_validate(RAW_TOOL_EXEC)
-    data = ev.parse_data()
+    data = ev.as_tool_execution()
     assert isinstance(data, ToolExecutionData)
 
 
 def test_session_event_user_message() -> None:
     ev = SessionEvent.model_validate(RAW_USER_MESSAGE)
-    data = ev.parse_data()
+    data = ev.as_user_message()
     assert isinstance(data, UserMessageData)
 
 
 def test_session_event_unknown_type() -> None:
     raw = {"type": "some.future.event", "data": {"foo": "bar"}, "id": "x"}
     ev = SessionEvent.model_validate(raw)
-    data = ev.parse_data()
-    assert isinstance(data, GenericEventData)
+    # Unknown types should not crash; as_*() methods raise ValueError on mismatch
+    with pytest.raises(ValueError, match="Expected session.start"):
+        ev.as_session_start()
 
 
-@pytest.mark.parametrize(
-    "event_type",
-    [
-        EventType.SESSION_RESUME,
-        EventType.SESSION_ERROR,
-        EventType.SESSION_PLAN_CHANGED,
-        EventType.SESSION_WORKSPACE_FILE_CHANGED,
-        EventType.ASSISTANT_TURN_START,
-        EventType.ASSISTANT_TURN_END,
-        EventType.TOOL_EXECUTION_START,
-        EventType.ABORT,
-    ],
-)
-def test_parse_data_known_unmodeled_types_return_generic(
-    event_type: EventType,
-) -> None:
-    ev = SessionEvent(type=event_type, data={"foo": "bar"}, id="x")
-    data = ev.parse_data()
-    assert isinstance(data, GenericEventData)
+def test_as_wrong_type_raises_value_error() -> None:
+    """Calling an as_*() accessor on the wrong event type raises ValueError."""
+    ev = SessionEvent(type="session.start", data={"sessionId": "s1", "version": 1})
+    with pytest.raises(ValueError, match="Expected session.shutdown"):
+        ev.as_session_shutdown()
 
 
 # ---------------------------------------------------------------------------

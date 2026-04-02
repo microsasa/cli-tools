@@ -50,3 +50,22 @@ def test_wheel_excludes_docs(tmp_path: Path) -> None:
         names = zf.namelist()
     docs = [n for n in names if "copilot_usage/docs/" in n]
     assert not docs, f"docs/ should not be in wheel, but found: {docs}"
+
+
+def test_parse_data_and_event_data_removed_from_public_api() -> None:
+    """``parse_data`` and ``EventData`` must not appear in the public API.
+
+    Regression guard for issue #670: these were production dead-code that
+    contradicted architecture docs.  The canonical dispatch API is the
+    narrowly-typed ``as_*()`` accessors on ``SessionEvent``.
+    """
+    import copilot_usage.models as models_mod
+
+    dunder_all = models_mod.__all__
+    assert "EventData" not in dunder_all, "EventData must not be in models.__all__"
+    assert not hasattr(models_mod, "EventData"), (  # noqa: B009
+        "EventData type alias must not exist in models module"
+    )
+    assert not hasattr(models_mod.SessionEvent, "parse_data"), (  # noqa: B009
+        "SessionEvent.parse_data() must not exist — use as_*() accessors"
+    )

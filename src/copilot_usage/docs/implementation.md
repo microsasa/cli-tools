@@ -27,7 +27,7 @@ Every line in `events.jsonl` is a JSON object conforming to the `SessionEvent` m
 | Field          | Type               | Description                                                  |
 |----------------|--------------------|--------------------------------------------------------------|
 | `type`         | `str`              | Event type identifier (e.g. `"session.start"`)               |
-| `data`         | `dict[str, object]` | Event-specific payload — parsed on demand via `parse_data()` |
+| `data`         | `dict[str, object]` | Event-specific payload — parsed on demand via typed `as_*()` accessors |
 | `id`           | `str \| None`       | Event UUID                                                   |
 | `timestamp`    | `datetime \| None`  | ISO 8601 timestamp                                           |
 | `parentId`     | `str \| None`       | Links tool completions to their turn                         |
@@ -53,7 +53,7 @@ Defined in `EventType` enum (in `models.py`):
 | `user.message`                    | `UserMessageData`       | `content`, `attachments`                                           |
 | `abort`                           | `GenericEventData`      | Catch-all                                                          |
 
-Typed dispatch happens in `SessionEvent.parse_data()` (in `models.py`) via `match`/`case`. Unknown types fall through to `GenericEventData(extra="allow")`, which accepts any JSON fields without validation errors.
+Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_start()`, `as_assistant_message()`). Each accessor validates that `self.type` matches the expected `EventType` and returns the corresponding typed data model. Unknown event types are handled by `GenericEventData(extra="allow")`, which accepts any JSON fields without validation errors.
 
 ### SessionSummary fields
 
@@ -367,7 +367,7 @@ Two levels of protection against files disappearing between discovery and read:
 
 ### Unknown event types
 
-Events with types not in `EventType` still parse successfully — `SessionEvent.type` is `str`, not the enum. `parse_data()` returns `GenericEventData(extra="allow")` for unknown types, accepting any fields.
+Events with types not in `EventType` still parse successfully — `SessionEvent.type` is `str`, not the enum. Unknown event types are simply skipped by production code, which only has branches for known types.
 
 In `_first_pass()` (in `parser.py`), unknown types are simply ignored — the loop only has branches for known types, with no `else` clause needed.
 
