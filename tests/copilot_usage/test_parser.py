@@ -5332,7 +5332,7 @@ class TestGetCachedEvents:
         assert second is first
 
     def test_cache_eviction_bounds_memory(self, tmp_path: Path) -> None:
-        """Cache evicts oldest entry when _MAX_CACHED_EVENTS is exceeded."""
+        """Cache evicts LRU entry when _MAX_CACHED_EVENTS is exceeded."""
         paths: list[Path] = []
         for i in range(_MAX_CACHED_EVENTS + 1):
             p = tmp_path / f"s{i}" / "events.jsonl"
@@ -5341,10 +5341,34 @@ class TestGetCachedEvents:
             paths.append(p)
 
         assert len(_EVENTS_CACHE) == _MAX_CACHED_EVENTS
-        # The first path should have been evicted
+        # The first path should have been evicted (LRU)
         assert paths[0] not in _EVENTS_CACHE
         # The last path should still be cached
         assert paths[-1] in _EVENTS_CACHE
+
+    def test_lru_eviction_protects_recently_accessed(self, tmp_path: Path) -> None:
+        """Recently accessed entry survives eviction; true LRU is evicted."""
+        paths: list[Path] = []
+        for i in range(_MAX_CACHED_EVENTS):
+            p = tmp_path / f"s{i}" / "events.jsonl"
+            _write_events(p, _START_EVENT, _USER_MSG)
+            get_cached_events(p)
+            paths.append(p)
+
+        assert len(_EVENTS_CACHE) == _MAX_CACHED_EVENTS
+
+        # Re-access session 0 to promote it to most-recently-used
+        get_cached_events(paths[0])
+
+        # Insert a 9th session — should evict session 1 (now LRU), not 0
+        p_new = tmp_path / "s_new" / "events.jsonl"
+        _write_events(p_new, _START_EVENT, _USER_MSG)
+        get_cached_events(p_new)
+
+        assert len(_EVENTS_CACHE) == _MAX_CACHED_EVENTS
+        assert paths[0] in _EVENTS_CACHE, "Recently accessed entry was evicted"
+        assert paths[1] not in _EVENTS_CACHE, "LRU entry should have been evicted"
+        assert p_new in _EVENTS_CACHE
 
     def test_cache_populates_entry(self, tmp_path: Path) -> None:
         """After a call, _EVENTS_CACHE contains a _CachedEvents entry."""
