@@ -502,7 +502,8 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
             continue
         try:
             events = parse_events(events_path)
-        except OSError:
+        except OSError as exc:
+            logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
         if not events:
             continue
