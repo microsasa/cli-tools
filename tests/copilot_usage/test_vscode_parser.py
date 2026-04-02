@@ -316,7 +316,11 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 0
 
     def test_incremental_aggregation(self) -> None:
-        """Per-file incremental processing: requests are aggregated per file."""
+        """Per-file incremental processing: requests are aggregated per file.
+
+        Also verifies that multi-file aggregation sets first/last timestamp
+        from the earliest and latest batches respectively.
+        """
         from datetime import datetime
         from unittest.mock import call
 
@@ -376,6 +380,9 @@ class TestGetVscodeSummary:
         # be called because get_vscode_summary now aggregates per-file via
         # _update_vscode_summary instead of collecting all requests first.
         mock_build.assert_not_called()
+        # Timestamp bounds span the earliest and latest batches.
+        assert summary.first_timestamp == requests_a[0].timestamp
+        assert summary.last_timestamp == requests_b[-1].timestamp
 
     def test_oserror_skips_file_and_continues(self) -> None:
         """When one log file raises OSError, the other is still processed."""
@@ -659,6 +666,43 @@ class TestTimestampBoundsOptimisation:
         assert acc.first_timestamp == batch1[0].timestamp
         assert acc.last_timestamp == batch2[-1].timestamp
         assert acc.last_timestamp != last_after_batch1
+
+    def test_first_timestamp_updated_when_second_batch_is_earlier(self) -> None:
+        """Second (earlier) batch moves first_timestamp backward."""
+        batch1 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 11, 9, 0, i),
+                request_id=f"b1r{i}",
+                model="gpt-4o",
+                duration_ms=100,
+                category="panel",
+            )
+            for i in range(3)
+        ]
+        batch2 = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 10, 8, 0, i),
+                request_id=f"b2r{i}",
+                model="gpt-4o",
+                duration_ms=200,
+                category="panel",
+            )
+            for i in range(4)
+        ]
+
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, batch1)
+
+        first_after_batch1 = acc.first_timestamp
+        last_after_batch1 = acc.last_timestamp
+
+        _update_vscode_summary(acc, batch2)
+
+        # first_timestamp moves backward to batch2; last_timestamp unchanged.
+        assert acc.first_timestamp == batch2[0].timestamp
+        assert acc.first_timestamp != first_after_batch1
+        assert acc.last_timestamp == batch1[-1].timestamp
+        assert acc.last_timestamp == last_after_batch1
 
 
 # ---------------------------------------------------------------------------
