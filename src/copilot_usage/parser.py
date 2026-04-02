@@ -730,6 +730,13 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
+        # Populate _EVENTS_CACHE so that get_cached_events can serve
+        # subsequent detail-view reads without re-parsing the file.
+        if events_path in _EVENTS_CACHE:
+            del _EVENTS_CACHE[events_path]
+        elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
+            _EVENTS_CACHE.popitem(last=False)  # evict LRU
+        _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
         meta = _build_session_summary_with_meta(
             events, session_dir=events_path.parent, events_path=events_path
         )

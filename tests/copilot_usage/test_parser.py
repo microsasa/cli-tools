@@ -5465,6 +5465,97 @@ class TestGetCachedEvents:
 
 
 # ---------------------------------------------------------------------------
+# Issue #668 — get_all_sessions populates _EVENTS_CACHE
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessionsPopulatesEventsCache:
+    """get_all_sessions stores parsed events in _EVENTS_CACHE so that
+    subsequent get_cached_events calls avoid a redundant file re-read.
+    """
+
+    def _make_session(self, base: Path, name: str, sid: str) -> Path:
+        """Create a completed session and return the events.jsonl path."""
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": sid,
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/"},
+                },
+                "id": f"ev-{sid}",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hi",
+                    "transformedContent": "hi",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": f"ev-u-{sid}",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 1,
+                    "totalApiDurationMs": 500,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {
+                        "gpt-5.1": {
+                            "requests": {"count": 1, "cost": 1},
+                            "usage": {"outputTokens": 50},
+                        }
+                    },
+                },
+                "id": f"ev-sd-{sid}",
+                "timestamp": "2026-03-07T10:05:00.000Z",
+            }
+        )
+        return _write_events(base / name / "events.jsonl", start, user, shutdown)
+
+    def test_cold_cache_populates_events_cache(self, tmp_path: Path) -> None:
+        """After a cold get_all_sessions call, _EVENTS_CACHE contains entries."""
+        p1 = self._make_session(tmp_path, "sess-a", "a")
+        p2 = self._make_session(tmp_path, "sess-b", "b")
+
+        assert len(_EVENTS_CACHE) == 0  # cold cache
+
+        get_all_sessions(tmp_path)
+
+        assert p1 in _EVENTS_CACHE
+        assert p2 in _EVENTS_CACHE
+        assert isinstance(_EVENTS_CACHE[p1], _CachedEvents)
+        assert isinstance(_EVENTS_CACHE[p2], _CachedEvents)
+
+    def test_get_cached_events_after_get_all_sessions_no_reparse(
+        self, tmp_path: Path
+    ) -> None:
+        """get_cached_events reuses _EVENTS_CACHE populated by get_all_sessions
+        — parse_events is called only once per session, not twice."""
+        p = self._make_session(tmp_path, "sess-a", "a")
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            get_all_sessions(tmp_path)
+            assert spy.call_count == 1  # single parse during get_all_sessions
+
+            events = get_cached_events(p)
+            # Still 1 — no additional parse_events call
+            assert spy.call_count == 1
+
+        assert len(events) == 3  # start + user + shutdown
+
+
+# ---------------------------------------------------------------------------
 # Issue #640 — _detect_resume: replace islice with range-index loop
 # ---------------------------------------------------------------------------
 
