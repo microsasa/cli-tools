@@ -52,12 +52,17 @@ from copilot_usage.parser import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _clear_session_cache() -> None:
-    """Isolate tests from all module-level caches."""
+def _reset_all_caches() -> None:
+    """Clear all module-level caches (shared between fixture and tests)."""
     _SESSION_CACHE.clear()
     _EVENTS_CACHE.clear()
     _read_config_model.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_session_cache() -> None:
+    """Isolate tests from all module-level caches."""
+    _reset_all_caches()
 
 
 # ---------------------------------------------------------------------------
@@ -4168,9 +4173,7 @@ class TestReadConfigModelCaching:
         assert summaries[0].model == "gpt-5.1"
 
         # 2. Simulate fixture cleanup (as if a new test started)
-        _SESSION_CACHE.clear()
-        _EVENTS_CACHE.clear()
-        _read_config_model.cache_clear()
+        _reset_all_caches()
 
         # 3. Directly call build_session_summary (bypassing get_all_sessions)
         #    on an active session with no model info — model must be None.
