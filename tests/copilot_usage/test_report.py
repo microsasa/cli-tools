@@ -975,7 +975,7 @@ def test_format_tokens_exact_boundary_thousand() -> None:
 
 
 def test_format_duration_minutes_seconds() -> None:
-    assert format_duration(389_114) == "6m 29s"
+    assert format_duration(389_114) == "6m 29s 114ms"
 
 
 def test_format_duration_seconds_only() -> None:
@@ -983,11 +983,11 @@ def test_format_duration_seconds_only() -> None:
 
 
 def test_format_duration_zero() -> None:
-    assert format_duration(0) == "0s"
+    assert format_duration(0) == "0ms"
 
 
 def test_format_duration_negative() -> None:
-    assert format_duration(-100) == "0s"
+    assert format_duration(-100) == "0ms"
 
 
 def test_format_duration_hours() -> None:
@@ -1198,7 +1198,7 @@ class TestRenderSummary:
         )
         output = _capture_summary([session])
         assert "Copilot Usage Summary" in output
-        assert "0s" in output
+        assert "0ms" in output
 
     def test_summary_header_single_session_same_date_both_ends(self) -> None:
         """With a single session, earliest and latest are the same date."""
@@ -3897,12 +3897,12 @@ class TestFormatElapsedSince:
         assert result == "5m 30s"
 
     def test_zero_elapsed(self) -> None:
-        """When start == now, format is '0s'."""
+        """When start == now, format is '0ms'."""
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
         with patch("copilot_usage.report.datetime", wraps=datetime) as mock_dt:
             mock_dt.now.return_value = now
             result = _format_elapsed_since(now)
-        assert result == "0s"
+        assert result == "0ms"
 
 
 # ---------------------------------------------------------------------------
@@ -3939,7 +3939,7 @@ class TestFormatDetailDurationBoundaries:
 
 class TestFormatTimedelta:
     def test_zero(self) -> None:
-        assert format_timedelta(timedelta(0)) == "0s"
+        assert format_timedelta(timedelta(0)) == "0ms"
 
     def test_seconds_only(self) -> None:
         assert format_timedelta(timedelta(seconds=5)) == "5s"
@@ -3960,7 +3960,7 @@ class TestFormatTimedelta:
         assert format_timedelta(timedelta(hours=2, minutes=30)) == "2h 30m"
 
     def test_negative_clamped_to_zero(self) -> None:
-        assert format_timedelta(timedelta(seconds=-10)) == "0s"
+        assert format_timedelta(timedelta(seconds=-10)) == "0ms"
 
     def test_large_duration(self) -> None:
         assert (

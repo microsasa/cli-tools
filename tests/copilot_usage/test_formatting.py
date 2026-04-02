@@ -155,3 +155,96 @@ class TestMaxContentLenSingleDefinition:
                         f"at line {node.lineno}; "
                         "it must be imported from _formatting"
                     )
+
+
+class TestFormatDuration:
+    """Tests for format_duration — millisecond to human-readable conversion."""
+
+    def test_sub_second_shows_milliseconds(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(481) == "481ms"
+
+    def test_zero_shows_zero_ms(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(0) == "0ms"
+
+    def test_one_ms(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(1) == "1ms"
+
+    def test_999_ms(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(999) == "999ms"
+
+    def test_exactly_one_second(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(1000) == "1s"
+
+    def test_seconds_truncates_ms(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(1500) == "1s 500ms"
+
+    def test_minutes_and_seconds(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(389114) == "6m 29s 114ms"
+
+    def test_hours_minutes_seconds(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(3661000) == "1h 1m 1s"
+
+    def test_exact_minute(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(60000) == "1m"
+
+    def test_negative_clamped_to_zero(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(-500) == "0ms"
+
+    def test_negative_one_clamped_to_zero(self) -> None:
+        from copilot_usage._formatting import format_duration
+
+        assert format_duration(-1) == "0ms"
+
+
+class TestFormatTimedelta:
+    """Tests for format_timedelta — timedelta to human-readable conversion."""
+
+    def test_sub_second_timedelta(self) -> None:
+        from datetime import timedelta
+
+        from copilot_usage._formatting import format_timedelta
+
+        assert format_timedelta(timedelta(milliseconds=481)) == "481ms"
+
+    def test_zero_timedelta(self) -> None:
+        from datetime import timedelta
+
+        from copilot_usage._formatting import format_timedelta
+
+        assert format_timedelta(timedelta(0)) == "0ms"
+
+    def test_seconds_timedelta(self) -> None:
+        from datetime import timedelta
+
+        from copilot_usage._formatting import format_timedelta
+
+        assert format_timedelta(timedelta(seconds=5)) == "5s"
+
+    def test_mixed_timedelta(self) -> None:
+        from datetime import timedelta
+
+        from copilot_usage._formatting import format_timedelta
+
+        assert (
+            format_timedelta(timedelta(hours=1, minutes=5, seconds=30)) == "1h 5m 30s"
+        )
