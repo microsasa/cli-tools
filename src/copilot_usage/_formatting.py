@@ -28,16 +28,23 @@ def hms(total_seconds: int) -> tuple[int, int, int]:
 
 
 def format_timedelta(td: timedelta) -> str:
-    """Format a timedelta to human-readable duration (e.g. '1h 5m 30s')."""
-    total_seconds = max(int(td.total_seconds()), 0)
+    """Format a timedelta to human-readable duration (e.g. '1h 5m 30s 481ms').
+
+    Always includes milliseconds when present.
+    """
+    total_ms = max(int(td.total_seconds() * 1000), 0)
+    remainder_ms = total_ms % 1000
+    total_seconds = total_ms // 1000
     hours, minutes, seconds = hms(total_seconds)
     parts: list[str] = []
     if hours:
         parts.append(f"{hours}h")
     if minutes:
         parts.append(f"{minutes}m")
-    if seconds or not parts:
+    if seconds:
         parts.append(f"{seconds}s")
+    if remainder_ms or not parts:
+        parts.append(f"{remainder_ms}ms")
     return " ".join(parts)
 
 
@@ -48,15 +55,21 @@ def format_duration(ms: int) -> str:
     ``"1h 1m 1s"``.
 
     >>> format_duration(389114)
-    '6m 29s'
+    '6m 29s 114ms'
     >>> format_duration(5000)
     '5s'
     >>> format_duration(0)
-    '0s'
+    '0ms'
     >>> format_duration(3661000)
     '1h 1m 1s'
     >>> format_duration(60000)
     '1m'
+    >>> format_duration(481)
+    '481ms'
+    >>> format_duration(50)
+    '50ms'
+    >>> format_duration(1500)
+    '1s 500ms'
     """
     return format_timedelta(timedelta(milliseconds=ms))
 
