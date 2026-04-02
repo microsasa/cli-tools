@@ -3834,6 +3834,53 @@ class TestThreeShutdownCyclesMergeModelMetrics:
 
 
 # ---------------------------------------------------------------------------
+# Issue #671 — shutdown_cycles timestamps are always non-None
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownCyclesTimestampsNonNone:
+    """Verify shutdown_cycles entries always carry a non-None timestamp.
+
+    The invariant: ``idx`` in ``all_shutdowns`` comes from ``enumerate(events)``
+    in ``_first_pass``, so it is always a valid index into the same event list.
+    The timestamp is read directly from ``events[idx]``.
+    """
+
+    def test_single_shutdown_has_non_none_timestamp(self, tmp_path: Path) -> None:
+        """A single-shutdown session has exactly one cycle with a real timestamp."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, _SHUTDOWN_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert len(summary.shutdown_cycles) == 1
+        ts, sd = summary.shutdown_cycles[0]
+        assert ts is not None
+        assert sd.totalPremiumRequests == 5
+
+    def test_multiple_shutdowns_all_non_none_timestamps(self, tmp_path: Path) -> None:
+        """A multi-shutdown session has all cycles with real timestamps."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+            _SHUTDOWN_EVENT_2,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert len(summary.shutdown_cycles) == 2
+        for ts, _sd in summary.shutdown_cycles:
+            assert ts is not None
+
+
+# ---------------------------------------------------------------------------
 # Issue #598 — _build_completed_summary uses O(M) copy_model_metrics calls
 # ---------------------------------------------------------------------------
 
