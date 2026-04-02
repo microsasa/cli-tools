@@ -5070,8 +5070,8 @@ class TestRenderSummaryHeaderEmptyGuard:
 
 
 # ---------------------------------------------------------------------------
-# Issue #506 — render_cost_view grand total excludes sessions with no
-# model_metrics (Output Tokens column shows "—")
+# Issue #642 — render_cost_view grand total must *include* output tokens from
+# sessions with no model_metrics (per-session row still shows "—")
 # ---------------------------------------------------------------------------
 
 
@@ -5093,10 +5093,12 @@ class TestRenderCostViewNoModelMetricsGrandTotal:
         )
         output = _capture_cost_view([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        # The per-session row should show "—" for Output Tokens (no model)
-        assert "—" in clean
-        assert "Grand Total" in clean
+        # The per-session Output Tokens cell should be "—" (no model breakdown)
         lines = clean.splitlines()
+        session_row = next(line for line in lines if "No Metrics Active" in line)
+        session_cols = [c.strip() for c in session_row.split("│")]
+        assert session_cols[6] == "—"
+        assert "Grand Total" in clean
         grand_row = next(line for line in lines if "Grand Total" in line)
         grand_cols = [c.strip() for c in grand_row.split("│")]
         expected = format_tokens(total_output_tokens(session))
