@@ -5,6 +5,7 @@
 import io
 import json
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -5393,12 +5394,23 @@ class TestDetectResumeRangeIndex:
         assert result.last_resume_time is None  # no session.resume event
 
     def test_only_iterates_remaining_events(self) -> None:
-        """Verify the range-index loop does not visit pre-shutdown events.
+        """Verify _detect_resume uses index-based access, not __iter__.
 
-        Constructs a list of SessionEvent objects where pre-shutdown events
-        have a sentinel type that would cause an assertion failure if visited.
+        Uses a list subclass that raises on ``__iter__`` to prove the
+        implementation accesses elements via ``__getitem__`` (range-index
+        loop), not via the iterator protocol.  This would fail if the code
+        ever regressed to ``itertools.islice`` or similar iterator-based
+        scanning.
         """
         from copilot_usage.models import SessionEvent
+
+        class _NoIterList(list[SessionEvent]):
+            """list subclass that forbids iteration."""
+
+            def __iter__(self) -> Iterator[SessionEvent]:
+                raise AssertionError(
+                    "_detect_resume must use index-based access, not __iter__"
+                )
 
         n_total = 5_000
         shutdown_idx = 4_990
@@ -5462,7 +5474,8 @@ class TestDetectResumeRangeIndex:
             ),
         )
 
-        result = _detect_resume(events, shutdowns)
+        no_iter_events = _NoIterList(events)
+        result = _detect_resume(no_iter_events, shutdowns)
 
         # Only the 9 post-shutdown user messages should be counted
         expected_remaining = n_total - shutdown_idx - 1  # 9
