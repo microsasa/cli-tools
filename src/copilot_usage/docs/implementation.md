@@ -53,7 +53,7 @@ Defined in `EventType` enum (in `models.py`):
 | `user.message`                    | `UserMessageData`       | `content`, `attachments`                                           |
 | `abort`                           | `GenericEventData`      | Catch-all                                                          |
 
-Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_start()`, `as_assistant_message()`). Each accessor validates that `self.type` matches the expected `EventType` and returns the corresponding typed data model. Unknown event types are handled by `GenericEventData(extra="allow")`, which accepts any JSON fields without validation errors.
+Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_start()`, `as_assistant_message()`). Each accessor validates that `self.type` matches the expected `EventType` and returns the corresponding typed data model for known event types. Unknown event types may still validate as the base `SessionEvent` envelope, but production code skips them rather than automatically parsing them into `GenericEventData`. `GenericEventData(extra="allow")` remains available only for optional, best-effort payload validation when a caller explicitly chooses to use it.
 
 ### SessionSummary fields
 

@@ -46,7 +46,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 
 1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
 2. **Parsing** — `parse_events()` reads each line as JSON, creates `SessionEvent` objects via Pydantic validation. Malformed lines are skipped with a warning.
-3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type
+3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type. Unknown event types still validate as `SessionEvent`, but normal processing ignores them unless a caller explicitly validates `data` with `GenericEventData`.
 4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
    - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
    - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`)
@@ -63,7 +63,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 
 **Resumed session detection.** Sessions can be shut down and resumed. The parser checks for events after the last `session.shutdown` to detect this. Resumed sessions get `is_active = True` with shutdown metrics preserved as historical data.
 
-**Graceful degradation.** Unknown event types are parsed as `GenericEventData` (Pydantic `extra="allow"`). Missing fields get defaults. The tool never crashes on unexpected data.
+**Graceful degradation.** Unknown event types still validate as `SessionEvent`, but production code skips them. `GenericEventData(extra="allow")` remains available for optional best-effort payload validation when a caller explicitly chooses to use it. Missing fields get defaults. The tool never crashes on unexpected data.
 
 ### Testing Strategy
 
