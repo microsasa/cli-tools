@@ -480,7 +480,13 @@ def _build_completed_summary(
     total_premium = 0
     total_api_duration = 0
     merged_metrics: dict[str, ModelMetrics] = {}
-    last_code_changes: CodeChanges | None = None
+
+    # Aggregate CodeChanges across all shutdown cycles instead of keeping
+    # only the last.  Lines are summed; files are de-duplicated via a set.
+    total_lines_added = 0
+    total_lines_removed = 0
+    all_files_modified: set[str] = set()
+    has_code_changes = False
 
     shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = []
 
@@ -488,7 +494,10 @@ def _build_completed_summary(
         total_premium += sd.totalPremiumRequests
         total_api_duration += sd.totalApiDurationMs
         if sd.codeChanges is not None:
-            last_code_changes = sd.codeChanges
+            has_code_changes = True
+            total_lines_added += sd.codeChanges.linesAdded
+            total_lines_removed += sd.codeChanges.linesRemoved
+            all_files_modified.update(sd.codeChanges.filesModified)
         for model_name, mm in sd.modelMetrics.items():
             if model_name in merged_metrics:
                 add_to_model_metrics(merged_metrics[model_name], mm)
@@ -508,7 +517,15 @@ def _build_completed_summary(
         total_premium_requests=total_premium,
         total_api_duration_ms=total_api_duration,
         model_metrics=merged_metrics,
-        code_changes=last_code_changes,
+        code_changes=(
+            CodeChanges(
+                linesAdded=total_lines_added,
+                linesRemoved=total_lines_removed,
+                filesModified=sorted(all_files_modified),
+            )
+            if has_code_changes
+            else None
+        ),
         model_calls=fp.total_turn_starts,
         user_messages=fp.user_message_count,
         is_active=resume.session_resumed,
