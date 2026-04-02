@@ -35,7 +35,7 @@ from copilot_usage.report import (
     render_summary,
     session_display_name,
 )
-from copilot_usage.vscode_parser import get_vscode_summary
+from copilot_usage.vscode_parser import discover_vscode_logs, get_vscode_summary
 from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
@@ -606,12 +606,11 @@ def live(ctx: click.Context, path: Path | None) -> None:
 def vscode(vscode_logs: Path | None) -> None:
     """Show usage from VS Code Copilot Chat logs."""
     _print_version_header()
-    try:
-        summary = get_vscode_summary(vscode_logs)
-    except OSError as exc:
-        click.echo(f"Error reading VS Code logs: {exc}", err=True)
-        sys.exit(1)
+    summary = get_vscode_summary(vscode_logs)
     if summary.total_requests == 0:
-        click.echo("No VS Code Copilot Chat requests found.", err=True)
+        if summary.log_files_parsed == 0 and discover_vscode_logs(vscode_logs):
+            click.echo("Error: log files were found but could not be read.", err=True)
+        else:
+            click.echo("No VS Code Copilot Chat requests found.", err=True)
         sys.exit(1)
     render_vscode_summary(summary)
