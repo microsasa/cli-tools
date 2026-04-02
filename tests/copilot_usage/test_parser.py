@@ -337,14 +337,16 @@ class TestSafeFileIdentity:
     def test_returns_mtime_ns_size_for_existing_file(self, tmp_path: Path) -> None:
         f = tmp_path / "events.jsonl"
         f.write_text("content")
-        mtime_ns, size = _safe_file_identity(f)
+        result = _safe_file_identity(f)
+        assert result is not None
+        mtime_ns, size = result
         assert mtime_ns > 0
         assert size == len(b"content")
 
-    def test_returns_zero_tuple_for_missing_file(self, tmp_path: Path) -> None:
-        assert _safe_file_identity(tmp_path / "ghost.jsonl") == (0, 0)
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        assert _safe_file_identity(tmp_path / "ghost.jsonl") is None
 
-    def test_returns_zero_tuple_for_permission_error(
+    def test_returns_none_for_permission_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -354,9 +356,9 @@ class TestSafeFileIdentity:
             raise PermissionError("denied")
 
         monkeypatch.setattr(Path, "stat", _raise_perm)
-        assert _safe_file_identity(f) == (0, 0)
+        assert _safe_file_identity(f) is None
 
-    def test_returns_zero_tuple_for_generic_oserror(
+    def test_returns_none_for_generic_oserror(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -366,7 +368,7 @@ class TestSafeFileIdentity:
             raise OSError("I/O error")
 
         monkeypatch.setattr(Path, "stat", _raise_os)
-        assert _safe_file_identity(f) == (0, 0)
+        assert _safe_file_identity(f) is None
 
 
 # ---------------------------------------------------------------------------
@@ -3509,6 +3511,72 @@ class TestParserFalsyStringEdgeCases:
         plan = tmp_path / "plan.md"
         plan.write_text("#\n", encoding="utf-8")
         assert _extract_session_name(tmp_path) is None
+
+    def test_extract_session_name_plan_exists_false_skips_filesystem(
+        self, tmp_path: Path
+    ) -> None:
+        """When ``plan_exists=False``, no filesystem check is performed."""
+        # plan.md exists on disk, but plan_exists=False signals it was
+        # absent at discovery time → _extract_session_name must return
+        # None without calling is_file().
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Should Not Be Read\n", encoding="utf-8")
+
+        original_is_file = Path.is_file
+
+        def _no_is_file(self: Path) -> bool:
+            if self == plan:
+                raise AssertionError("is_file() must not be called on plan.md")
+            return original_is_file(self)
+
+        with patch.object(Path, "is_file", _no_is_file):
+            result = _extract_session_name(tmp_path, plan_exists=False)
+
+        assert result is None
+
+    def test_extract_session_name_plan_exists_true_skips_is_file(
+        self, tmp_path: Path
+    ) -> None:
+        """When ``plan_exists=True``, ``is_file()`` is skipped."""
+        plan = tmp_path / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        original_is_file = Path.is_file
+
+        def _no_is_file(self: Path) -> bool:
+            if self == plan:
+                raise AssertionError("is_file() must not be called on plan.md")
+            return original_is_file(self)
+
+        with patch.object(Path, "is_file", _no_is_file):
+            result = _extract_session_name(tmp_path, plan_exists=True)
+
+        assert result == "My Session"
+
+    def test_get_all_sessions_stats_plan_at_most_once(self, tmp_path: Path) -> None:
+        """``plan.md`` is stat'd at most once per session on cold start."""
+        session_dir = tmp_path / "sess-a"
+        _write_events(session_dir / "events.jsonl", _START_EVENT, _USER_MSG)
+        plan = session_dir / "plan.md"
+        plan.write_text("# Test Plan\n", encoding="utf-8")
+
+        original_stat = Path.stat
+        plan_stat_count = 0
+
+        def _counting_stat(self: Path, **kwargs: object) -> object:
+            nonlocal plan_stat_count
+            if self == plan:
+                plan_stat_count += 1
+            return original_stat(self, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "stat", _counting_stat):
+            summaries = get_all_sessions(tmp_path)
+
+        assert len(summaries) == 1
+        assert summaries[0].name == "Test Plan"
+        assert plan_stat_count == 1, (
+            f"plan.md was stat'd {plan_stat_count} times, expected at most 1"
+        )
 
     def test_read_config_model_empty_string_returns_none(self, tmp_path: Path) -> None:
         config = tmp_path / "config.json"
