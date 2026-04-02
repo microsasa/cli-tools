@@ -1692,6 +1692,7 @@ class TestRenderFullSummary:
             model_calls=1,
             active_model_calls=1,
             active_user_messages=1,
+            user_messages=1,
             active_output_tokens=100,
         )
         output = _capture_full_summary([session])
@@ -3630,6 +3631,7 @@ class TestHasActivePeriodStats:
             session_id="active-msgs-1234",
             is_active=True,
             active_user_messages=5,
+            user_messages=5,
             active_output_tokens=0,
             active_model_calls=0,
         )

@@ -417,11 +417,16 @@ class SessionSummary(BaseModel):
     active_output_tokens: int = 0
 
     @model_validator(mode="after")
-    def _check_call_counts(self) -> Self:
+    def _check_active_counters(self) -> Self:
         if self.active_model_calls > self.model_calls:
             raise ValueError(
                 f"active_model_calls ({self.active_model_calls}) must be <= "
                 f"model_calls ({self.model_calls})"
+            )
+        if self.active_user_messages > self.user_messages:
+            raise ValueError(
+                f"active_user_messages ({self.active_user_messages}) must be <= "
+                f"user_messages ({self.user_messages})"
             )
         return self
 
