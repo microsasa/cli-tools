@@ -5387,9 +5387,9 @@ class TestDetectResumeRangeIndex:
         events = parse_events(p)
         fp = _first_pass(events)
 
-        # Sanity: total events should be ~5 000.
+        # Sanity: total events should be exactly 5 001.
         # start(1) + user(1) + pre(4988) + shutdown(1) + post(5+3+2) = 5001
-        assert len(events) >= 5_000
+        assert len(events) == 5_001
 
         result = _detect_resume(events, fp.all_shutdowns)
 
