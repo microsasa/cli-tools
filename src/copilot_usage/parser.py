@@ -88,6 +88,24 @@ _MAX_CACHED_EVENTS: Final[int] = 8
 _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 
 
+def _insert_events_entry(
+    events_path: Path,
+    file_id: tuple[int, int],
+    events: list[SessionEvent],
+) -> None:
+    """Insert parsed events into ``_EVENTS_CACHE`` with LRU eviction.
+
+    If *events_path* already exists in the cache (stale file-id), the
+    old entry is removed first.  Otherwise, when the cache is full the
+    least-recently-used entry (front of the ``OrderedDict``) is evicted.
+    """
+    if events_path in _EVENTS_CACHE:
+        del _EVENTS_CACHE[events_path]
+    elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
+        _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
+    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
+
+
 def get_cached_events(events_path: Path) -> list[SessionEvent]:
     """Return parsed events, using cache when file identity is unchanged.
 
@@ -106,12 +124,7 @@ def get_cached_events(events_path: Path) -> list[SessionEvent]:
         _EVENTS_CACHE.move_to_end(events_path)
         return cached.events
     events = parse_events(events_path)
-    # Remove stale entry (changed file_id) before reinserting
-    if events_path in _EVENTS_CACHE:
-        del _EVENTS_CACHE[events_path]
-    elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
-        _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
-    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
+    _insert_events_entry(events_path, file_id, events)
     return events
 
 
@@ -697,6 +710,17 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
+    # Deferred _EVENTS_CACHE insertions.  _discover_with_identity returns
+    # sessions newest-first; inserting in that order would place the
+    # newest entries at the *front* of the OrderedDict where they would
+    # be evicted first by popitem(last=False).  We collect them here and
+    # insert in reversed (oldest→newest) order after the loop so that
+    # the newest sessions end up at the back (MRU) and eviction drops
+    # the oldest (LRU) entries.
+    #
+    # Only the newest _MAX_CACHED_EVENTS entries are retained to avoid a
+    # temporary memory spike when many sessions are cache-misses.
+    deferred_events: list[tuple[Path, tuple[int, int], list[SessionEvent]]] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         # Config changes only invalidate cached entries that declared a
@@ -730,6 +754,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
+        if len(deferred_events) < _MAX_CACHED_EVENTS:
+            deferred_events.append((events_path, file_id, events))
         meta = _build_session_summary_with_meta(
             events, session_dir=events_path.parent, events_path=events_path
         )
@@ -742,6 +768,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             summary,
         )
         summaries.append(summary)
+
+    # Populate _EVENTS_CACHE in oldest→newest order so that the newest
+    # sessions sit at the back (MRU) and eviction drops the oldest.
+    for ep, fid, evts in reversed(deferred_events):
+        _insert_events_entry(ep, fid, evts)
 
     # Prune stale cache entries for sessions no longer on disk.
     discovered_paths = {p for p, _, _ in discovered}
