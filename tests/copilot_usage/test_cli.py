@@ -19,6 +19,7 @@ from rich.console import Console
 
 from copilot_usage import __version__
 from copilot_usage.cli import (
+    _build_session_index,  # pyright: ignore[reportPrivateUsage]
     _normalize_until,  # pyright: ignore[reportPrivateUsage]
     _print_version_header,  # pyright: ignore[reportPrivateUsage]
     _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
@@ -3285,3 +3286,184 @@ def test_watchdog_not_imported_at_module_level() -> None:
             # was added as a side-effect of importing copilot_usage.cli.
             with contextlib.suppress(AttributeError):
                 del _pkg.cli  # pyright: ignore[reportAttributeAccessIssue]
+
+
+# ---------------------------------------------------------------------------
+# Issue #585 — O(1) session-ID lookup via _build_session_index
+# ---------------------------------------------------------------------------
+
+
+def test_build_session_index_returns_correct_mapping() -> None:
+    """_build_session_index maps each session_id to its list position."""
+    from copilot_usage.models import SessionSummary
+
+    sessions = [
+        SessionSummary(session_id=f"sess-{i:04d}", is_active=False) for i in range(5)
+    ]
+    index = _build_session_index(sessions)
+    assert index == {
+        "sess-0000": 0,
+        "sess-0001": 1,
+        "sess-0002": 2,
+        "sess-0003": 3,
+        "sess-0004": 4,
+    }
+
+
+def test_build_session_index_empty_list() -> None:
+    """_build_session_index returns empty dict for no sessions."""
+    assert _build_session_index([]) == {}
+
+
+def test_auto_refresh_detail_uses_session_index_for_200_sessions(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Auto-refresh detail lookup uses _build_session_index with 200+ sessions.
+
+    Constructs 200 SessionSummary objects, simulates a file-change event while
+    detail_session_id is set to the *last* session ID (worst case for a linear
+    scan), asserts the correct detail_idx is resolved, and verifies that
+    _build_session_index is actually invoked during the refresh path.
+    """
+    from copilot_usage.models import SessionSummary
+    from copilot_usage.parser import get_all_sessions
+
+    num_sessions = 200
+    target_session_id = f"sess-{num_sessions - 1:04d}-0000-0000-0000-000000000000"
+
+    # Write a real session for the target so _show_session_by_index can render it
+    _write_session(
+        tmp_path,
+        target_session_id,
+        name="TargetSession",
+        start_time="2025-01-15T10:00:00Z",
+    )
+
+    import copilot_usage.cli as cli_mod
+
+    # Build a large sessions list where the target is last
+    fake_sessions: list[SessionSummary] = [
+        SessionSummary(
+            session_id=f"sess-{i:04d}-0000-0000-0000-000000000000",
+            is_active=False,
+            name=f"Session{i}",
+        )
+        for i in range(num_sessions - 1)
+    ]
+    # Target is the real session so it has events_path for rendering
+    real_sessions = get_all_sessions(tmp_path)
+    target = next(s for s in real_sessions if s.session_id == target_session_id)
+    fake_sessions.append(target)
+
+    # Track which index is rendered
+    rendered_indices: list[int] = []
+    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+
+    def _tracking_show(console: Console, sessions: list[Any], index: int) -> None:
+        rendered_indices.append(index)
+        orig_show(console, sessions, index)
+
+    monkeypatch.setattr(cli_mod, "_show_session_by_index", _tracking_show)
+
+    # Make get_all_sessions return our large fake list
+    def _fake_get_all(_path: Path | None) -> list[SessionSummary]:
+        return fake_sessions
+
+    monkeypatch.setattr(cli_mod, "get_all_sessions", _fake_get_all)
+
+    # Spy on _build_session_index to verify it is called during refresh
+    build_index_calls: list[int] = []
+    orig_build = cli_mod._build_session_index  # pyright: ignore[reportPrivateUsage]
+
+    def _spy_build_session_index(
+        sessions: list[SessionSummary],
+    ) -> dict[str, int]:
+        build_index_calls.append(len(sessions))
+        return orig_build(sessions)
+
+    monkeypatch.setattr(cli_mod, "_build_session_index", _spy_build_session_index)
+
+    captured_event: list[threading.Event] = []
+
+    def _capturing_start(
+        session_path: Path,  # noqa: ARG001
+        change_event: threading.Event,
+    ) -> object:
+        captured_event.append(change_event)
+
+        class _StubObserver:
+            def stop(self) -> None:
+                return
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                return
+
+        return _StubObserver()
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    read_call = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal read_call
+        read_call += 1
+        if read_call == 1:
+            # Enter detail for the last session (1-based index)
+            return str(num_sessions)
+        if read_call == 2:
+            # Trigger auto-refresh while in detail view
+            if captured_event:
+                captured_event[0].set()
+            return None
+        if read_call == 3:
+            return ""  # go back to home
+        return "q"
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # Both initial selection and auto-refresh must render the last session
+    assert len(rendered_indices) >= 2
+    assert all(idx == num_sessions for idx in rendered_indices), (
+        f"Expected index {num_sessions} every time, got: {rendered_indices}"
+    )
+
+    # _build_session_index must be called at least twice: once on startup,
+    # once on auto-refresh.  This would fail if the code regressed to a
+    # linear next(enumerate(…)) scan.
+    assert len(build_index_calls) >= 2, (
+        f"Expected _build_session_index to be called ≥2 times, got {len(build_index_calls)}"
+    )
+
+
+def test_session_index_lookup_performance() -> None:
+    """Dict-based lookup for 200 sessions completes well under 50 ms.
+
+    Uses a generous wall-clock budget to avoid flakiness on shared CI runners
+    with CPU throttling or debug builds.
+    """
+    import time
+
+    from copilot_usage.models import SessionSummary
+
+    sessions = [
+        SessionSummary(
+            session_id=f"perf-{i:04d}-0000-0000-0000-000000000000",
+            is_active=False,
+        )
+        for i in range(200)
+    ]
+    target_id = sessions[-1].session_id
+
+    start = time.perf_counter_ns()
+    index = _build_session_index(sessions)
+    result = index.get(target_id)
+    elapsed_ns = time.perf_counter_ns() - start
+
+    assert result == 199
+    assert elapsed_ns < 50_000_000, (
+        f"Lookup took {elapsed_ns / 1_000_000:.3f} ms (> 50 ms)"
+    )
