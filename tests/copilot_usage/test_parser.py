@@ -337,14 +337,16 @@ class TestSafeFileIdentity:
     def test_returns_mtime_ns_size_for_existing_file(self, tmp_path: Path) -> None:
         f = tmp_path / "events.jsonl"
         f.write_text("content")
-        mtime_ns, size = _safe_file_identity(f)
+        result = _safe_file_identity(f)
+        assert result is not None
+        mtime_ns, size = result
         assert mtime_ns > 0
         assert size == len(b"content")
 
-    def test_returns_zero_tuple_for_missing_file(self, tmp_path: Path) -> None:
-        assert _safe_file_identity(tmp_path / "ghost.jsonl") == (0, 0)
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        assert _safe_file_identity(tmp_path / "ghost.jsonl") is None
 
-    def test_returns_zero_tuple_for_permission_error(
+    def test_returns_none_for_permission_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -354,9 +356,9 @@ class TestSafeFileIdentity:
             raise PermissionError("denied")
 
         monkeypatch.setattr(Path, "stat", _raise_perm)
-        assert _safe_file_identity(f) == (0, 0)
+        assert _safe_file_identity(f) is None
 
-    def test_returns_zero_tuple_for_generic_oserror(
+    def test_returns_none_for_generic_oserror(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         f = tmp_path / "events.jsonl"
@@ -366,7 +368,7 @@ class TestSafeFileIdentity:
             raise OSError("I/O error")
 
         monkeypatch.setattr(Path, "stat", _raise_os)
-        assert _safe_file_identity(f) == (0, 0)
+        assert _safe_file_identity(f) is None
 
 
 # ---------------------------------------------------------------------------
@@ -3510,13 +3512,13 @@ class TestParserFalsyStringEdgeCases:
         plan.write_text("#\n", encoding="utf-8")
         assert _extract_session_name(tmp_path) is None
 
-    def test_extract_session_name_plan_id_zero_skips_filesystem(
+    def test_extract_session_name_plan_exists_false_skips_filesystem(
         self, tmp_path: Path
     ) -> None:
-        """When ``plan_id == (0, 0)``, no filesystem check is performed."""
-        # plan.md exists on disk, but plan_id=(0,0) signals it was absent
-        # at discovery time → _extract_session_name must return None
-        # without calling is_file().
+        """When ``plan_exists=False``, no filesystem check is performed."""
+        # plan.md exists on disk, but plan_exists=False signals it was
+        # absent at discovery time → _extract_session_name must return
+        # None without calling is_file().
         plan = tmp_path / "plan.md"
         plan.write_text("# Should Not Be Read\n", encoding="utf-8")
 
@@ -3528,14 +3530,14 @@ class TestParserFalsyStringEdgeCases:
             return original_is_file(self)
 
         with patch.object(Path, "is_file", _no_is_file):
-            result = _extract_session_name(tmp_path, plan_id=(0, 0))
+            result = _extract_session_name(tmp_path, plan_exists=False)
 
         assert result is None
 
-    def test_extract_session_name_plan_id_nonzero_skips_is_file(
+    def test_extract_session_name_plan_exists_true_skips_is_file(
         self, tmp_path: Path
     ) -> None:
-        """When ``plan_id`` is a real identity, ``is_file()`` is skipped."""
+        """When ``plan_exists=True``, ``is_file()`` is skipped."""
         plan = tmp_path / "plan.md"
         plan.write_text("# My Session\n", encoding="utf-8")
 
@@ -3547,7 +3549,7 @@ class TestParserFalsyStringEdgeCases:
             return original_is_file(self)
 
         with patch.object(Path, "is_file", _no_is_file):
-            result = _extract_session_name(tmp_path, plan_id=(123456, 42))
+            result = _extract_session_name(tmp_path, plan_exists=True)
 
         assert result == "My Session"
 

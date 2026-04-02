@@ -47,7 +47,8 @@ class _CachedSession:
 
     Stores the ``(st_mtime_ns, st_size)`` identity of both
     ``events.jsonl`` and ``plan.md`` so that the session name is only
-    re-read when ``plan.md`` actually changes on disk.
+    re-read when ``plan.md`` actually changes on disk.  A ``None``
+    identity means the file was absent or unreadable at discovery time.
 
     ``depends_on_config`` is ``True`` only when the session's model was
     sourced from ``~/.copilot/config.json`` (i.e. neither the events nor
@@ -60,8 +61,8 @@ class _CachedSession:
     shutdown event.
     """
 
-    file_id: tuple[int, int]
-    plan_id: tuple[int, int]
+    file_id: tuple[int, int] | None
+    plan_id: tuple[int, int] | None
     config_model: str | None
     depends_on_config: bool
     summary: SessionSummary
@@ -76,7 +77,7 @@ _SESSION_CACHE: dict[Path, _CachedSession] = {}
 class _CachedEvents:
     """Cache entry pairing a file identity with parsed events."""
 
-    file_id: tuple[int, int]
+    file_id: tuple[int, int] | None
     events: list[SessionEvent]
 
 
@@ -90,7 +91,7 @@ _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 
 def _insert_events_entry(
     events_path: Path,
-    file_id: tuple[int, int],
+    file_id: tuple[int, int] | None,
     events: list[SessionEvent],
 ) -> None:
     """Insert parsed events into ``_EVENTS_CACHE`` with LRU eviction.
@@ -184,25 +185,27 @@ def _safe_int_tokens(raw: object) -> int | None:
     return None
 
 
-def _safe_file_identity(path: Path) -> tuple[int, int]:
-    """Return ``(st_mtime_ns, st_size)`` for *path*, or ``(0, 0)`` on any OS error.
+def _safe_file_identity(path: Path) -> tuple[int, int] | None:
+    """Return ``(st_mtime_ns, st_size)`` for *path*, or ``None`` on any OS error.
 
     Uses nanosecond-precision mtime paired with file size for robust
     change detection — avoids the float-rounding and coarse-resolution
-    issues of ``st_mtime``.
+    issues of ``st_mtime``.  Returning ``None`` (rather than a sentinel
+    tuple like ``(0, 0)``) makes it impossible for an absent-file marker
+    to collide with a legitimate file identity.
     """
     try:
         st = path.stat()
         return (st.st_mtime_ns, st.st_size)
     except OSError:
-        return (0, 0)
+        return None
 
 
 def _discover_with_identity(
     base_path: Path | None = None,
     *,
     include_plan: bool = True,
-) -> list[tuple[Path, tuple[int, int], tuple[int, int]]]:
+) -> list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]]:
     """Find session ``events.jsonl`` files paired with their file identities.
 
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
@@ -211,19 +214,18 @@ def _discover_with_identity(
     When *include_plan* is ``True`` (default) both identities are computed
     in a single directory scan, so callers pay zero extra stat calls for
     ``plan.md``.  When ``False``, the ``plan_file_id`` element is always
-    ``(0, 0)`` and the ``plan.md`` stat is skipped entirely — useful for
+    ``None`` and the ``plan.md`` stat is skipped entirely — useful for
     callers that only need event ordering.
     """
     root = base_path or _DEFAULT_BASE
     if not root.is_dir():
         return []
-    _zero: tuple[int, int] = (0, 0)
-    result: list[tuple[Path, tuple[int, int], tuple[int, int]]] = []
+    result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
     for p in root.glob("*/events.jsonl"):
         events_id = _safe_file_identity(p)
-        plan_id = _safe_file_identity(p.parent / "plan.md") if include_plan else _zero
+        plan_id = _safe_file_identity(p.parent / "plan.md") if include_plan else None
         result.append((p, events_id, plan_id))
-    result.sort(key=lambda t: t[1], reverse=True)
+    result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
 
@@ -304,17 +306,17 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 def _extract_session_name(
     session_dir: Path,
     *,
-    plan_id: tuple[int, int] | None = None,
+    plan_exists: bool | None = None,
 ) -> str | None:
     """Try to read a session name from ``plan.md`` in *session_dir*.
 
-    When *plan_id* is supplied (from :func:`_discover_with_identity`),
-    the file-existence check uses the cached identity instead of an
-    extra ``stat`` syscall.  ``(0, 0)`` means the file was absent or
-    unreadable at discovery time; any other value means it existed.
+    When *plan_exists* is supplied, the file-existence check is skipped:
+    ``True`` means the file is known to exist; ``False`` means it was
+    absent or unreadable at discovery time.  When ``None`` (default),
+    the function falls back to a filesystem ``is_file()`` check.
     """
     plan = session_dir / "plan.md"
-    exists = (plan_id != (0, 0)) if plan_id is not None else plan.is_file()
+    exists = plan_exists if plan_exists is not None else plan.is_file()
     if not exists:
         return None
     try:
@@ -632,11 +634,15 @@ def _build_session_summary_with_meta(
     session_dir: Path | None = None,
     config_path: Path | None = None,
     events_path: Path | None = None,
-    plan_id: tuple[int, int] | None = None,
+    plan_exists: bool | None = None,
 ) -> _BuildMeta:
     """Build a summary and report whether the config fallback was used."""
     fp = _first_pass(events)
-    name = _extract_session_name(session_dir, plan_id=plan_id) if session_dir else None
+    name = (
+        _extract_session_name(session_dir, plan_exists=plan_exists)
+        if session_dir
+        else None
+    )
 
     if fp.all_shutdowns:
         resume = _detect_resume(events, fp.all_shutdowns)
@@ -732,7 +738,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     #
     # Only the newest _MAX_CACHED_EVENTS entries are retained to avoid a
     # temporary memory spike when many sessions are cache-misses.
-    deferred_events: list[tuple[Path, tuple[int, int], list[SessionEvent]]] = []
+    deferred_events: list[tuple[Path, tuple[int, int] | None, list[SessionEvent]]] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         # Config changes only invalidate cached entries that declared a
@@ -772,7 +778,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             events,
             session_dir=events_path.parent,
             events_path=events_path,
-            plan_id=plan_id,
+            plan_exists=plan_id is not None,
         )
         summary = meta.summary
         _SESSION_CACHE[events_path] = _CachedSession(
