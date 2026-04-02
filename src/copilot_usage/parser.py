@@ -697,6 +697,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
+    # Deferred _EVENTS_CACHE insertions.  _discover_with_identity returns
+    # sessions newest-first; inserting in that order would place the
+    # newest entries at the *front* of the OrderedDict where they would
+    # be evicted first by popitem(last=False).  We collect them here and
+    # insert in reversed (oldest→newest) order after the loop so that
+    # the newest sessions end up at the back (MRU) and eviction drops
+    # the oldest (LRU) entries.
+    deferred_events: list[tuple[Path, tuple[int, int], list[SessionEvent]]] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         # Config changes only invalidate cached entries that declared a
@@ -730,13 +738,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         if not events:
             continue
-        # Populate _EVENTS_CACHE so that get_cached_events can serve
-        # subsequent detail-view reads without re-parsing the file.
-        if events_path in _EVENTS_CACHE:
-            del _EVENTS_CACHE[events_path]
-        elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
-            _EVENTS_CACHE.popitem(last=False)  # evict LRU
-        _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
+        deferred_events.append((events_path, file_id, events))
         meta = _build_session_summary_with_meta(
             events, session_dir=events_path.parent, events_path=events_path
         )
@@ -749,6 +751,15 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             summary,
         )
         summaries.append(summary)
+
+    # Populate _EVENTS_CACHE in oldest→newest order so that the newest
+    # sessions sit at the back (MRU) and eviction drops the oldest.
+    for ep, fid, evts in reversed(deferred_events):
+        if ep in _EVENTS_CACHE:
+            del _EVENTS_CACHE[ep]
+        elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
+            _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
+        _EVENTS_CACHE[ep] = _CachedEvents(file_id=fid, events=evts)
 
     # Prune stale cache entries for sessions no longer on disk.
     discovered_paths = {p for p, _, _ in discovered}
