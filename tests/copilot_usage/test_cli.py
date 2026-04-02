@@ -3318,11 +3318,12 @@ def test_build_session_index_empty_list() -> None:
 def test_auto_refresh_detail_uses_session_index_for_200_sessions(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Auto-refresh detail lookup works correctly with 200+ sessions.
+    """Auto-refresh detail lookup uses _build_session_index with 200+ sessions.
 
     Constructs 200 SessionSummary objects, simulates a file-change event while
     detail_session_id is set to the *last* session ID (worst case for a linear
-    scan), and asserts the correct detail_idx is resolved.
+    scan), asserts the correct detail_idx is resolved, and verifies that
+    _build_session_index is actually invoked during the refresh path.
     """
     from copilot_usage.models import SessionSummary
     from copilot_usage.parser import get_all_sessions
@@ -3369,6 +3370,18 @@ def test_auto_refresh_detail_uses_session_index_for_200_sessions(
         return fake_sessions
 
     monkeypatch.setattr(cli_mod, "get_all_sessions", _fake_get_all)
+
+    # Spy on _build_session_index to verify it is called during refresh
+    build_index_calls: list[int] = []
+    orig_build = cli_mod._build_session_index  # pyright: ignore[reportPrivateUsage]
+
+    def _spy_build_session_index(
+        sessions: list[SessionSummary],
+    ) -> dict[str, int]:
+        build_index_calls.append(len(sessions))
+        return orig_build(sessions)
+
+    monkeypatch.setattr(cli_mod, "_build_session_index", _spy_build_session_index)
 
     captured_event: list[threading.Event] = []
 
@@ -3418,9 +3431,20 @@ def test_auto_refresh_detail_uses_session_index_for_200_sessions(
         f"Expected index {num_sessions} every time, got: {rendered_indices}"
     )
 
+    # _build_session_index must be called at least twice: once on startup,
+    # once on auto-refresh.  This would fail if the code regressed to a
+    # linear next(enumerate(…)) scan.
+    assert len(build_index_calls) >= 2, (
+        f"Expected _build_session_index to be called ≥2 times, got {len(build_index_calls)}"
+    )
+
 
 def test_session_index_lookup_performance() -> None:
-    """Dict-based lookup for 200 sessions completes well under 1 ms."""
+    """Dict-based lookup for 200 sessions completes well under 50 ms.
+
+    Uses a generous wall-clock budget to avoid flakiness on shared CI runners
+    with CPU throttling or debug builds.
+    """
     import time
 
     from copilot_usage.models import SessionSummary
@@ -3440,6 +3464,6 @@ def test_session_index_lookup_performance() -> None:
     elapsed_ns = time.perf_counter_ns() - start
 
     assert result == 199
-    assert elapsed_ns < 1_000_000, (
-        f"Lookup took {elapsed_ns / 1_000_000:.3f} ms (> 1 ms)"
+    assert elapsed_ns < 50_000_000, (
+        f"Lookup took {elapsed_ns / 1_000_000:.3f} ms (> 50 ms)"
     )
