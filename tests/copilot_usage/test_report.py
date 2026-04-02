@@ -1919,8 +1919,7 @@ class TestRenderFullSummary:
             start_time=datetime(2025, 6, 1, 8, 0, tzinfo=UTC),
             last_resume_time=datetime(2025, 6, 1, 9, 0, tzinfo=UTC),
             is_active=True,
-            has_shutdown_metrics=trigger == "has_shutdown_metrics"
-            or trigger == "premium_requests",
+            has_shutdown_metrics=trigger == "has_shutdown_metrics",
             total_premium_requests=15 if trigger == "premium_requests" else 0,
             user_messages=10,
             model_calls=8,
