@@ -1404,8 +1404,7 @@ class TestBuildSessionSummaryMultiShutdownResumed:
 
 
 class TestMultiShutdownCodeChangesPreservation:
-    """Verify the ``if sd.codeChanges is not None`` guard in build_session_summary
-    preserves earlier code-change data when a later shutdown omits it."""
+    """Verify code-change aggregation skips None cycles without losing data."""
 
     def test_first_shutdown_code_changes_preserved_when_last_has_none(
         self, tmp_path: Path
@@ -1538,6 +1537,80 @@ class TestMultiShutdownCodeChangesPreservation:
         assert summary.code_changes is not None
         assert summary.code_changes.linesAdded == 20
         assert summary.code_changes.filesModified == ["b.py"]
+
+
+class TestMultiShutdownCodeChangesAggregation:
+    """Verify CodeChanges are aggregated (summed lines, union of files)
+    across all shutdown cycles instead of keeping only the last."""
+
+    def test_lines_summed_and_files_unioned_across_two_shutdowns(
+        self, tmp_path: Path
+    ) -> None:
+        """Two shutdowns with distinct codeChanges → sum of lines, union of files."""
+        shutdown_1 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 2000,
+                    "sessionStartTime": 0,
+                    "codeChanges": {
+                        "linesAdded": 40,
+                        "linesRemoved": 5,
+                        "filesModified": ["a.py", "b.py"],
+                    },
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd1",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-r",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        shutdown_2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 5,
+                    "totalApiDurationMs": 4000,
+                    "sessionStartTime": 0,
+                    "codeChanges": {
+                        "linesAdded": 30,
+                        "linesRemoved": 10,
+                        "filesModified": ["b.py", "c.py"],
+                    },
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            shutdown_1,
+            resume_ev,
+            _USER_MSG,
+            shutdown_2,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.code_changes is not None
+        assert summary.code_changes.linesAdded == 70  # 40 + 30
+        assert summary.code_changes.linesRemoved == 15  # 5 + 10
+        # Union of files, sorted alphabetically
+        assert summary.code_changes.filesModified == ["a.py", "b.py", "c.py"]
 
 
 # ---------------------------------------------------------------------------

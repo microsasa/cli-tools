@@ -103,6 +103,51 @@ class TestRenderCodeChanges:
         assert "+10" in output
         assert "-2" in output
 
+    def test_aggregated_code_changes_rendered_correctly(self) -> None:
+        """Code Changes panel reflects aggregated totals from multiple cycles.
+
+        Simulates two shutdown cycles whose CodeChanges have been aggregated
+        by ``_build_completed_summary`` (sum of lines, union of files) and
+        verifies that ``render_session_detail`` renders those aggregated totals.
+        """
+        aggregated = CodeChanges(
+            linesAdded=70,  # e.g. 40 + 30
+            linesRemoved=15,  # e.g. 5 + 10
+            filesModified=["a.py", "b.py", "c.py"],
+        )
+        sd1 = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=3,
+            totalApiDurationMs=2000,
+            modelMetrics={},
+        )
+        sd2 = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=5,
+            totalApiDurationMs=4000,
+            modelMetrics={},
+        )
+        ts1 = datetime(2026, 3, 7, 10, 0, 0, tzinfo=UTC)
+        ts2 = datetime(2026, 3, 7, 12, 0, 0, tzinfo=UTC)
+        summary = SessionSummary(
+            session_id="agg-cc",
+            start_time=datetime(2026, 3, 7, 9, 0, 0, tzinfo=UTC),
+            code_changes=aggregated,
+            shutdown_cycles=[(ts1, sd1), (ts2, sd2)],
+        )
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            timestamp=ts2,
+            data={},
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Code Changes" in output
+        assert "+70" in output
+        assert "-15" in output
+        assert "3" in output  # 3 files modified
+
 
 # ---------------------------------------------------------------------------
 # Helper to build a buffered console for test assertions
