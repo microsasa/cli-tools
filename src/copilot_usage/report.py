@@ -669,7 +669,6 @@ def render_cost_view(
                 # Only show session-level info once
                 name = ""
                 model_calls_display = ""
-            grand_output += total_output_tokens(s)
         else:
             table.add_row(
                 name,
@@ -680,6 +679,7 @@ def render_cost_view(
                 "—",
             )
 
+        grand_output += total_output_tokens(s)
         grand_model_calls += s.model_calls
 
         if s.is_active and s.has_shutdown_metrics:
