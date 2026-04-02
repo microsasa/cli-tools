@@ -497,7 +497,7 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
 def test_session_command_continues_after_parse_oserror(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """OSError from parse_events for one session is logged and skipped;
+    """OSError from parse_events for one session is skipped;
     the command still finds a matching session in another directory."""
     target_session_dir = _write_session(tmp_path, "target-session-aaa", name="Target")
     failing_session_dir = _write_session(
@@ -583,25 +583,31 @@ def test_session_command_logs_warning_on_parse_oserror(
     # Capture loguru warnings: wrap setup_logging so our sink survives the
     # logger.remove() call inside it.
     sink = io.StringIO()
+    handler_id: int | None = None
     _real_setup = __import__(
         "copilot_usage.logging_config", fromlist=["setup_logging"]
     ).setup_logging
 
     def _setup_then_add_sink() -> None:
+        nonlocal handler_id
         _real_setup()
-        logger.add(sink, level="WARNING", format="{message}")
+        handler_id = logger.add(sink, level="WARNING", format="{message}")
 
     monkeypatch.setattr(
         "copilot_usage.logging_config.setup_logging", _setup_then_add_sink
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "unreadable"])
+    try:
+        result = runner.invoke(main, ["session", "unreadable"])
 
-    assert result.exit_code == 1
-    log_output = sink.getvalue()
-    assert "Skipping unreadable session" in log_output
-    assert "permission denied" in log_output
+        assert result.exit_code == 1
+        log_output = sink.getvalue()
+        assert "Skipping unreadable session" in log_output
+        assert "permission denied" in log_output
+    finally:
+        if handler_id is not None:
+            logger.remove(handler_id)
 
 
 def test_cost_no_model_metrics(tmp_path: Path) -> None:
