@@ -7,6 +7,7 @@ aggregates.
 
 import dataclasses
 import json
+from collections import OrderedDict
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -81,8 +82,10 @@ class _CachedEvents:
 
 # Module-level parsed-events cache: events_path → _CachedEvents.
 # Avoids re-parsing the raw event list on every detail-view render.
+# Uses OrderedDict for LRU eviction: most-recently-used entries are at
+# the back, least-recently-used at the front.
 _MAX_CACHED_EVENTS: Final[int] = 8
-_EVENTS_CACHE: dict[Path, _CachedEvents] = {}
+_EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 
 
 def get_cached_events(events_path: Path) -> list[SessionEvent]:
@@ -90,8 +93,8 @@ def get_cached_events(events_path: Path) -> list[SessionEvent]:
 
     Delegates to :func:`parse_events` on a cache miss and stores the
     result keyed by ``(events_path, file_identity)``.  The cache is
-    bounded to :data:`_MAX_CACHED_EVENTS` entries; the least-recently
-    inserted entry is evicted when the limit is reached.
+    bounded to :data:`_MAX_CACHED_EVENTS` entries; the **least-recently
+    used** entry is evicted when the limit is reached.
 
     Raises:
         OSError: Propagated from :func:`parse_events` when the file
@@ -100,12 +103,14 @@ def get_cached_events(events_path: Path) -> list[SessionEvent]:
     file_id = _safe_file_identity(events_path)
     cached = _EVENTS_CACHE.get(events_path)
     if cached is not None and cached.file_id == file_id:
+        _EVENTS_CACHE.move_to_end(events_path)
         return cached.events
     events = parse_events(events_path)
-    # Evict oldest entry when cache is full
-    if len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS and events_path not in _EVENTS_CACHE:
-        oldest_key = next(iter(_EVENTS_CACHE))
-        del _EVENTS_CACHE[oldest_key]
+    # Remove stale entry (changed file_id) before reinserting
+    if events_path in _EVENTS_CACHE:
+        del _EVENTS_CACHE[events_path]
+    elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
+        _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
     _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
     return events
 
