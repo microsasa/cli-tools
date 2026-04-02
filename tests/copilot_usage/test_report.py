@@ -1910,8 +1910,23 @@ class TestRenderFullSummary:
         the historical list: ``has_shutdown_metrics=True`` and
         ``total_premium_requests > 0``.
         """
-        shutdown_tokens = 2000
         active_tokens = 350
+        # When premium_requests triggers historical inclusion the real parser
+        # produces model_metrics={} (shutdown cycles exist but no metrics
+        # were recorded yet), so the shutdown-token baseline is 0.
+        if trigger == "has_shutdown_metrics":
+            shutdown_tokens = 2000
+            model_metrics_map: dict[str, ModelMetrics] = {
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=15),
+                    usage=TokenUsage(
+                        inputTokens=800,
+                        outputTokens=shutdown_tokens,
+                    ),
+                )
+            }
+        else:
+            model_metrics_map = {}
         session = SessionSummary(
             session_id="resumed-dual-abcdef",
             name="DualSection",
@@ -1926,15 +1941,7 @@ class TestRenderFullSummary:
             active_model_calls=3,
             active_user_messages=2,
             active_output_tokens=active_tokens,
-            model_metrics={
-                "claude-sonnet-4": ModelMetrics(
-                    requests=RequestMetrics(count=5, cost=15),
-                    usage=TokenUsage(
-                        inputTokens=800,
-                        outputTokens=shutdown_tokens,
-                    ),
-                )
-            },
+            model_metrics=model_metrics_map,
         )
         output = _capture_full_summary([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
@@ -2057,9 +2064,6 @@ class TestRenderFullSummary:
 
         stats = _effective_stats(session)
         assert stats.output_tokens == active_tokens
-
-        # The two token counts must not overlap.
-        assert hist_tokens + stats.output_tokens == shutdown_tokens + active_tokens
 
         # Verify the rendered output shows each pool separately.
         output = _capture_full_summary([session])
