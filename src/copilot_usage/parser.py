@@ -301,10 +301,21 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_session_name(session_dir: Path) -> str | None:
-    """Try to read a session name from ``plan.md`` in *session_dir*."""
+def _extract_session_name(
+    session_dir: Path,
+    *,
+    plan_id: tuple[int, int] | None = None,
+) -> str | None:
+    """Try to read a session name from ``plan.md`` in *session_dir*.
+
+    When *plan_id* is supplied (from :func:`_discover_with_identity`),
+    the file-existence check uses the cached identity instead of an
+    extra ``stat`` syscall.  ``(0, 0)`` means the file was absent or
+    unreadable at discovery time; any other value means it existed.
+    """
     plan = session_dir / "plan.md"
-    if not plan.is_file():
+    exists = (plan_id != (0, 0)) if plan_id is not None else plan.is_file()
+    if not exists:
         return None
     try:
         with plan.open(encoding="utf-8") as fh:
@@ -621,10 +632,11 @@ def _build_session_summary_with_meta(
     session_dir: Path | None = None,
     config_path: Path | None = None,
     events_path: Path | None = None,
+    plan_id: tuple[int, int] | None = None,
 ) -> _BuildMeta:
     """Build a summary and report whether the config fallback was used."""
     fp = _first_pass(events)
-    name = _extract_session_name(session_dir) if session_dir else None
+    name = _extract_session_name(session_dir, plan_id=plan_id) if session_dir else None
 
     if fp.all_shutdowns:
         resume = _detect_resume(events, fp.all_shutdowns)
@@ -757,7 +769,10 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         if len(deferred_events) < _MAX_CACHED_EVENTS:
             deferred_events.append((events_path, file_id, events))
         meta = _build_session_summary_with_meta(
-            events, session_dir=events_path.parent, events_path=events_path
+            events,
+            session_dir=events_path.parent,
+            events_path=events_path,
+            plan_id=plan_id,
         )
         summary = meta.summary
         _SESSION_CACHE[events_path] = _CachedSession(

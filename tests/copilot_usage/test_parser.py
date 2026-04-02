@@ -3510,6 +3510,72 @@ class TestParserFalsyStringEdgeCases:
         plan.write_text("#\n", encoding="utf-8")
         assert _extract_session_name(tmp_path) is None
 
+    def test_extract_session_name_plan_id_zero_skips_filesystem(
+        self, tmp_path: Path
+    ) -> None:
+        """When ``plan_id == (0, 0)``, no filesystem check is performed."""
+        # plan.md exists on disk, but plan_id=(0,0) signals it was absent
+        # at discovery time → _extract_session_name must return None
+        # without calling is_file().
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Should Not Be Read\n", encoding="utf-8")
+
+        original_is_file = Path.is_file
+
+        def _no_is_file(self: Path) -> bool:
+            if self == plan:
+                raise AssertionError("is_file() must not be called on plan.md")
+            return original_is_file(self)
+
+        with patch.object(Path, "is_file", _no_is_file):
+            result = _extract_session_name(tmp_path, plan_id=(0, 0))
+
+        assert result is None
+
+    def test_extract_session_name_plan_id_nonzero_skips_is_file(
+        self, tmp_path: Path
+    ) -> None:
+        """When ``plan_id`` is a real identity, ``is_file()`` is skipped."""
+        plan = tmp_path / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        original_is_file = Path.is_file
+
+        def _no_is_file(self: Path) -> bool:
+            if self == plan:
+                raise AssertionError("is_file() must not be called on plan.md")
+            return original_is_file(self)
+
+        with patch.object(Path, "is_file", _no_is_file):
+            result = _extract_session_name(tmp_path, plan_id=(123456, 42))
+
+        assert result == "My Session"
+
+    def test_get_all_sessions_stats_plan_at_most_once(self, tmp_path: Path) -> None:
+        """``plan.md`` is stat'd at most once per session on cold start."""
+        session_dir = tmp_path / "sess-a"
+        _write_events(session_dir / "events.jsonl", _START_EVENT, _USER_MSG)
+        plan = session_dir / "plan.md"
+        plan.write_text("# Test Plan\n", encoding="utf-8")
+
+        original_stat = Path.stat
+        plan_stat_count = 0
+
+        def _counting_stat(self: Path, **kwargs: object) -> object:
+            nonlocal plan_stat_count
+            if self == plan:
+                plan_stat_count += 1
+            return original_stat(self, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(Path, "stat", _counting_stat):
+            summaries = get_all_sessions(tmp_path)
+
+        assert len(summaries) == 1
+        assert summaries[0].name == "Test Plan"
+        assert plan_stat_count == 1, (
+            f"plan.md was stat'd {plan_stat_count} times, expected at most 1"
+        )
+
     def test_read_config_model_empty_string_returns_none(self, tmp_path: Path) -> None:
         config = tmp_path / "config.json"
         config.write_text('{"model": ""}', encoding="utf-8")
