@@ -1887,68 +1887,68 @@ class TestGenericEventDataModel:
 
 
 # ---------------------------------------------------------------------------
-# SessionEvent.parse_data() — all branches
+# SessionEvent.as_*() — typed accessors
 # ---------------------------------------------------------------------------
 
 
-class TestSessionEventParseData:
-    def test_parse_session_start(self) -> None:
+class TestSessionEventTypedAccessors:
+    def test_as_session_start(self) -> None:
         ev = SessionEvent(
             type="session.start",
             data={"sessionId": "s1", "version": 1, "context": {}},
         )
-        result = ev.parse_data()
+        result = ev.as_session_start()
         assert isinstance(result, SessionStartData)
         assert result.sessionId == "s1"
 
-    def test_parse_assistant_message(self) -> None:
+    def test_as_assistant_message(self) -> None:
         ev = SessionEvent(
             type="assistant.message",
             data={"messageId": "m1", "content": "hi", "outputTokens": 10},
         )
-        result = ev.parse_data()
+        result = ev.as_assistant_message()
         assert isinstance(result, AssistantMessageData)
         assert result.outputTokens == 10
 
-    def test_parse_session_shutdown(self) -> None:
+    def test_as_session_shutdown(self) -> None:
         ev = SessionEvent(
             type="session.shutdown",
             data={"shutdownType": "routine", "totalPremiumRequests": 3},
         )
-        result = ev.parse_data()
+        result = ev.as_session_shutdown()
         assert isinstance(result, SessionShutdownData)
         assert result.totalPremiumRequests == 3
 
-    def test_parse_tool_execution_complete(self) -> None:
+    def test_as_tool_execution(self) -> None:
         ev = SessionEvent(
             type="tool.execution_complete",
             data={"toolCallId": "tc-1", "model": "gpt-4", "success": True},
         )
-        result = ev.parse_data()
+        result = ev.as_tool_execution()
         assert isinstance(result, ToolExecutionData)
         assert result.model == "gpt-4"
 
-    def test_parse_user_message(self) -> None:
+    def test_as_user_message(self) -> None:
         ev = SessionEvent(
             type="user.message",
             data={"content": "hello"},
         )
-        result = ev.parse_data()
+        result = ev.as_user_message()
         assert isinstance(result, UserMessageData)
         assert result.content == "hello"
 
-    def test_parse_unknown_event_type(self) -> None:
+    def test_as_wrong_type_raises_value_error(self) -> None:
         ev = SessionEvent(
             type="some.unknown.event",
             data={"arbitrary": "data", "count": 42},
         )
-        result = ev.parse_data()
-        assert isinstance(result, GenericEventData)
+        with pytest.raises(ValueError, match="Expected session.start"):
+            ev.as_session_start()
 
-    def test_parse_abort_event(self) -> None:
+    def test_as_abort_raises_value_error(self) -> None:
         ev = SessionEvent(type="abort", data={"reason": "user"})
-        result = ev.parse_data()
-        assert isinstance(result, GenericEventData)
+        with pytest.raises(ValueError, match="Expected session.shutdown"):
+            ev.as_session_shutdown()
 
 
 # ---------------------------------------------------------------------------
