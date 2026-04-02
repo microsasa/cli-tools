@@ -4949,6 +4949,34 @@ class TestSessionCacheMtime:
             # no additional stat calls in the main loop.
             assert spy.call_count == 2 * n
 
+    def test_stale_cache_entries_evicted_on_session_delete(
+        self, tmp_path: Path
+    ) -> None:
+        """Cache entries for deleted session directories are pruned."""
+        import shutil
+
+        p1 = self._make_session(tmp_path, "sess-a", "a")
+        p2 = self._make_session(tmp_path, "sess-b", "b")
+        p3 = self._make_session(tmp_path, "sess-c", "c")
+
+        # First call populates cache for all three sessions.
+        result1 = get_all_sessions(tmp_path)
+        assert len(result1) == 3
+        assert p1 in _SESSION_CACHE
+        assert p2 in _SESSION_CACHE
+        assert p3 in _SESSION_CACHE
+
+        # Delete sess-b from disk.
+        shutil.rmtree(p2.parent)
+
+        # Second call should discover only sess-a and sess-c; sess-b
+        # must be evicted from the cache.
+        result2 = get_all_sessions(tmp_path)
+        assert len(result2) == 2
+        assert p1 in _SESSION_CACHE
+        assert p2 not in _SESSION_CACHE
+        assert p3 in _SESSION_CACHE
+
 
 # ---------------------------------------------------------------------------
 # Issue #552 — active sessions cached in _SESSION_CACHE
