@@ -721,5 +721,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         )
         summaries.append(summary)
 
+    # Prune stale cache entries for sessions no longer on disk.
+    discovered_paths = {p for p, _, _ in discovered}
+    stale = [p for p in _SESSION_CACHE if p not in discovered_paths]
+    for p in stale:
+        del _SESSION_CACHE[p]
+
     summaries.sort(key=session_sort_key, reverse=True)
     return summaries
