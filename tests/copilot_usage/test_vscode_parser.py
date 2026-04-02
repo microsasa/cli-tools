@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from loguru import logger
 
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
@@ -437,22 +438,70 @@ class TestVscodeCliCommand:
         assert result.exit_code == 1
         assert "No VS Code Copilot Chat requests found" in result.output
 
-    def test_vscode_oserror_exits_nonzero(
+    def test_vscode_single_file_oserror_logs_warning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OSError in get_vscode_summary produces a friendly error and exit 1."""
+        """OSError on one file logs a warning; remaining files still parsed."""
+        # Create two valid log files.
+        for session in ("s1", "s2"):
+            log_dir = tmp_path / session / "window1" / "exthost" / "GitHub.copilot-chat"
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _LOG_OPUS + "\n", encoding="utf-8"
+            )
 
-        def _raise_oserror(*_a: object, **_kw: object) -> object:
+        # Make parse_vscode_log raise OSError only on the first call.
+        call_count = 0
+        _real_parse = parse_vscode_log
+
+        def _failing_once(path: Path) -> list[VSCodeRequest]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                msg = "Permission denied"
+                raise OSError(msg)
+            return _real_parse(path)
+
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser.parse_vscode_log", _failing_once
+        )
+
+        warnings: list[str] = []
+
+        def _sink(message: object) -> None:
+            warnings.append(str(message))
+
+        handler_id = logger.add(_sink, level="WARNING")
+        try:
+            summary = get_vscode_summary(tmp_path)
+        finally:
+            logger.remove(handler_id)
+
+        assert summary.log_files_parsed == 1
+        assert summary.total_requests == 1
+        assert any("Could not read log file" in w for w in warnings)
+
+    def test_vscode_all_files_oserror_shows_io_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When all discovered files fail, the CLI reports an I/O failure."""
+        log_dir = tmp_path / "s1" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        (log_dir / "GitHub Copilot Chat.log").write_text(
+            _LOG_OPUS + "\n", encoding="utf-8"
+        )
+
+        def _always_raise(*_a: object, **_kw: object) -> object:
             msg = "Permission denied"
             raise OSError(msg)
 
-        monkeypatch.setattr("copilot_usage.cli.get_vscode_summary", _raise_oserror)
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser.parse_vscode_log", _always_raise
+        )
         runner = CliRunner()
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
         assert result.exit_code == 1
-        assert "Error reading VS Code logs" in result.output
-        assert "Permission denied" in result.output
-        assert "Traceback" not in (result.output or "")
+        assert "log files were found but could not be read" in result.output
 
     def test_vscode_logs_option_passed(self, tmp_path: Path) -> None:
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
