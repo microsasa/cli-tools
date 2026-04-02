@@ -146,7 +146,8 @@ class TestRenderCodeChanges:
         assert "Code Changes" in output
         assert "+70" in output
         assert "-15" in output
-        assert "3" in output  # 3 files modified
+        assert "Files modified" in output
+        assert re.search(r"Files modified\s+│\s+3\b", output)
 
 
 # ---------------------------------------------------------------------------
