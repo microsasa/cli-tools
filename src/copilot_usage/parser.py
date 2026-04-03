@@ -11,7 +11,7 @@ from collections import OrderedDict
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from loguru import logger
 from pydantic import ValidationError
@@ -158,10 +158,11 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
             return None
-        model = data.get("model")  # type: ignore[reportUnknownMemberType]  # isinstance narrows Any→dict[str,Unknown]
+        data = cast("dict[str, object]", parsed)
+        model = data.get("model")
         return model if isinstance(model, str) and model else None
     except json.JSONDecodeError as exc:
         logger.warning(
