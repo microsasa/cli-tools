@@ -35,7 +35,7 @@ from copilot_usage.report import (
     render_summary,
     session_display_name,
 )
-from copilot_usage.vscode_parser import discover_vscode_logs, get_vscode_summary
+from copilot_usage.vscode_parser import get_vscode_summary
 from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
@@ -610,7 +610,7 @@ def vscode(vscode_logs: Path | None) -> None:
     _print_version_header()
     summary = get_vscode_summary(vscode_logs)
     if summary.total_requests == 0:
-        if summary.log_files_parsed == 0 and discover_vscode_logs(vscode_logs):
+        if summary.log_files_found > 0 and summary.log_files_parsed == 0:
             click.echo("Error: log files were found but could not be read.", err=True)
         else:
             click.echo("No VS Code Copilot Chat requests found.", err=True)

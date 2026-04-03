@@ -62,6 +62,7 @@ class VSCodeLogSummary:
     # Latest timestamp seen (tail of the last batch).
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
+    log_files_found: int = 0
 
 
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
@@ -154,6 +155,7 @@ class _SummaryAccumulator:
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
+    log_files_found: int = 0
 
 
 def _update_vscode_summary(
@@ -198,6 +200,7 @@ def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,
+        log_files_found=acc.log_files_found,
     )
 
 
@@ -205,6 +208,7 @@ def build_vscode_summary(
     requests: list[VSCodeRequest],
     *,
     log_files_parsed: int = 0,
+    log_files_found: int = 0,
 ) -> VSCodeLogSummary:
     """Aggregate a list of parsed requests into a summary.
 
@@ -213,7 +217,10 @@ def build_vscode_summary(
     min/max scan, so out-of-order inputs will produce incorrect
     ``first_timestamp`` / ``last_timestamp`` values.
     """
-    acc = _SummaryAccumulator(log_files_parsed=log_files_parsed)
+    acc = _SummaryAccumulator(
+        log_files_parsed=log_files_parsed,
+        log_files_found=log_files_found,
+    )
     _update_vscode_summary(acc, requests)
     return _finalize_summary(acc)
 
@@ -221,7 +228,7 @@ def build_vscode_summary(
 def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs."""
     logs = discover_vscode_logs(base_path)
-    acc = _SummaryAccumulator()
+    acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path in logs:
         try:
             result = parse_vscode_log(log_path)
