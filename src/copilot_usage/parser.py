@@ -117,9 +117,10 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     """Return parsed events, using cache when file identity is unchanged.
 
     Delegates to :func:`parse_events` on a cache miss and stores the
-    result keyed by ``(events_path, file_identity)``.  The cache is
-    bounded to :data:`_MAX_CACHED_EVENTS` entries; the **least-recently
-    used** entry is evicted when the limit is reached.
+    result keyed by *events_path* with file-identity validation on
+    lookup.  The cache is bounded to :data:`_MAX_CACHED_EVENTS`
+    entries; the **least-recently used** entry is evicted when the
+    limit is reached.
 
     The returned ``tuple`` prevents callers from adding, removing, or
     reordering cached entries (container-level immutability).  Individual
