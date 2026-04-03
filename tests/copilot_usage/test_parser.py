@@ -524,6 +524,33 @@ class TestDiscoverSessions:
 
 
 # ---------------------------------------------------------------------------
+# discover_sessions — depth contract
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverSessionsDepth:
+    """Regression: discover_sessions must only scan one directory level."""
+
+    def test_two_level_deep_events_not_discovered(self, tmp_path: Path) -> None:
+        """A nested ``deeply/nested/events.jsonl`` must NOT be discovered."""
+        # Two-level deep file — should be excluded
+        deep = tmp_path / "deeply" / "nested" / "events.jsonl"
+        _write_events(deep, _START_EVENT)
+
+        # One-level deep file — should be included
+        valid = tmp_path / "valid-session" / "events.jsonl"
+        _write_events(valid, _START_EVENT)
+
+        result = get_all_sessions(base_path=tmp_path)
+        assert len(result) == 1
+        assert result[0].session_id == "test-session-001"
+
+        # Also verify via discover_sessions directly
+        paths = discover_sessions(tmp_path)
+        assert paths == [valid]
+
+
+# ---------------------------------------------------------------------------
 # parse_events
 # ---------------------------------------------------------------------------
 
@@ -793,6 +820,20 @@ class TestBuildSessionSummaryActive:
         events, sdir = _active_events(tmp_path)
         summary = build_session_summary(events, session_dir=sdir)
         assert summary.events_path is None
+
+    def test_active_session_no_assistant_turn_empty_model_metrics(
+        self, tmp_path: Path
+    ) -> None:
+        """Session with only session.start → model_metrics == {}, zero tokens."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        events = parse_events(p)
+        summary = build_session_summary(events, session_dir=p.parent)
+
+        assert summary.model_metrics == {}
+        assert summary.active_output_tokens == 0
+        assert summary.total_premium_requests == 0
+        assert summary.is_active is True
 
 
 # ---------------------------------------------------------------------------
