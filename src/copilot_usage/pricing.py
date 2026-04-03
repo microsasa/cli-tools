@@ -9,11 +9,11 @@ AI model used.  This module provides:
 * A cost-estimation function that works with ``SessionSummary.model_metrics``.
 """
 
-import warnings
 from enum import StrEnum
 from functools import lru_cache
 from typing import Final
 
+from loguru import logger
 from pydantic import BaseModel
 
 __all__: Final[list[str]] = [
@@ -127,30 +127,32 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
     1. Exact match in ``KNOWN_PRICING``.
     2. Partial match — *model_name* starts with a known key, or a known key
        starts with *model_name*.
-    3. Fallback — returns a 1× standard entry and emits a
-       :class:`UserWarning`.
+    3. Fallback — returns a 1× standard entry and logs a ``debug``-level
+       message via loguru.
     """
     normalized = model_name.lower().strip()
 
     if not normalized:
-        warnings.warn(
-            "Empty model name; assuming 1× standard pricing.",
-            UserWarning,
-            stacklevel=2,
-        )
+        logger.debug("Empty model name; assuming 1× standard pricing.")
         return ModelPricing(
             model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
         )
 
-    return _cached_lookup(normalized)
+    pricing, unknown = _cached_lookup(normalized)
+    if unknown:
+        logger.debug("Unknown model '{}'; assuming 1× standard pricing.", normalized)
+    return pricing
 
 
 @lru_cache(maxsize=256)
-def _cached_lookup(normalized: str) -> ModelPricing:
-    """Cached inner lookup — called after normalization and empty-name guard."""
+def _cached_lookup(normalized: str) -> tuple[ModelPricing, bool]:
+    """Return ``(pricing, is_unknown_fallback)``.
+
+    Cached inner lookup — called after normalization and empty-name guard.
+    """
     # 1. Exact
     if normalized in KNOWN_PRICING:
-        return KNOWN_PRICING[normalized]
+        return KNOWN_PRICING[normalized], False
 
     # 2. Partial (longest matching key wins to avoid false positives)
     best: ModelPricing | None = None
@@ -167,14 +169,9 @@ def _cached_lookup(normalized: str) -> ModelPricing:
             model_name=normalized,
             multiplier=best.multiplier,
             tier=best.tier,
-        )
+        ), False
 
     # 3. Unknown
-    warnings.warn(
-        f"Unknown model '{normalized}'; assuming 1× standard pricing.",
-        UserWarning,
-        stacklevel=3,
-    )
     return ModelPricing(
         model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
-    )
+    ), True
