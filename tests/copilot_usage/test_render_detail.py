@@ -418,6 +418,31 @@ class TestShutdownCyclesPopulated:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Gap 2 — _render_recent_events with max_events <= 0 (issue #686)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderRecentEventsNonPositiveMax:
+    """max_events=0 or negative must print 'No events to display' and not
+    render any event content — guarding against the ``events[-0:]`` quirk."""
+
+    @pytest.mark.parametrize("max_events", [0, -1, -100])
+    def test_render_recent_events_non_positive_max_shows_no_events(
+        self, max_events: int
+    ) -> None:
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": "hi"})
+        buf, console = _buf_console()
+        _render_recent_events(
+            [ev],
+            session_start=datetime(2026, 1, 1, tzinfo=UTC),
+            target_console=console,
+            max_events=max_events,
+        )
+        assert "No events to display" in buf.getvalue()
+        assert "hi" not in buf.getvalue()  # content must NOT appear
+
+
 class TestRenderSessionDetailMultiModelShutdown:
     """Multi-model shutdown totals must propagate through
     render_session_detail end-to-end."""

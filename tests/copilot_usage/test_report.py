@@ -5760,3 +5760,29 @@ class TestRenderFullSummaryIterationCount:
         output = buf.getvalue()
         assert "Historical Totals" in output
         assert "Active Sessions" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #686 — cost view: empty model_metrics + is_active + has_shutdown_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewEmptyMetricsWithActivePeriod:
+    """model_metrics={} + is_active + has_shutdown_metrics → fallback row + active row."""
+
+    def test_cost_view_empty_metrics_with_active_period_shows_both_rows(self) -> None:
+        """Fallback summary row and '↳ Since last shutdown' row both render."""
+        session = SessionSummary(
+            session_id="empty-resumed",
+            model="claude-sonnet-4",
+            model_metrics={},
+            is_active=True,
+            has_shutdown_metrics=True,
+            active_model_calls=3,
+            active_output_tokens=150,
+            model_calls=3,
+            user_messages=2,
+        )
+        output = _capture_cost_view([session])
+        assert "↳ Since last shutdown" in output
+        assert "claude-sonnet-4" in output
