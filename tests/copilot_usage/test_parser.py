@@ -4,6 +4,7 @@
 
 import io
 import json
+import os
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -296,6 +297,60 @@ def _write_events(path: Path, *lines: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def _make_completed_session(base: Path, name: str, sid: str) -> Path:
+    """Create a completed session directory and return the events.jsonl path.
+
+    Writes start, user-message, and shutdown events — the minimal set
+    required to produce a valid completed ``SessionSummary``.
+    """
+    start = json.dumps(
+        {
+            "type": "session.start",
+            "data": {
+                "sessionId": sid,
+                "version": 1,
+                "startTime": "2026-03-07T10:00:00.000Z",
+                "context": {"cwd": "/"},
+            },
+            "id": f"ev-{sid}",
+            "timestamp": "2026-03-07T10:00:00.000Z",
+        }
+    )
+    user = json.dumps(
+        {
+            "type": "user.message",
+            "data": {
+                "content": "hi",
+                "transformedContent": "hi",
+                "attachments": [],
+                "interactionId": "int-1",
+            },
+            "id": f"ev-u-{sid}",
+            "timestamp": "2026-03-07T10:01:00.000Z",
+        }
+    )
+    shutdown = json.dumps(
+        {
+            "type": "session.shutdown",
+            "data": {
+                "shutdownType": "routine",
+                "totalPremiumRequests": 1,
+                "totalApiDurationMs": 500,
+                "sessionStartTime": 1772895600000,
+                "modelMetrics": {
+                    "gpt-5.1": {
+                        "requests": {"count": 1, "cost": 1},
+                        "usage": {"outputTokens": 50},
+                    }
+                },
+            },
+            "id": f"ev-sd-{sid}",
+            "timestamp": "2026-03-07T10:05:00.000Z",
+        }
+    )
+    return _write_events(base / name / "events.jsonl", start, user, shutdown)
 
 
 def _completed_events(
@@ -4854,54 +4909,10 @@ class TestFirstPassToolModel:
 class TestSessionCacheMtime:
     """get_all_sessions skips parse_events for files whose mtime is unchanged."""
 
-    def _make_session(self, base: Path, name: str, sid: str) -> Path:
-        """Create a completed session (with shutdown) and return events_path."""
-        start = json.dumps(
-            {
-                "type": "session.start",
-                "data": {
-                    "sessionId": sid,
-                    "version": 1,
-                    "startTime": "2026-03-07T10:00:00.000Z",
-                    "context": {"cwd": "/"},
-                },
-                "id": f"ev-{sid}",
-                "timestamp": "2026-03-07T10:00:00.000Z",
-            }
-        )
-        user = json.dumps(
-            {
-                "type": "user.message",
-                "data": {
-                    "content": "hi",
-                    "transformedContent": "hi",
-                    "attachments": [],
-                    "interactionId": "int-1",
-                },
-                "id": f"ev-u-{sid}",
-                "timestamp": "2026-03-07T10:01:00.000Z",
-            }
-        )
-        shutdown = json.dumps(
-            {
-                "type": "session.shutdown",
-                "data": {
-                    "shutdownType": "routine",
-                    "totalPremiumRequests": 1,
-                    "totalApiDurationMs": 500,
-                    "sessionStartTime": 1772895600000,
-                    "modelMetrics": {
-                        "gpt-5.1": {
-                            "requests": {"count": 1, "cost": 1},
-                            "usage": {"outputTokens": 50},
-                        }
-                    },
-                },
-                "id": f"ev-sd-{sid}",
-                "timestamp": "2026-03-07T10:05:00.000Z",
-            }
-        )
-        return _write_events(base / name / "events.jsonl", start, user, shutdown)
+    @staticmethod
+    def _make_session(base: Path, name: str, sid: str) -> Path:
+        """Create a completed session and return the events.jsonl path."""
+        return _make_completed_session(base, name, sid)
 
     def test_unchanged_file_not_reparsed(self, tmp_path: Path) -> None:
         """Only the file with a bumped mtime is re-parsed on the second call."""
@@ -5542,54 +5553,10 @@ class TestGetAllSessionsPopulatesEventsCache:
     subsequent get_cached_events calls avoid a redundant file re-read.
     """
 
-    def _make_session(self, base: Path, name: str, sid: str) -> Path:
+    @staticmethod
+    def _make_session(base: Path, name: str, sid: str) -> Path:
         """Create a completed session and return the events.jsonl path."""
-        start = json.dumps(
-            {
-                "type": "session.start",
-                "data": {
-                    "sessionId": sid,
-                    "version": 1,
-                    "startTime": "2026-03-07T10:00:00.000Z",
-                    "context": {"cwd": "/"},
-                },
-                "id": f"ev-{sid}",
-                "timestamp": "2026-03-07T10:00:00.000Z",
-            }
-        )
-        user = json.dumps(
-            {
-                "type": "user.message",
-                "data": {
-                    "content": "hi",
-                    "transformedContent": "hi",
-                    "attachments": [],
-                    "interactionId": "int-1",
-                },
-                "id": f"ev-u-{sid}",
-                "timestamp": "2026-03-07T10:01:00.000Z",
-            }
-        )
-        shutdown = json.dumps(
-            {
-                "type": "session.shutdown",
-                "data": {
-                    "shutdownType": "routine",
-                    "totalPremiumRequests": 1,
-                    "totalApiDurationMs": 500,
-                    "sessionStartTime": 1772895600000,
-                    "modelMetrics": {
-                        "gpt-5.1": {
-                            "requests": {"count": 1, "cost": 1},
-                            "usage": {"outputTokens": 50},
-                        }
-                    },
-                },
-                "id": f"ev-sd-{sid}",
-                "timestamp": "2026-03-07T10:05:00.000Z",
-            }
-        )
-        return _write_events(base / name / "events.jsonl", start, user, shutdown)
+        return _make_completed_session(base, name, sid)
 
     def test_cold_cache_populates_events_cache(self, tmp_path: Path) -> None:
         """After a cold get_all_sessions call, _EVENTS_CACHE contains entries."""
@@ -5621,6 +5588,104 @@ class TestGetAllSessionsPopulatesEventsCache:
             assert spy.call_count == 1
 
         assert len(events) == 3  # start + user + shutdown
+
+
+# ---------------------------------------------------------------------------
+# Issue #676 — deferred-events cache overflow with >8 sessions
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllSessionsEventsCacheOverflow:
+    """Verify deferred-events overflow logic in get_all_sessions.
+
+    When more than ``_MAX_CACHED_EVENTS`` sessions are discovered, only
+    the newest ``_MAX_CACHED_EVENTS`` are retained in ``_EVENTS_CACHE``
+    and the oldest are excluded.  The insertion order ensures newest
+    entries sit at the MRU (back) of the ``OrderedDict``.
+    """
+
+    @staticmethod
+    def _make_session(base: Path, name: str, sid: str) -> Path:
+        """Create a completed session and return the events.jsonl path."""
+        return _make_completed_session(base, name, sid)
+
+    def _make_sessions_with_distinct_mtimes(self, base: Path, count: int) -> list[Path]:
+        """Create *count* sessions with ascending mtimes (oldest first).
+
+        Returns a list of ``events.jsonl`` paths ordered oldest → newest
+        (i.e. ``paths[0]`` is the oldest, ``paths[-1]`` is the newest).
+        Explicit ``os.utime`` calls guarantee distinct nanosecond mtimes
+        regardless of filesystem timer resolution.
+        """
+        paths: list[Path] = []
+        for i in range(count):
+            p = self._make_session(base, f"sess-{i}", str(i))
+            # Assign monotonically increasing mtime so discovery ordering
+            # is deterministic: session 0 is oldest, session count-1 is newest.
+            mtime_ns = (1_000_000_000 + i) * 1_000_000_000  # distinct seconds
+            atime_ns = mtime_ns
+            os.utime(p, ns=(atime_ns, mtime_ns))
+            paths.append(p)
+        return paths
+
+    def test_only_newest_max_sessions_cached(self, tmp_path: Path) -> None:
+        """With _MAX_CACHED_EVENTS + 1 sessions, only the newest
+        _MAX_CACHED_EVENTS have events cached."""
+        total = _MAX_CACHED_EVENTS + 1
+        paths = self._make_sessions_with_distinct_mtimes(tmp_path, total)
+
+        get_all_sessions(tmp_path)
+
+        # The newest _MAX_CACHED_EVENTS sessions should be in _EVENTS_CACHE.
+        for p in paths[-_MAX_CACHED_EVENTS:]:
+            assert p in _EVENTS_CACHE, f"expected {p.parent.name} in cache"
+        # The oldest session should NOT be in _EVENTS_CACHE.
+        assert paths[0] not in _EVENTS_CACHE, "oldest session should be excluded"
+
+    def test_excluded_session_reparses_on_get_cached_events(
+        self, tmp_path: Path
+    ) -> None:
+        """Session excluded from deferred_events requires a re-parse via
+        get_cached_events."""
+        total = _MAX_CACHED_EVENTS + 1
+        paths = self._make_sessions_with_distinct_mtimes(tmp_path, total)
+
+        get_all_sessions(tmp_path)
+
+        excluded_path = paths[0]
+        assert excluded_path not in _EVENTS_CACHE
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            events = get_cached_events(excluded_path)
+            spy.assert_called_once()  # cache miss → re-parse
+
+        assert len(events) == 3  # start + user + shutdown
+
+    def test_newest_session_survives_subsequent_eviction(self, tmp_path: Path) -> None:
+        """After get_all_sessions with _MAX_CACHED_EVENTS sessions, adding
+        one more via get_cached_events evicts the oldest (LRU), not the
+        newest (MRU)."""
+        paths = self._make_sessions_with_distinct_mtimes(tmp_path, _MAX_CACHED_EVENTS)
+        oldest_path = paths[0]
+        newest_path = paths[-1]
+
+        get_all_sessions(tmp_path)
+
+        # Confirm all _MAX_CACHED_EVENTS entries are cached.
+        assert len(_EVENTS_CACHE) == _MAX_CACHED_EVENTS
+        # Newest is at the back of _EVENTS_CACHE (MRU position).
+        assert list(_EVENTS_CACHE.keys())[-1] == newest_path
+
+        # Create a 9th session and load it via get_cached_events.
+        extra = self._make_session(tmp_path, "sess-extra", "extra")
+        get_cached_events(extra)
+
+        # The oldest session should have been evicted (LRU at front).
+        assert oldest_path not in _EVENTS_CACHE
+        # The newest session should still be cached (MRU at back).
+        assert newest_path in _EVENTS_CACHE
+        # The newly-loaded session should be cached.
+        assert extra in _EVENTS_CACHE
 
 
 # ---------------------------------------------------------------------------
