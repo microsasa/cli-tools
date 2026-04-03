@@ -4148,6 +4148,30 @@ class TestReadConfigModel:
         config.write_bytes(b'\xff\xfe{"model": "gpt-5.1"}')
         assert _read_config_model(config) is None
 
+    def test_non_dict_root_list_returns_none(self, tmp_path: Path) -> None:
+        """JSON root is a list → None (``isinstance(data, dict)`` guard)."""
+        config = tmp_path / "config.json"
+        config.write_text("[]", encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_non_dict_root_null_returns_none(self, tmp_path: Path) -> None:
+        """JSON root is null → None (``isinstance(data, dict)`` guard)."""
+        config = tmp_path / "config.json"
+        config.write_text("null", encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_non_dict_root_int_returns_none(self, tmp_path: Path) -> None:
+        """JSON root is an integer → None (``isinstance(data, dict)`` guard)."""
+        config = tmp_path / "config.json"
+        config.write_text("42", encoding="utf-8")
+        assert _read_config_model(config) is None
+
+    def test_non_dict_root_string_returns_none(self, tmp_path: Path) -> None:
+        """JSON root is a string → None (``isinstance(data, dict)`` guard)."""
+        config = tmp_path / "config.json"
+        config.write_text('"a string"', encoding="utf-8")
+        assert _read_config_model(config) is None
+
 
 # ---------------------------------------------------------------------------
 # Issue #508 — _read_config_model caching
