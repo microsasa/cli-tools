@@ -2653,6 +2653,8 @@ class TestBuildSessionSummaryDebugLogging:
         The optimised path reads ``ev.data.get("model")`` directly; non-string
         or missing values are ignored without raising or logging.
         """
+        from loguru import logger
+
         bad_tool = json.dumps(
             {
                 "type": "tool.execution_complete",
@@ -2665,9 +2667,21 @@ class TestBuildSessionSummaryDebugLogging:
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, bad_tool)
         events = parse_events(p)
 
-        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
+        try:
+            summary = build_session_summary(
+                events, config_path=tmp_path / "no-config.json"
+            )
+        finally:
+            logger.remove(handler_id)
+
         # Malformed event is harmlessly ignored; summary still builds.
         assert summary is not None
+        assert not any(
+            "could not parse" in msg and "tool.execution_complete" in msg
+            for msg in log_messages
+        )
 
 
 # ---------------------------------------------------------------------------
