@@ -8,7 +8,7 @@ All public symbols are re-exported by :mod:`copilot_usage.report` so
 that external callers see no change.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
@@ -269,7 +269,7 @@ def _render_active_period(
 
 
 def _render_recent_events(
-    events: list[SessionEvent],
+    events: Sequence[SessionEvent],
     session_start: datetime,
     *,
     target_console: Console | None = None,
@@ -343,7 +343,7 @@ def _render_code_changes(
 
 
 def render_session_detail(
-    events: list[SessionEvent],
+    events: Sequence[SessionEvent],
     summary: SessionSummary,
     *,
     target_console: Console | None = None,

@@ -78,7 +78,7 @@ class _CachedEvents:
     """Cache entry pairing a file identity with parsed events."""
 
     file_id: tuple[int, int] | None
-    events: list[SessionEvent]
+    events: tuple[SessionEvent, ...]
 
 
 # Module-level parsed-events cache: events_path → _CachedEvents.
@@ -99,21 +99,27 @@ def _insert_events_entry(
     If *events_path* already exists in the cache (stale file-id), the
     old entry is removed first.  Otherwise, when the cache is full the
     least-recently-used entry (front of the ``OrderedDict``) is evicted.
+
+    The *events* list is converted to an immutable ``tuple`` before
+    storage so that callers cannot silently corrupt the cache.
     """
     if events_path in _EVENTS_CACHE:
         del _EVENTS_CACHE[events_path]
     elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
         _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
-    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=events)
+    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=tuple(events))
 
 
-def get_cached_events(events_path: Path) -> list[SessionEvent]:
+def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     """Return parsed events, using cache when file identity is unchanged.
 
     Delegates to :func:`parse_events` on a cache miss and stores the
     result keyed by ``(events_path, file_identity)``.  The cache is
     bounded to :data:`_MAX_CACHED_EVENTS` entries; the **least-recently
     used** entry is evicted when the limit is reached.
+
+    The returned ``tuple`` is immutable; callers that need a mutable
+    copy should use ``list(get_cached_events(...))``.
 
     Raises:
         OSError: Propagated from :func:`parse_events` when the file
@@ -126,7 +132,7 @@ def get_cached_events(events_path: Path) -> list[SessionEvent]:
         return cached.events
     events = parse_events(events_path)
     _insert_events_entry(events_path, file_id, events)
-    return events
+    return _EVENTS_CACHE[events_path].events
 
 
 _RESUME_INDICATOR_TYPES: Final[frozenset[EventType]] = frozenset(
