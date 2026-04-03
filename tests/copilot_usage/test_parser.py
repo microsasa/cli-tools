@@ -2645,10 +2645,14 @@ class TestBuildSessionSummaryDebugLogging:
             for msg in log_messages
         )
 
-    def test_tool_execution_complete_validation_error_logs_debug(
+    def test_tool_execution_complete_bad_data_silently_skipped(
         self, tmp_path: Path
     ) -> None:
-        """Bad tool.execution_complete data → debug log emitted with event type."""
+        """Bad tool.execution_complete data → silently skipped (no Pydantic validation).
+
+        The optimised path reads ``ev.data.get("model")`` directly; non-string
+        or missing values are ignored without raising or logging.
+        """
         from loguru import logger
 
         bad_tool = json.dumps(
@@ -2666,11 +2670,15 @@ class TestBuildSessionSummaryDebugLogging:
         log_messages: list[str] = []
         handler_id = logger.add(lambda m: log_messages.append(str(m)), level="DEBUG")
         try:
-            build_session_summary(events, config_path=tmp_path / "no-config.json")
+            summary = build_session_summary(
+                events, config_path=tmp_path / "no-config.json"
+            )
         finally:
             logger.remove(handler_id)
 
-        assert any(
+        # Malformed event is harmlessly ignored; summary still builds.
+        assert summary is not None
+        assert not any(
             "could not parse" in msg and "tool.execution_complete" in msg
             for msg in log_messages
         )
@@ -4967,6 +4975,30 @@ class TestFirstPassToolModel:
         events = parse_events(p)
         fp = _first_pass(events)
         assert fp.tool_model == "gpt-5.1"
+
+    def test_no_pydantic_validation_for_tool_model(self) -> None:
+        """Optimised path reads model via dict lookup, not Pydantic validation.
+
+        Builds 1 000 TOOL_EXECUTION_COMPLETE events without a ``model`` key
+        (worst-case) and asserts that ``ToolExecutionData.model_validate`` is
+        never called — proving the hot loop avoids the Pydantic round-trip.
+        """
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.TOOL_EXECUTION_COMPLETE,
+                data={"toolCallId": f"tc-{i}", "success": True},
+                id=f"ev-tool-{i}",
+                timestamp=None,
+                parentId=None,
+            )
+            for i in range(1_000)
+        ]
+        with patch.object(
+            ToolExecutionData, "model_validate", wraps=ToolExecutionData.model_validate
+        ) as mock_validate:
+            fp = _first_pass(events)
+            assert mock_validate.call_count == 0
+        assert fp.tool_model is None
 
 
 # ---------------------------------------------------------------------------

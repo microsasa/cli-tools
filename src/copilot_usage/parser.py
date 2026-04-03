@@ -430,17 +430,9 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 total_output_tokens += tokens
 
         elif ev.type == EventType.TOOL_EXECUTION_COMPLETE and tool_model is None:
-            try:
-                parsed = ev.as_tool_execution()
-                if parsed.model:
-                    tool_model = parsed.model
-            except ValidationError as exc:
-                logger.debug(
-                    "event {} — could not parse {} event ({}), skipping",
-                    idx,
-                    ev.type,
-                    exc.error_count(),
-                )
+            m = ev.data.get("model")
+            if isinstance(m, str) and m:
+                tool_model = m
 
     return _FirstPassResult(
         session_id=session_id,
