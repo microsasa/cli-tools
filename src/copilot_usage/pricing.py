@@ -127,20 +127,20 @@ def lookup_model_pricing(model_name: str) -> ModelPricing:
     1. Exact match in ``KNOWN_PRICING``.
     2. Partial match — *model_name* starts with a known key, or a known key
        starts with *model_name*.
-    3. Fallback — returns a 1× standard entry and logs a ``debug``-level
+    3. Fallback — returns a 1× standard entry and logs a ``warning``-level
        message via loguru.
     """
     normalized = model_name.lower().strip()
 
     if not normalized:
-        logger.debug("Empty model name; assuming 1× standard pricing.")
+        logger.warning("Empty model name; assuming 1× standard pricing.")
         return ModelPricing(
             model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
         )
 
     pricing, unknown = _cached_lookup(normalized)
     if unknown:
-        logger.debug("Unknown model '{}'; assuming 1× standard pricing.", normalized)
+        logger.warning("Unknown model '{}'; assuming 1× standard pricing.", normalized)
     return pricing
 
 

@@ -137,16 +137,16 @@ class TestLookupModelPricing:
         p = lookup_model_pricing("gemini-3-pro")
         assert p.multiplier == 1.0
 
-    def test_unknown_model_logs_debug(self, capfd: pytest.CaptureFixture[str]) -> None:
-        sink_id = logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+    def test_unknown_model_logs_warning(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
         try:
             p = lookup_model_pricing("totally-unknown-model-9000")
         finally:
             logger.remove(sink_id)
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
-        captured = capfd.readouterr().out
-        assert "Unknown model" in captured
+        assert any("Unknown model" in m for m in messages)
 
     def test_unknown_model_returns_name(self) -> None:
         p = lookup_model_pricing("mystery")
@@ -285,23 +285,20 @@ class TestLookupModelPricingTieBreaking:
 
 
 class TestLookupModelPricingEdgeCases:
-    def test_empty_string_logs_and_returns_standard(
-        self, capfd: pytest.CaptureFixture[str]
-    ) -> None:
-        sink_id = logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+    def test_empty_string_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
         try:
             p = lookup_model_pricing("")
         finally:
             logger.remove(sink_id)
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
-        captured = capfd.readouterr().out
-        assert "Empty model name" in captured
+        assert any("Empty model name" in m for m in messages)
 
-    def test_whitespace_only_logs_and_returns_standard(
-        self, capfd: pytest.CaptureFixture[str]
-    ) -> None:
-        sink_id = logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+    def test_whitespace_only_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
         try:
             p = lookup_model_pricing("   ")
         finally:
@@ -309,20 +306,17 @@ class TestLookupModelPricingEdgeCases:
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
         assert p.model_name == ""
-        captured = capfd.readouterr().out
-        assert "Empty model name" in captured
+        assert any("Empty model name" in m for m in messages)
 
-    def test_single_char_unknown_logs_and_returns_standard(
-        self, capfd: pytest.CaptureFixture[str]
-    ) -> None:
-        sink_id = logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+    def test_single_char_unknown_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
         try:
             p = lookup_model_pricing("x")
         finally:
             logger.remove(sink_id)
         assert p.multiplier == 1.0
-        captured = capfd.readouterr().out
-        assert "Unknown model" in captured
+        assert any("Unknown model" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -401,26 +395,32 @@ class TestLookupModelPricingCached:
             "Should only scan KNOWN_PRICING once for a repeated model name"
         )
 
-    def test_unknown_model_debug_log_emitted_on_every_call(
-        self, capfd: pytest.CaptureFixture[str]
-    ) -> None:
-        """Debug log must fire on every call, not just the first (cache miss).
+    def test_unknown_model_warning_log_emitted_on_every_call(self) -> None:
+        """Warning log must fire on every call, not just the first (cache miss).
 
         This is the key regression: the old ``warnings.warn`` inside
         ``@lru_cache`` silently stopped firing after the first call.
         """
-        sink_id = logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+        first_messages: list[str] = []
+        first_sink_id = logger.add(
+            first_messages.append, level="WARNING", format="{message}"
+        )
         try:
             lookup_model_pricing("unknown-xyz")
-            first = capfd.readouterr().out
-
-            lookup_model_pricing("unknown-xyz")
-            second = capfd.readouterr().out
         finally:
-            logger.remove(sink_id)
+            logger.remove(first_sink_id)
 
-        assert "Unknown model" in first
-        assert "Unknown model" in second
+        second_messages: list[str] = []
+        second_sink_id = logger.add(
+            second_messages.append, level="WARNING", format="{message}"
+        )
+        try:
+            lookup_model_pricing("unknown-xyz")
+        finally:
+            logger.remove(second_sink_id)
+
+        assert any("Unknown model" in m for m in first_messages)
+        assert any("Unknown model" in m for m in second_messages)
 
 
 # ---------------------------------------------------------------------------
