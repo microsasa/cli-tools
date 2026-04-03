@@ -6138,3 +6138,40 @@ class TestBuildCompletedSummaryShutdownIndexGuard:
         assert len(summary.shutdown_cycles) == 1
         assert summary.shutdown_cycles[0][0] is None
         assert summary.shutdown_cycles[0][1] is sd
+
+
+# -------------------------------------------------------------------
+# _MAX_CACHED_EVENTS raised to 32 — regression test
+# -------------------------------------------------------------------
+
+
+class TestEventsCacheLimitCoversTypicalSessions:
+    """Verify that _EVENTS_CACHE holds >8 sessions after get_all_sessions.
+
+    Before the fix, _MAX_CACHED_EVENTS was 8, so any session ranked 9th
+    or beyond would miss the events cache and trigger a redundant
+    parse_events call on every detail-view navigation.  With the limit
+    raised to 32, all sessions in a typical installation are cached.
+    """
+
+    def test_no_redundant_parse_after_warmup(self, tmp_path: Path) -> None:
+        """Create 12 sessions, warm caches, then assert no re-parses."""
+        num_sessions = 12
+        paths: list[Path] = []
+        for i in range(num_sessions):
+            ep = _make_completed_session(tmp_path, f"session-{i:02d}", f"sid-{i:04d}")
+            paths.append(ep)
+
+        # Warm both _SESSION_CACHE and _EVENTS_CACHE via get_all_sessions.
+        summaries = get_all_sessions(tmp_path)
+        assert len(summaries) == num_sessions
+
+        # All 12 sessions should fit in a 32-entry events cache.
+        assert len(_EVENTS_CACHE) == num_sessions
+
+        # Now call get_cached_events for every session and assert that
+        # parse_events is *never* invoked (all hits come from cache).
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            for ep in paths:
+                get_cached_events(ep)
+            assert spy.call_count == 0
