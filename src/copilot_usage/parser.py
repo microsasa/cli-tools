@@ -159,7 +159,9 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        model = data.get("model")
+        if not isinstance(data, dict):
+            return None
+        model = data.get("model")  # type: ignore[reportUnknownMemberType]  # isinstance narrows Any→dict[str,Unknown]
         return model if isinstance(model, str) and model else None
     except json.JSONDecodeError as exc:
         logger.warning(
