@@ -1,6 +1,5 @@
 """Rendering for VS Code Copilot Chat usage data."""
 
-import warnings
 from typing import Final
 
 from rich.console import Console
@@ -56,9 +55,7 @@ def render_vscode_summary(
             count = summary.requests_by_model[model]
             total_ms = summary.duration_by_model.get(model, 0)
             avg_ms = total_ms // count if count else 0
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                pricing = lookup_model_pricing(model)
+            pricing = lookup_model_pricing(model)
             table.add_row(
                 model,
                 pricing.tier.value,

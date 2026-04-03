@@ -8,7 +8,6 @@ helpers) lives in :mod:`copilot_usage.render_detail`; only the public
 entry-point is re-exported here so that external callers see no change.
 """
 
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -134,14 +133,10 @@ def _estimate_premium_cost(model: str | None, calls: int) -> str:
     Uses :func:`lookup_model_pricing` to look up the multiplier for *model*
     and multiplies by *calls*.  Returns ``"—"`` when *model* is ``None``.
 
-    Warnings from :func:`lookup_model_pricing` (e.g. unknown models) are
-    suppressed so that normal CLI rendering never emits noise on stderr.
     """
     if model is None:
         return "—"
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        pricing = lookup_model_pricing(model)
+    pricing = lookup_model_pricing(model)
     cost = round(calls * pricing.multiplier)
     return f"~{cost}"
 

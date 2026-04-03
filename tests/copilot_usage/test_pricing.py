@@ -2,10 +2,10 @@
 
 # pyright: reportPrivateUsage=false
 
-import warnings
 from functools import lru_cache
 
 import pytest
+from loguru import logger
 
 from copilot_usage import pricing
 from copilot_usage.pricing import (
@@ -137,19 +137,19 @@ class TestLookupModelPricing:
         p = lookup_model_pricing("gemini-3-pro")
         assert p.multiplier == 1.0
 
-    def test_unknown_model_warns(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_unknown_model_logs_warning(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
             p = lookup_model_pricing("totally-unknown-model-9000")
+        finally:
+            logger.remove(sink_id)
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
-        assert len(caught) == 1
-        assert "Unknown model" in str(caught[0].message)
+        assert any("Unknown model" in m for m in messages)
 
     def test_unknown_model_returns_name(self) -> None:
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("mystery")
+        p = lookup_model_pricing("mystery")
         assert p.model_name == "mystery"
 
 
@@ -285,32 +285,38 @@ class TestLookupModelPricingTieBreaking:
 
 
 class TestLookupModelPricingEdgeCases:
-    def test_empty_string_warns_and_returns_standard(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_empty_string_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
             p = lookup_model_pricing("")
+        finally:
+            logger.remove(sink_id)
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
-        assert len(caught) == 1
-        assert "Empty model name" in str(caught[0].message)
+        assert any("Empty model name" in m for m in messages)
 
-    def test_whitespace_only_warns_and_returns_standard(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def test_whitespace_only_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
             p = lookup_model_pricing("   ")
+        finally:
+            logger.remove(sink_id)
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
         assert p.model_name == ""
-        assert len(caught) == 1
-        assert "Empty model name" in str(caught[0].message)
+        assert any("Empty model name" in m for m in messages)
 
-    def test_single_char_unknown_warns_and_returns_standard(self) -> None:
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+    def test_single_char_unknown_logs_and_returns_standard(self) -> None:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
             p = lookup_model_pricing("x")
+        finally:
+            logger.remove(sink_id)
         assert p.multiplier == 1.0
-        assert len(w) == 1
-        assert "Unknown model" in str(w[0].message)
+        assert any("Unknown model" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -323,56 +329,37 @@ class TestLookupModelPricingCaseNormalization:
 
     def test_mixed_case_premium_model_resolves_correctly(self) -> None:
         """'Claude-Opus-4.6' resolves to the correct 3.0 multiplier."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("Claude-Opus-4.6")
-        assert len(caught) == 0
+        p = lookup_model_pricing("Claude-Opus-4.6")
         assert p.multiplier == 3.0
         assert p.tier == PricingTier.PREMIUM
 
     def test_whitespace_padded_model_resolves_correctly(self) -> None:
         """Model name with trailing space resolves correctly."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("claude-opus-4.6 ")
-        assert len(caught) == 0
+        p = lookup_model_pricing("claude-opus-4.6 ")
         assert p.multiplier == 3.0
         assert p.tier == PricingTier.PREMIUM
 
     def test_uppercase_free_model_resolves_correctly(self) -> None:
         """'GPT-5-mini' resolves to the FREE 0.0 multiplier."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("GPT-5-mini")
-        assert len(caught) == 0
+        p = lookup_model_pricing("GPT-5-mini")
         assert p.multiplier == 0.0
         assert p.tier == PricingTier.FREE
 
     def test_all_uppercase_model_resolves(self) -> None:
         """Fully uppercase model name resolves correctly."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("CLAUDE-SONNET-4")
-        assert len(caught) == 0
+        p = lookup_model_pricing("CLAUDE-SONNET-4")
         assert p.multiplier == 1.0
         assert p.tier == PricingTier.STANDARD
 
     def test_leading_and_trailing_whitespace_stripped(self) -> None:
         """Leading and trailing whitespace is stripped before lookup."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            p = lookup_model_pricing("  gpt-5.4-mini  ")
-        assert len(caught) == 0
+        p = lookup_model_pricing("  gpt-5.4-mini  ")
         assert p.multiplier == 0.0
         assert p.tier == PricingTier.FREE
 
     def test_mixed_case_partial_match(self) -> None:
         """Partial match works with mixed-case input."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            # Use a name that normalizes to a non-exact key but shares a known prefix.
-            p = lookup_model_pricing("Claude-Opus-4.6-1M-EXTRA")
-        assert len(caught) == 0
+        p = lookup_model_pricing("Claude-Opus-4.6-1M-EXTRA")
         assert p.multiplier == 6.0
         assert p.tier == PricingTier.PREMIUM
 
@@ -389,7 +376,7 @@ class TestLookupModelPricingCached:
         call_count = 0
         original = pricing._cached_lookup.__wrapped__
 
-        def counting_lookup(normalized: str) -> ModelPricing:
+        def counting_lookup(normalized: str) -> tuple[ModelPricing, bool]:
             nonlocal call_count
             call_count += 1
             return original(normalized)
@@ -407,3 +394,57 @@ class TestLookupModelPricingCached:
         assert call_count == 1, (
             "Should only scan KNOWN_PRICING once for a repeated model name"
         )
+
+    def test_unknown_model_warning_log_emitted_on_every_call(self) -> None:
+        """Warning log must fire on every call, not just the first (cache miss).
+
+        This is the key regression: the old ``warnings.warn`` inside
+        ``@lru_cache`` silently stopped firing after the first call.
+        """
+        first_messages: list[str] = []
+        first_sink_id = logger.add(
+            first_messages.append, level="WARNING", format="{message}"
+        )
+        try:
+            lookup_model_pricing("unknown-xyz")
+        finally:
+            logger.remove(first_sink_id)
+
+        second_messages: list[str] = []
+        second_sink_id = logger.add(
+            second_messages.append, level="WARNING", format="{message}"
+        )
+        try:
+            lookup_model_pricing("unknown-xyz")
+        finally:
+            logger.remove(second_sink_id)
+
+        assert any("Unknown model" in m for m in first_messages)
+        assert any("Unknown model" in m for m in second_messages)
+
+
+# ---------------------------------------------------------------------------
+# Callers no longer use warnings (issue #695)
+# ---------------------------------------------------------------------------
+
+
+class TestCallersNoLongerSuppressWarnings:
+    """Verify that report.py and vscode_report.py do not import warnings."""
+
+    def test_report_does_not_import_warnings(self) -> None:
+        from pathlib import Path
+
+        import copilot_usage.report
+
+        path = Path(copilot_usage.report.__file__)
+        text = path.read_text()
+        assert "import warnings" not in text
+
+    def test_vscode_report_does_not_import_warnings(self) -> None:
+        from pathlib import Path
+
+        import copilot_usage.vscode_report
+
+        path = Path(copilot_usage.vscode_report.__file__)
+        text = path.read_text()
+        assert "import warnings" not in text
