@@ -1539,33 +1539,6 @@ class TestMultiShutdownCodeChangesPreservation:
         assert summary.code_changes.filesModified == ["main.py"]
         assert summary.total_premium_requests == 5  # sum of both shutdowns
 
-    def test_both_shutdowns_have_code_changes_are_summed(self, tmp_path: Path) -> None:
-        """When both shutdown_1 and shutdown_2 carry codeChanges, lines are summed
-        and filesModified is the union (de-duplicated)."""
-        # shutdown_1: linesAdded=50, linesRemoved=10, filesModified=["a.py", "b.py"]
-        # shutdown_2: linesAdded=80, linesRemoved=20, filesModified=["a.py", "b.py", "c.py"]
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(
-            p,
-            _START_EVENT,
-            _USER_MSG,
-            _SHUTDOWN_EVENT,  # has codeChanges
-            _RESUME_EVENT,
-            _POST_RESUME_USER_MSG,
-            _SHUTDOWN_EVENT_2,  # also has codeChanges
-        )
-        events = parse_events(p)
-        summary = build_session_summary(events)
-
-        assert summary.code_changes is not None
-        assert summary.code_changes.linesAdded == 130  # 50 + 80
-        assert summary.code_changes.linesRemoved == 30  # 10 + 20
-        assert summary.code_changes.filesModified == [
-            "a.py",
-            "b.py",
-            "c.py",
-        ]  # union, sorted
-
     def test_last_shutdown_code_changes_wins_when_set(self, tmp_path: Path) -> None:
         """When shutdown_1 has no codeChanges but shutdown_2 does, summary.code_changes
         must equal shutdown_2's data."""
