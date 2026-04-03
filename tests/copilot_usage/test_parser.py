@@ -720,6 +720,19 @@ class TestBuildSessionSummaryCompleted:
         summary = build_session_summary(events, session_dir=sdir)
         assert summary.events_path is None
 
+    def test_shutdown_cycles_have_non_none_timestamps(self, tmp_path: Path) -> None:
+        """shutdown_cycles timestamps are non-None for sessions with shutdown events.
+
+        Regression test for issue #671: the idx captured by _first_pass is always
+        a valid index into the events list, so the timestamp lookup must succeed.
+        """
+        events, sdir = _completed_events(tmp_path)
+        summary = build_session_summary(events, session_dir=sdir)
+        assert len(summary.shutdown_cycles) > 0
+        for ts, sd in summary.shutdown_cycles:
+            assert ts is not None
+            assert sd.totalPremiumRequests >= 0
+
 
 # ---------------------------------------------------------------------------
 # build_session_summary — active session (no shutdown)
