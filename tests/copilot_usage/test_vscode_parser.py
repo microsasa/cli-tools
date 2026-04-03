@@ -332,7 +332,6 @@ class TestDiscoverVscodeLogs:
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
         log_file.write_text(_LOG_OPUS, encoding="utf-8")
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         result = discover_vscode_logs()
         assert len(result) == 1
         assert result[0] == log_file
