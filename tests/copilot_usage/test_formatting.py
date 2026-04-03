@@ -248,3 +248,26 @@ class TestFormatTimedelta:
         assert (
             format_timedelta(timedelta(hours=1, minutes=5, seconds=30)) == "1h 5m 30s"
         )
+
+
+# ---------------------------------------------------------------------------
+# format_tokens boundary values (issue #686)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatTokensThresholds:
+    """Boundary values at the K and M thresholds — off-by-one regression guard."""
+
+    @pytest.mark.parametrize(
+        ("n", "expected"),
+        [
+            (999, "999"),  # one below K threshold
+            (1_000, "1.0K"),  # exact K threshold
+            (999_999, "1000.0K"),  # one below M threshold
+            (1_000_000, "1.0M"),  # exact M threshold
+        ],
+    )
+    def test_format_tokens_thresholds(self, n: int, expected: str) -> None:
+        from copilot_usage._formatting import format_tokens
+
+        assert format_tokens(n) == expected
