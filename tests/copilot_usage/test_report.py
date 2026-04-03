@@ -2959,6 +2959,19 @@ class TestBuildEventDetails:
         )
         assert _build_event_details(ev) == ""
 
+    def test_shutdown_event_nonempty_shutdown_type_shown_in_detail(self) -> None:
+        """SESSION_SHUTDOWN with shutdownType='normal' → _build_event_details returns 'type=normal'."""
+        ev = _make_event(
+            EventType.SESSION_SHUTDOWN,
+            data={
+                "shutdownType": "normal",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+            },
+            timestamp=None,
+        )
+        assert _build_event_details(ev) == "type=normal"
+
 
 class TestRenderShutdownCyclesEdgeCases:
     """Test _render_shutdown_cycles with edge-case summaries."""
@@ -3600,6 +3613,12 @@ class TestBuildEventDetailsCatchAll:
             EventType.SESSION_START,
             EventType.SESSION_RESUME,
             EventType.ABORT,
+            EventType.SESSION_ERROR,
+            EventType.SESSION_PLAN_CHANGED,
+            EventType.SESSION_WORKSPACE_FILE_CHANGED,
+            EventType.TOOL_EXECUTION_START,
+            EventType.ASSISTANT_TURN_START,
+            EventType.ASSISTANT_TURN_END,
         ],
     )
     def test_catch_all_returns_empty_string(self, event_type: str) -> None:
