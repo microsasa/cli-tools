@@ -1551,7 +1551,7 @@ class TestMultiShutdownCodeChangesPreservation:
             _USER_MSG,
             _SHUTDOWN_EVENT,  # has codeChanges
             _RESUME_EVENT,
-            _USER_MSG,
+            _POST_RESUME_USER_MSG,
             _SHUTDOWN_EVENT_2,  # also has codeChanges
         )
         events = parse_events(p)
