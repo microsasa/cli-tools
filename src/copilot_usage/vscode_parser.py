@@ -65,38 +65,61 @@ class VSCodeLogSummary:
     log_files_found: int = 0
 
 
+def _default_log_candidates() -> list[Path]:
+    """Return candidate VS Code log directories for both Stable and Insiders."""
+    code_dirs: list[str] = ["Code", "Code - Insiders"]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        root = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return [root / d / "logs" for d in code_dirs]
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+        return [root / d / "logs" for d in code_dirs]
+    # Linux and other platforms
+    root = Path.home() / ".config"
+    return [root / d / "logs" for d in code_dirs]
+
+
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     """Find all VS Code Copilot Chat log files.
 
-    By default, the base logs directory is:
+    When *base_path* is ``None``, both the **stable** and **Insiders** log
+    directories are searched:
 
-    * On Windows: ``%APPDATA%/Code/logs`` (or ``~/AppData/Roaming/Code/logs`` if
-      ``%APPDATA%`` is not set).
-    * On macOS: ``~/Library/Application Support/Code/logs``.
-    * On other platforms (e.g. Linux): ``~/.config/Code/logs``.
+    * On Windows: ``%APPDATA%/Code/logs`` and ``%APPDATA%/Code - Insiders/logs``
+      (falls back to ``~/AppData/Roaming/…`` when ``%APPDATA%`` is unset).
+    * On macOS: ``~/Library/Application Support/Code/logs`` and
+      ``~/Library/Application Support/Code - Insiders/logs``.
+    * On other platforms (e.g. Linux): ``~/.config/Code/logs`` and
+      ``~/.config/Code - Insiders/logs``.
+
+    If only one variant exists on disk the behaviour is identical to before.
+    When both exist, files from both are returned and sorted together.
     """
-    if base_path is None:
-        if sys.platform == "win32":
-            appdata = os.environ.get("APPDATA", "")
-            if appdata:
-                base_path = Path(appdata) / "Code" / "logs"
-            else:
-                base_path = Path.home() / "AppData" / "Roaming" / "Code" / "logs"
-        elif sys.platform == "darwin":
-            base_path = (
-                Path.home() / "Library" / "Application Support" / "Code" / "logs"
-            )
-        else:
-            base_path = Path.home() / ".config" / "Code" / "logs"
-
-    if not base_path.is_dir():
-        logger.debug("VS Code logs directory not found: {}", base_path)
-        return []
-
     pattern = "*/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log"
-    logs = sorted(base_path.glob(pattern))
-    logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
-    return logs
+
+    if base_path is not None:
+        if not base_path.is_dir():
+            logger.debug("VS Code logs directory not found: {}", base_path)
+            return []
+        logs = sorted(base_path.glob(pattern))
+        logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
+        return logs
+
+    candidates = _default_log_candidates()
+    all_logs: list[Path] = []
+    for candidate in candidates:
+        if not candidate.is_dir():
+            logger.debug("VS Code logs directory not found: {}", candidate)
+            continue
+        all_logs.extend(candidate.glob(pattern))
+    all_logs.sort()
+    logger.debug(
+        "Discovered {} VS Code log file(s) across {} candidate(s)",
+        len(all_logs),
+        len(candidates),
+    )
+    return all_logs
 
 
 def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
