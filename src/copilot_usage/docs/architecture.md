@@ -41,6 +41,8 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | `_formatting.py` | Shared formatting utilities — `format_duration()` and `format_tokens()` with doctest-verified examples. Used by report.py and render_detail.py. |
 | `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers are used for `~`-prefixed cost estimates in live/active views (`render_live_sessions`, `render_cost_view`); historical post-shutdown views use exact API-provided numbers exclusively. |
 | `logging_config.py` | Loguru setup — stderr warnings only, no file output. Runtime `import loguru` for pyright to resolve the `"loguru.Record"` string annotation. Called once from CLI entry point. |
+| `vscode_parser.py` | VS Code Copilot Chat log parser — discovers log files per platform (macOS/Windows/Linux), parses `ccreq:` lines with regex, aggregates into `VSCodeLogSummary`. |
+| `vscode_report.py` | Rich rendering for VS Code usage data — totals panel, per-model table, feature breakdown, daily activity. Accepts optional `target_console` for testing. |
 
 ### Event Processing Pipeline
 
@@ -78,7 +80,9 @@ tests/
 │   ├── test_report.py          Rich output & session-detail rendering
 │   ├── test_formatting.py      Formatting helpers and string utilities
 │   ├── test_logging_config.py  Loguru configuration
-│   └── test_cli.py             Click command invocation via CliRunner
+│   ├── test_cli.py             Click command invocation via CliRunner
+│   ├── test_vscode_parser.py   VS Code log parsing, discovery, aggregation
+│   └── test_vscode_report.py   VS Code report rendering
 ├── test_packaging.py           Wheel build test — verifies docs excluded from distribution
 ├── test_docs.py                Documentation tests
 └── e2e/                        E2e tests — real CLI commands against fixture data

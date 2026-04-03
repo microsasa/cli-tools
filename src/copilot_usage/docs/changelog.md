@@ -5,6 +5,19 @@ Manual work only — autonomous agent pipeline PRs are not tracked here.
 
 ---
 
+## feat: add vscode command for VS Code Copilot Chat logs — 2026-03-30
+
+**PR**: #319 (by @AshleyF) — External contribution
+
+**Done**:
+- New `copilot-usage vscode` subcommand parses local VS Code Copilot Chat logs
+- `vscode_parser.py`: log discovery (macOS/Windows/Linux), `ccreq:` regex parsing, `VSCodeLogSummary` aggregation
+- `vscode_report.py`: Rich rendering — totals, per-model table, feature breakdown, daily activity
+- `pricing.py`: added VS Code models (`gpt-4o-mini`, `copilot-nes-oct`, `copilot-suggestions-himalia-001`)
+- 24+ unit tests covering regex, parsing, aggregation, discovery, CLI, and report rendering
+
+---
+
 ## refactor: split build_session_summary into focused helpers — 2026-03-28
 
 **PR**: #451 — Closes #224

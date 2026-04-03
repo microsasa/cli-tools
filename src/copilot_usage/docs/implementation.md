@@ -435,3 +435,43 @@ When no shutdown data exists, the model is resolved in `_build_active_summary()`
 
 1. Scan `tool.execution_complete` events for a `model` field
 2. Fall back to `~/.copilot/config.json` → `data.model` field (`_read_config_model()` in `parser.py`)
+
+---
+
+## VS Code Copilot Chat Logs
+
+### Overview
+
+The `vscode` subcommand parses VS Code Copilot Chat log files to show request counts, latency, and model usage. VS Code logs don't include token counts — only request-level data is available locally.
+
+### Log Discovery
+
+`discover_vscode_logs()` finds `GitHub Copilot Chat.log` files under platform-specific directories:
+
+- **macOS:** `~/Library/Application Support/Code/logs/`
+- **Windows:** `%APPDATA%/Code/logs/`
+- **Linux:** `~/.config/Code/logs/`
+
+It globs into date-stamped subdirectories (`*/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log`).
+
+### Log Format
+
+Each successful API request is logged as a `ccreq:` line:
+
+```
+2026-03-13 22:10:24.523 [info] ccreq:c0c8885e.copilotmd | success | claude-opus-4.6 | 8003ms | [panel/editAgent]
+```
+
+The `CCREQ_RE` regex in `vscode_parser.py` extracts: timestamp, request ID, model name, duration (ms), and feature category. Model redirects (e.g., `gpt-4o-mini -> gpt-4o-mini-2024-07-18`) are handled by capturing only the requested model name.
+
+### Aggregation
+
+`get_vscode_summary()` orchestrates: discover → parse each file → aggregate into `VSCodeLogSummary`. The summary tracks:
+
+- Total requests, total API duration, date range
+- Per-model request counts and durations
+- Per-category (feature) request counts
+- Daily request counts (last 14 days shown in report)
+- Log files discovered vs successfully parsed
+
+`parse_vscode_log()` raises `OSError` if a file can't be read. `get_vscode_summary()` catches it and skips unreadable files, so only successfully read files are counted in `log_files_parsed`.
