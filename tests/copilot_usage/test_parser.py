@@ -5526,7 +5526,7 @@ class TestGetCachedEvents:
     """Tests for the get_cached_events parsed-events cache."""
 
     def test_cache_hit_returns_same_object(self, tmp_path: Path) -> None:
-        """Second call with unchanged file returns the same list object."""
+        """Second call with unchanged file returns the same tuple object."""
         p = tmp_path / "s1" / "events.jsonl"
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
 
@@ -5632,9 +5632,27 @@ class TestGetCachedEvents:
             third = get_cached_events(p)
             assert spy.call_count == 0
 
-        # All reads return the exact same cached list object
+        # All reads return the exact same cached tuple object
         assert second is first
         assert third is first
+
+    def test_returns_immutable_tuple(self, tmp_path: Path) -> None:
+        """get_cached_events returns an immutable tuple, not a mutable list."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        first = get_cached_events(p)
+
+        # Return type is tuple, not list.
+        assert isinstance(first, tuple)
+
+        # Attempting item assignment raises TypeError (tuple is immutable).
+        with pytest.raises(TypeError):
+            first[0] = first[-1]  # type: ignore[index]
+
+        # A second call returns the exact same cached object.
+        second = get_cached_events(p)
+        assert second is first
 
     def test_oserror_propagated_on_missing_file(self, tmp_path: Path) -> None:
         """get_cached_events raises OSError when the file does not exist."""
