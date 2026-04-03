@@ -36,13 +36,16 @@ from copilot_usage.parser import (
     _MAX_CACHED_EVENTS,
     _SESSION_CACHE,
     _build_active_summary,
+    _build_completed_summary,
     _CachedEvents,
     _CachedSession,
     _detect_resume,
     _extract_session_name,
     _first_pass,
+    _FirstPassResult,
     _infer_model_from_metrics,
     _read_config_model,
+    _ResumeInfo,
     _safe_file_identity,
     _safe_int_tokens,
     build_session_summary,
@@ -5961,3 +5964,153 @@ class TestDetectResumeRangeIndex:
         expected_remaining = n_total - shutdown_idx - 1  # 9
         assert result.post_shutdown_user_messages == expected_remaining
         assert result.session_resumed is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #685 — _detect_resume: non-indicator post-shutdown events must NOT
+#              set session_resumed
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeNonIndicatorEvents:
+    """Non-indicator events after shutdown must not trigger resume."""
+
+    def test_post_shutdown_non_indicator_events_do_not_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """TOOL_EXECUTION_COMPLETE + SESSION_ERROR after shutdown → session_resumed=False."""
+        tool_exec = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-post",
+                    "model": "claude-sonnet-4",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool-post",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        session_error = json.dumps(
+            {
+                "type": "session.error",
+                "data": {"message": "something went wrong"},
+                "id": "ev-error-post",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, tool_exec, session_error
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        result = _detect_resume(events, fp.all_shutdowns)
+
+        assert result.session_resumed is False
+        assert result.post_shutdown_user_messages == 0
+        assert result.post_shutdown_turn_starts == 0
+        assert result.last_resume_time is None
+
+    def test_build_session_summary_not_active_with_non_indicator_events(
+        self, tmp_path: Path
+    ) -> None:
+        """Full build_session_summary produces is_active=False and end_time set."""
+        tool_exec = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-post",
+                    "model": "claude-sonnet-4",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool-post",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        session_error = json.dumps(
+            {
+                "type": "session.error",
+                "data": {"message": "something went wrong"},
+                "id": "ev-error-post",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, tool_exec, session_error
+        )
+        events = parse_events(p)
+
+        summary = build_session_summary(events)
+
+        assert summary.is_active is False
+        assert summary.end_time is not None
+
+
+# ---------------------------------------------------------------------------
+# Issue #685 — _build_completed_summary: defensive shutdown-index guard
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCompletedSummaryShutdownIndexGuard:
+    """Verify the defensive idx < len(events) guard in _build_completed_summary."""
+
+    def test_shutdown_idx_out_of_bounds_yields_none_timestamp(self) -> None:
+        """When shutdown event index equals len(events), timestamp is None."""
+        sd = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=3,
+            totalApiDurationMs=5000,
+        )
+        # Hand-craft a _FirstPassResult with shutdown index == 2, but we will
+        # only supply 2 events (indices 0 and 1), so idx 2 is out of bounds.
+        fp = _FirstPassResult(
+            session_id="oob-session",
+            start_time=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            end_time=datetime(2026, 3, 7, 11, 0, tzinfo=UTC),
+            cwd="/home/user/project",
+            model="claude-sonnet-4",
+            all_shutdowns=((2, sd),),
+            user_message_count=1,
+            total_output_tokens=0,
+            total_turn_starts=0,
+            tool_model=None,
+        )
+        resume = _ResumeInfo(
+            session_resumed=False,
+            post_shutdown_output_tokens=0,
+            post_shutdown_turn_starts=0,
+            post_shutdown_user_messages=0,
+            last_resume_time=None,
+        )
+        # Only 2 events → index 2 is out of bounds
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.SESSION_START,
+                data={
+                    "sessionId": "oob-session",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/project"},
+                },
+                id="ev-start",
+                timestamp=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.USER_MESSAGE,
+                data={"content": "hello"},
+                id="ev-user",
+                timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+            ),
+        ]
+
+        summary = _build_completed_summary(fp, name=None, resume=resume, events=events)
+
+        # The guard should produce None instead of raising IndexError
+        assert len(summary.shutdown_cycles) == 1
+        assert summary.shutdown_cycles[0][0] is None
+        assert summary.shutdown_cycles[0][1] is sd
