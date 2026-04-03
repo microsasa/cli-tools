@@ -419,7 +419,7 @@ class TestShutdownCyclesPopulated:
 
 
 # ---------------------------------------------------------------------------
-# Gap 2 — _render_recent_events with max_events <= 0 (issue #686)
+# Gap 3 — _render_recent_events with max_events <= 0 (issue #686)
 # ---------------------------------------------------------------------------
 
 

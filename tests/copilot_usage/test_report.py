@@ -5784,5 +5784,5 @@ class TestCostViewEmptyMetricsWithActivePeriod:
             user_messages=2,
         )
         output = _capture_cost_view([session])
+        assert session_display_name(session) in output
         assert "↳ Since last shutdown" in output
-        assert "claude-sonnet-4" in output
