@@ -100,8 +100,11 @@ def _insert_events_entry(
     old entry is removed first.  Otherwise, when the cache is full the
     least-recently-used entry (front of the ``OrderedDict``) is evicted.
 
-    The *events* list is converted to an immutable ``tuple`` before
-    storage so that callers cannot silently corrupt the cache.
+    The *events* list is converted to a ``tuple`` before storage so
+    that callers cannot accidentally add, remove, or reorder entries
+    in the cache.  This is **container-level** immutability only —
+    individual ``SessionEvent`` objects remain mutable and must not
+    be modified by callers.
     """
     if events_path in _EVENTS_CACHE:
         del _EVENTS_CACHE[events_path]
@@ -118,8 +121,11 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     bounded to :data:`_MAX_CACHED_EVENTS` entries; the **least-recently
     used** entry is evicted when the limit is reached.
 
-    The returned ``tuple`` is immutable; callers that need a mutable
-    copy should use ``list(get_cached_events(...))``.
+    The returned ``tuple`` prevents callers from adding, removing, or
+    reordering cached entries (container-level immutability).  Individual
+    ``SessionEvent`` objects are **not** deep-copied and must not be
+    mutated.  Callers that need a mutable sequence should use
+    ``list(get_cached_events(...))``.
 
     Raises:
         OSError: Propagated from :func:`parse_events` when the file
