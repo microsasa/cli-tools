@@ -281,6 +281,120 @@ class TestDiscoverVscodeLogs:
             result = discover_vscode_logs()
         assert result == []
 
+    # -- Insiders default discovery -----------------------------------------
+
+    def test_default_linux_insiders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Linux Insiders log directory is discovered by default."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
+        monkeypatch.delenv("APPDATA", raising=False)
+        insiders = tmp_path / "Code - Insiders" / "logs"
+        log_dir = insiders / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fakehome")
+        # Point _default_log_candidates to our tmp_path directories
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser._default_log_candidates",
+            lambda: [tmp_path / "Code" / "logs", insiders],
+        )
+        result = discover_vscode_logs()
+        assert len(result) == 1
+        assert result[0] == log_file
+
+    def test_default_macos_insiders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """macOS Insiders log directory is discovered by default."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "darwin")
+        monkeypatch.delenv("APPDATA", raising=False)
+        insiders = tmp_path / "Code - Insiders" / "logs"
+        log_dir = insiders / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser._default_log_candidates",
+            lambda: [tmp_path / "Code" / "logs", insiders],
+        )
+        result = discover_vscode_logs()
+        assert len(result) == 1
+        assert result[0] == log_file
+
+    def test_default_windows_insiders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows Insiders log directory is discovered by default."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
+        monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+        insiders = tmp_path / "Code - Insiders" / "logs"
+        log_dir = insiders / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser._default_log_candidates",
+            lambda: [tmp_path / "Code" / "logs", insiders],
+        )
+        result = discover_vscode_logs()
+        assert len(result) == 1
+        assert result[0] == log_file
+
+    def test_default_windows_insiders_no_appdata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows Insiders without APPDATA uses home-relative fallback."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
+        monkeypatch.setenv("APPDATA", "")
+        insiders = tmp_path / "Code - Insiders" / "logs"
+        log_dir = insiders / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser._default_log_candidates",
+            lambda: [tmp_path / "Code" / "logs", insiders],
+        )
+        result = discover_vscode_logs()
+        assert len(result) == 1
+        assert result[0] == log_file
+
+    def test_both_stable_and_insiders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both stable and Insiders logs are returned, sorted together."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
+        monkeypatch.delenv("APPDATA", raising=False)
+
+        stable = tmp_path / "Code" / "logs"
+        insiders = tmp_path / "Code - Insiders" / "logs"
+
+        # Create a log in stable
+        stable_dir = stable / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        stable_dir.mkdir(parents=True)
+        stable_log = stable_dir / "GitHub Copilot Chat.log"
+        stable_log.write_text(_LOG_OPUS, encoding="utf-8")
+
+        # Create a log in Insiders
+        insiders_dir = (
+            insiders / "20260314" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        insiders_dir.mkdir(parents=True)
+        insiders_log = insiders_dir / "GitHub Copilot Chat.log"
+        insiders_log.write_text(_LOG_GPT4O, encoding="utf-8")
+
+        monkeypatch.setattr(
+            "copilot_usage.vscode_parser._default_log_candidates",
+            lambda: [stable, insiders],
+        )
+        result = discover_vscode_logs()
+        assert len(result) == 2
+        assert result == sorted(result), "results must be sorted"
+        assert stable_log in result
+        assert insiders_log in result
+
 
 # ---------------------------------------------------------------------------
 # get_vscode_summary (end-to-end)
