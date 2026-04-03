@@ -217,7 +217,7 @@ class AssistantMessageData(BaseModel):
     interactionId: str = ""
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[ToolRequest] = Field(default_factory=list[ToolRequest])
+    toolRequests: list[ToolRequest] = Field(default_factory=list)  # type: ignore[reportUnknownVariableType]  # Pydantic infers element type from annotation
 
 
 class SessionShutdownData(BaseModel):
