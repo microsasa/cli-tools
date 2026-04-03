@@ -12,6 +12,7 @@ from loguru import logger
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     CCREQ_RE,
+    VSCodeLogSummary,
     VSCodeRequest,
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
@@ -219,6 +220,13 @@ class TestBuildVscodeSummary:
         summary = build_vscode_summary(self._make_requests(), log_files_parsed=3)
         assert summary.log_files_parsed == 3
 
+    def test_log_files_found_param(self) -> None:
+        summary = build_vscode_summary(
+            self._make_requests(), log_files_parsed=2, log_files_found=5
+        )
+        assert summary.log_files_found == 5
+        assert summary.log_files_parsed == 2
+
 
 # ---------------------------------------------------------------------------
 # discover_vscode_logs — platform defaults
@@ -290,12 +298,14 @@ class TestGetVscodeSummary:
         summary = get_vscode_summary(tmp_path)
         assert summary.total_requests == 3
         assert summary.log_files_parsed == 1
+        assert summary.log_files_found == 1
         assert "claude-opus-4.6" in summary.requests_by_model
 
     def test_no_logs(self, tmp_path: Path) -> None:
         summary = get_vscode_summary(tmp_path)
         assert summary.total_requests == 0
         assert summary.log_files_parsed == 0
+        assert summary.log_files_found == 0
 
     def test_all_invalid_timestamps_still_counted_in_log_files_parsed(
         self, tmp_path: Path
@@ -422,6 +432,68 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 1
         assert summary.requests_by_model["claude-sonnet-4"] == 1
 
+    def test_log_files_found_equals_discovered(self) -> None:
+        """log_files_found equals the number of paths from discover_vscode_logs."""
+        from datetime import datetime
+
+        paths = [Path(f"/fake/log_{i}.log") for i in range(3)]
+        req = VSCodeRequest(
+            timestamp=datetime(2026, 3, 13, 10, 0, 0),
+            request_id="a1",
+            model="gpt-4o",
+            duration_ms=100,
+            category="panel",
+        )
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=paths,
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                return_value=[req],
+            ),
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.log_files_found == 3
+        assert summary.log_files_parsed == 3
+
+    def test_log_files_found_vs_parsed_on_oserror(self) -> None:
+        """log_files_found counts all discovered; log_files_parsed only successes."""
+        from datetime import datetime
+
+        path1 = Path("/fake/log_1.log")
+        path2 = Path("/fake/log_2.log")
+        req = VSCodeRequest(
+            timestamp=datetime(2026, 3, 14, 12, 0, 0),
+            request_id="b1",
+            model="claude-sonnet-4",
+            duration_ms=300,
+            category="inline",
+        )
+
+        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+            if path == path1:
+                raise OSError("Permission denied")
+            return [req]
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[path1, path2],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fake_parse,
+            ),
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.log_files_found == 2
+        assert summary.log_files_parsed == 1
+
 
 # ---------------------------------------------------------------------------
 # CLI: vscode subcommand
@@ -514,6 +586,28 @@ class TestVscodeCliCommand:
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
         assert result.exit_code == 0
         assert "VS Code Copilot Chat" in result.output
+
+    def test_all_files_error_shows_correct_message(self) -> None:
+        """Mock-only: log_files_found>0, log_files_parsed==0 → I/O error."""
+        summary = VSCodeLogSummary(
+            log_files_found=2, log_files_parsed=0, total_requests=0
+        )
+        with patch("copilot_usage.cli.get_vscode_summary", return_value=summary):
+            runner = CliRunner()
+            result = runner.invoke(main, ["vscode"])
+        assert result.exit_code == 1
+        assert "could not be read" in result.output
+
+    def test_no_files_shows_no_requests_message(self) -> None:
+        """Mock-only: log_files_found==0 → no-requests message."""
+        summary = VSCodeLogSummary(
+            log_files_found=0, log_files_parsed=0, total_requests=0
+        )
+        with patch("copilot_usage.cli.get_vscode_summary", return_value=summary):
+            runner = CliRunner()
+            result = runner.invoke(main, ["vscode"])
+        assert result.exit_code == 1
+        assert "No VS Code" in result.output
 
 
 # ---------------------------------------------------------------------------
