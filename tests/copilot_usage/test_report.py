@@ -5786,3 +5786,83 @@ class TestCostViewEmptyMetricsWithActivePeriod:
         output = _capture_cost_view([session])
         assert session_display_name(session) in output
         assert "↳ Since last shutdown" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #703 — historical session table shows total model_calls/user_messages
+# ---------------------------------------------------------------------------
+
+
+class TestHistoricalSessionTableShutdownOnlyCounts:
+    """Regression: historical section must show shutdown-only model_calls / user_messages."""
+
+    def test_historical_rows_use_shutdown_only_counts(self) -> None:
+        """Historical section subtracts active counts; active section shows active counts."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="resumed-counts-703",
+            name="Resumed Counts",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(hours=2),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=now - timedelta(minutes=5),
+            model_calls=500,
+            active_model_calls=200,
+            user_messages=100,
+            active_user_messages=40,
+            total_premium_requests=10,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=1_000_000),
+                ),
+            },
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # --- Historical Totals panel (must use shutdown-only counts) ---
+        assert "Historical Totals" in clean
+        totals_start = clean.index("Historical Totals")
+        sessions_table_start = clean.index("Sessions (Shutdown Data)")
+        totals_panel = clean[totals_start:sessions_table_start]
+        assert "300 model calls" in totals_panel, (
+            f"Historical Totals panel should show '300 model calls', got: {totals_panel}"
+        )
+        assert "60 user messages" in totals_panel, (
+            f"Historical Totals panel should show '60 user messages', got: {totals_panel}"
+        )
+
+        # --- Historical section ---
+        assert "Sessions (Shutdown Data)" in clean
+        hist_start = sessions_table_start
+        # Active Sessions heading comes after the historical table.
+        active_start = clean.index("Active Sessions")
+        hist_section = clean[hist_start:active_start]
+
+        hist_row = next(
+            line for line in hist_section.splitlines() if "Resumed Counts" in line
+        )
+        hist_cols = [c.strip() for c in hist_row.split("│")]
+        # Columns: (border) | Name | Model | Premium | Model Calls | User Msgs | Output Tokens | Status | (border)
+        assert hist_cols[4] == "300", (
+            f"Historical Model Calls: expected '300', got '{hist_cols[4]}'"
+        )
+        assert hist_cols[5] == "60", (
+            f"Historical User Msgs: expected '60', got '{hist_cols[5]}'"
+        )
+
+        # --- Active section ---
+        active_section = clean[active_start:]
+        active_row = next(
+            line for line in active_section.splitlines() if "Resumed Counts" in line
+        )
+        active_cols = [c.strip() for c in active_row.split("│")]
+        # Active Sessions columns: Name | Model | Model Calls | User Msgs | Output Tokens | Running Time
+        assert active_cols[3] == "200", (
+            f"Active Model Calls: expected '200', got '{active_cols[3]}'"
+        )
+        assert active_cols[4] == "40", (
+            f"Active User Msgs: expected '40', got '{active_cols[4]}'"
+        )
