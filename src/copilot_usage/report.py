@@ -103,18 +103,29 @@ def _compute_session_totals(
     sessions: list[SessionSummary],
     *,
     token_fn: Callable[[SessionSummary], int] = total_output_tokens,
+    shutdown_only: bool = False,
 ) -> _SessionTotals:
     """Compute aggregated totals across *sessions* in a single pass.
 
     *token_fn* controls how output tokens are counted per session.  Defaults
     to :func:`total_output_tokens` (includes active tokens for resumed
     sessions).  Pass :func:`shutdown_output_tokens` for shutdown-only views.
+
+    When *shutdown_only* is ``True``, model-call and user-message counts are
+    reduced to shutdown-period values for resumed sessions that have both
+    shutdown metrics and active-period stats.
     """
     premium = model_calls = user_messages = api_duration_ms = output_tokens = 0
     for s in sessions:
         premium += s.total_premium_requests
-        model_calls += s.model_calls
-        user_messages += s.user_messages
+
+        if shutdown_only and s.has_shutdown_metrics and has_active_period_stats(s):
+            model_calls += s.model_calls - s.active_model_calls
+            user_messages += s.user_messages - s.active_user_messages
+        else:
+            model_calls += s.model_calls
+            user_messages += s.user_messages
+
         api_duration_ms += s.total_api_duration_ms
         output_tokens += token_fn(s)
     return _SessionTotals(
@@ -496,8 +507,10 @@ def _render_historical_section_from(
         console.print("[dim]No historical shutdown data.[/dim]")
         return
 
-    # Totals panel — shutdown-only tokens for the historical view
-    totals = _compute_session_totals(historical, token_fn=shutdown_output_tokens)
+    # Totals panel — shutdown-only tokens and counts for the historical view
+    totals = _compute_session_totals(
+        historical, token_fn=shutdown_output_tokens, shutdown_only=True
+    )
 
     lines = [
         f"[green]{totals.premium}[/green] premium requests   "

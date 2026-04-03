@@ -5822,9 +5822,21 @@ class TestHistoricalSessionTableShutdownOnlyCounts:
         output = _capture_full_summary([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
 
+        # --- Historical Totals panel (must use shutdown-only counts) ---
+        assert "Historical Totals" in clean
+        totals_start = clean.index("Historical Totals")
+        sessions_table_start = clean.index("Sessions (Shutdown Data)")
+        totals_panel = clean[totals_start:sessions_table_start]
+        assert "300 model calls" in totals_panel, (
+            f"Historical Totals panel should show '300 model calls', got: {totals_panel}"
+        )
+        assert "60 user messages" in totals_panel, (
+            f"Historical Totals panel should show '60 user messages', got: {totals_panel}"
+        )
+
         # --- Historical section ---
         assert "Sessions (Shutdown Data)" in clean
-        hist_start = clean.index("Sessions (Shutdown Data)")
+        hist_start = sessions_table_start
         # Active Sessions heading comes after the historical table.
         active_start = clean.index("Active Sessions")
         hist_section = clean[hist_start:active_start]
