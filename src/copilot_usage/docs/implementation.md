@@ -70,7 +70,7 @@ Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_s
 | `total_premium_requests` | `int`                       | Sum of `totalPremiumRequests` across all shutdown events                             |
 | `total_api_duration_ms`  | `int`                       | Sum of `totalApiDurationMs` across all shutdown events                               |
 | `model_metrics`          | `dict[str, ModelMetrics]`   | Merged from all shutdown events (same model → sum values)                           |
-| `code_changes`           | `CodeChanges \| None`        | From the last shutdown event that has it                                             |
+| `code_changes`           | `CodeChanges \| None`        | Aggregated from all shutdown cycles: `linesAdded`/`linesRemoved` are summed, `filesModified` is de-duplicated across all cycles. `None` when no shutdown carried `codeChanges`. |
 | `model_calls`            | `int`                       | Count of `assistant.turn_start` events across entire session                        |
 | `user_messages`          | `int`                       | Count of `user.message` events across entire session                                |
 | `is_active`              | `bool`                      | `True` if no shutdowns, or if events exist after last shutdown                      |
