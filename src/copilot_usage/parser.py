@@ -85,7 +85,7 @@ class _CachedEvents:
 # Avoids re-parsing the raw event list on every detail-view render.
 # Uses OrderedDict for LRU eviction: most-recently-used entries are at
 # the back, least-recently-used at the front.
-_MAX_CACHED_EVENTS: Final[int] = 8
+_MAX_CACHED_EVENTS: Final[int] = 32
 _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 
 
