@@ -2645,7 +2645,7 @@ class TestBuildSessionSummaryDebugLogging:
             for msg in log_messages
         )
 
-    def test_tool_execution_complete_validation_error_logs_debug(
+    def test_tool_execution_complete_bad_data_silently_skipped(
         self, tmp_path: Path
     ) -> None:
         """Bad tool.execution_complete data → silently skipped (no Pydantic validation).
