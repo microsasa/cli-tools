@@ -95,9 +95,15 @@ def _insert_session_entry(
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CachedEvents:
-    """Cache entry pairing a file identity with parsed events."""
+    """Cache entry pairing a file identity with parsed events.
+
+    ``end_offset`` is the byte position after the last successfully
+    parsed event.  When the file grows (append-only), only bytes after
+    ``end_offset`` need to be parsed — avoiding a full re-read.
+    """
 
     file_id: tuple[int, int] | None
+    end_offset: int
     events: tuple[SessionEvent, ...]
 
 
@@ -112,7 +118,8 @@ _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 def _insert_events_entry(
     events_path: Path,
     file_id: tuple[int, int] | None,
-    events: list[SessionEvent],
+    events: list[SessionEvent] | tuple[SessionEvent, ...],
+    end_offset: int = 0,
 ) -> None:
     """Insert parsed events into ``_EVENTS_CACHE`` with LRU eviction.
 
@@ -120,7 +127,7 @@ def _insert_events_entry(
     old entry is removed first.  Otherwise, when the cache is full the
     least-recently-used entry (front of the ``OrderedDict``) is evicted.
 
-    The *events* list is converted to a ``tuple`` before storage so
+    The *events* sequence is converted to a ``tuple`` before storage so
     that callers cannot accidentally add, remove, or reorder entries
     in the cache.  This is **container-level** immutability only —
     individual ``SessionEvent`` objects remain mutable and must not
@@ -130,7 +137,57 @@ def _insert_events_entry(
         del _EVENTS_CACHE[events_path]
     elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
         _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
-    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=tuple(events))
+    stored = events if isinstance(events, tuple) else tuple(events)
+    _EVENTS_CACHE[events_path] = _CachedEvents(
+        file_id=file_id, end_offset=end_offset, events=stored
+    )
+
+
+def _parse_events_from_offset(events_path: Path, offset: int) -> list[SessionEvent]:
+    """Parse events from *events_path* starting at byte *offset*.
+
+    Only lines beginning at or after *offset* are JSON-decoded and
+    Pydantic-validated.  Malformed or invalid lines are skipped with a
+    warning, matching the behaviour of :func:`parse_events`.
+
+    Raises:
+        OSError: If the file cannot be opened or read.
+    """
+    new_events: list[SessionEvent] = []
+    try:
+        with events_path.open("rb") as fh:
+            fh.seek(offset)
+            for raw_line in fh:
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                try:
+                    raw = json.loads(stripped)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "{}:offset {} — malformed JSON, skipping",
+                        events_path,
+                        offset,
+                    )
+                    continue
+                try:
+                    new_events.append(SessionEvent.model_validate(raw))
+                except ValidationError as exc:
+                    logger.warning(
+                        "{}:offset {} — validation error ({}), skipping",
+                        events_path,
+                        offset,
+                        exc.error_count(),
+                    )
+    except UnicodeDecodeError as exc:
+        logger.warning(
+            "{} — UTF-8 decode error at offset {}; returning {} new events (partial): {}",
+            events_path,
+            offset,
+            len(new_events),
+            exc,
+        )
+    return new_events
 
 
 def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
@@ -141,6 +198,12 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     lookup.  The cache is bounded to :data:`_MAX_CACHED_EVENTS`
     entries; the **least-recently used** entry is evicted when the
     limit is reached.
+
+    When the file has grown since the last read (append-only pattern),
+    only the newly appended bytes are parsed via
+    :func:`_parse_events_from_offset` and merged with the cached tuple.
+    A full reparse is performed when the file has shrunk (truncation or
+    replacement) or on cold start.
 
     The returned ``tuple`` prevents callers from adding, removing, or
     reordering cached entries (container-level immutability).  Individual
@@ -154,11 +217,23 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     """
     file_id = _safe_file_identity(events_path)
     cached = _EVENTS_CACHE.get(events_path)
-    if cached is not None and cached.file_id == file_id:
-        _EVENTS_CACHE.move_to_end(events_path)
-        return cached.events
+
+    if cached is not None and file_id is not None:
+        new_size = file_id[1]
+        if cached.file_id == file_id:
+            _EVENTS_CACHE.move_to_end(events_path)
+            return cached.events
+        # Append-only growth: new size ≥ cached end_offset → incremental
+        if new_size >= cached.end_offset and cached.end_offset > 0:
+            new_events = _parse_events_from_offset(events_path, cached.end_offset)
+            merged = cached.events + tuple(new_events)
+            _insert_events_entry(events_path, file_id, merged, new_size)
+            return _EVENTS_CACHE[events_path].events
+
+    # Full reparse: cold start, truncation, or unknown file
     events = parse_events(events_path)
-    _insert_events_entry(events_path, file_id, events)
+    end_offset = file_id[1] if file_id is not None else 0
+    _insert_events_entry(events_path, file_id, events, end_offset)
     return _EVENTS_CACHE[events_path].events
 
 
@@ -862,7 +937,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Populate _EVENTS_CACHE in oldest→newest order so that the newest
     # sessions sit at the back (MRU) and eviction drops the oldest.
     for ep, fid, evts in reversed(deferred_events):
-        _insert_events_entry(ep, fid, evts)
+        end_off = fid[1] if fid is not None else 0
+        _insert_events_entry(ep, fid, evts, end_off)
 
     # Prune stale cache entries for sessions no longer on disk.
     discovered_paths = {p for p, _, _ in discovered}

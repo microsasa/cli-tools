@@ -5665,6 +5665,145 @@ class TestGetCachedEvents:
 
 
 # ---------------------------------------------------------------------------
+# Issue #732 — incremental append-only parsing in get_cached_events
+# ---------------------------------------------------------------------------
+
+
+class TestIncrementalEventsParsing:
+    """Verify that get_cached_events incrementally parses only newly
+    appended events instead of re-reading the entire file.
+    """
+
+    def test_incremental_parse_only_validates_new_events(self, tmp_path: Path) -> None:
+        """Appending 10 events to a 5 000-event file triggers Pydantic
+        validation only for the new events, not the full file.
+
+        Patches ``SessionEvent.model_validate`` with a counter to confirm
+        the incremental path was taken.
+        """
+        p = tmp_path / "s1" / "events.jsonl"
+        initial_count = 5_000
+        _write_large_events_file(p, initial_count)
+
+        # Prime the cache with a cold read
+        first = get_cached_events(p)
+        assert len(first) == initial_count + 1  # 1 start + 5000 user messages
+
+        # Append 10 new events
+        append_count = 10
+        with p.open("a", encoding="utf-8") as fh:
+            for i in range(initial_count, initial_count + append_count):
+                fh.write(_make_user_event(i) + "\n")
+
+        # Patch model_validate to count calls during incremental parse
+        original_validate = SessionEvent.model_validate
+        validate_calls: list[int] = [0]
+
+        def counting_validate(
+            obj: object,
+            *args: object,
+            **kwargs: object,
+        ) -> SessionEvent:
+            validate_calls[0] += 1
+            return original_validate(obj, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(
+            SessionEvent, "model_validate", side_effect=counting_validate
+        ):
+            second = get_cached_events(p)
+
+        # Only the 10 new events should have been validated
+        assert validate_calls[0] == append_count
+        # Total should include all events
+        assert len(second) == initial_count + 1 + append_count
+
+    def test_incremental_parse_returns_all_events(self, tmp_path: Path) -> None:
+        """After incremental parse, the returned tuple contains every event."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        first = get_cached_events(p)
+        assert len(first) == 2
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_ASSISTANT_MSG + "\n")
+
+        second = get_cached_events(p)
+        assert len(second) == 3
+        # Original events are preserved
+        assert second[0].type == "session.start"
+        assert second[1].type == "user.message"
+        assert second[2].type == "assistant.message"
+
+    def test_truncated_file_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """If the file shrinks, the cache falls back to a full reparse."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        first = get_cached_events(p)
+        assert len(first) == 3
+
+        # Overwrite with a shorter file (simulates truncation)
+        _write_events(p, _START_EVENT)
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            second = get_cached_events(p)
+            assert spy.call_count == 1  # full reparse
+        assert len(second) == 1
+
+    def test_incremental_does_not_call_parse_events(self, tmp_path: Path) -> None:
+        """The incremental path bypasses parse_events entirely."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_large_events_file(p, 100)
+
+        get_cached_events(p)  # prime
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_make_user_event(999) + "\n")
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            result = get_cached_events(p)
+            assert spy.call_count == 0
+        assert len(result) == 102  # 1 start + 100 + 1 appended
+
+    def test_cache_entry_stores_end_offset(self, tmp_path: Path) -> None:
+        """After a call, _EVENTS_CACHE entry has end_offset == file size."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        expected_size = p.stat().st_size
+
+        get_cached_events(p)
+
+        entry = _EVENTS_CACHE[p]
+        assert entry.end_offset == expected_size
+
+    def test_incremental_updates_end_offset(self, tmp_path: Path) -> None:
+        """After incremental parse, end_offset reflects the new file size."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        get_cached_events(p)
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_ASSISTANT_MSG + "\n")
+        new_size = p.stat().st_size
+
+        get_cached_events(p)
+
+        entry = _EVENTS_CACHE[p]
+        assert entry.end_offset == new_size
+
+    def test_cold_start_full_reparse(self, tmp_path: Path) -> None:
+        """A cold cache (no prior entry) always does a full reparse."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            result = get_cached_events(p)
+            assert spy.call_count == 1
+        assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
 # Issue #668 — get_all_sessions populates _EVENTS_CACHE
 # ---------------------------------------------------------------------------
 
