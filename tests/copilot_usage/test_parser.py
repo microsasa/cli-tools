@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
+import copilot_usage.parser as _parser_module
 from copilot_usage.models import (
     AssistantMessageData,
     EventType,
@@ -64,6 +65,7 @@ def _reset_all_caches() -> None:
     _SESSION_CACHE.clear()
     _EVENTS_CACHE.clear()
     _read_config_model.cache_clear()
+    _parser_module._config_file_id = None
 
 
 @pytest.fixture(autouse=True)
@@ -4383,6 +4385,73 @@ class TestReadConfigModelCaching:
         summary = build_session_summary(events, events_path=events_path)
         assert summary.model is None
 
+    def test_unchanged_config_skips_cache_clear(self, tmp_path: Path) -> None:
+        """get_all_sessions called twice with unchanged config reads it once.
+
+        When the config file has not changed between invocations, the
+        ``_read_config_model`` lru_cache is not cleared and the second
+        call is served entirely from cache — ``Path.read_text`` is
+        called at most once for the config file.
+        """
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        session_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s1",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {},
+                },
+                "id": "ev-s1",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "hello",
+                    "transformedContent": "hello",
+                    "attachments": [],
+                    "interactionId": "int-1",
+                },
+                "id": "ev-u-s1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        _write_events(
+            tmp_path / "sessions" / "s1" / "events.jsonl",
+            session_start,
+            user_msg,
+        )
+
+        read_count = 0
+        original_read = Path.read_text
+
+        def counting_read(self: Path, *a: object, **kw: object) -> str:
+            nonlocal read_count
+            if self == config:
+                read_count += 1
+            return original_read(self, *a, **kw)  # type: ignore[arg-type]
+
+        with (
+            patch.object(Path, "read_text", new=counting_read),
+            patch("copilot_usage.parser._CONFIG_PATH", config),
+        ):
+            # First call — should read config once (cache miss)
+            summaries = get_all_sessions(tmp_path / "sessions")
+            assert summaries[0].model == "gpt-5.1"
+            assert read_count == 1
+
+            # Second call — config file unchanged, cache NOT cleared
+            summaries = get_all_sessions(tmp_path / "sessions")
+            assert summaries[0].model == "gpt-5.1"
+            # read_count must still be 1: no extra read on the second call
+            assert read_count == 1
+
 
 # ---------------------------------------------------------------------------
 # Issue #418 — Gap 1: malformed session.start (ValidationError)
@@ -5100,9 +5169,10 @@ class TestSessionCacheMtime:
             "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # _safe_file_identity called once by _discover_with_identity for
-            # events.jsonl, and once for plan.md when storing the cache entry.
-            assert spy.call_count == 2
+            # _safe_file_identity called once for _CONFIG_PATH, once by
+            # _discover_with_identity for events.jsonl, and once for plan.md
+            # when storing the cache entry.
+            assert spy.call_count == 3
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
@@ -5256,9 +5326,9 @@ class TestSessionCacheMtime:
         ) as spy:
             results = get_all_sessions(tmp_path)
             assert len(results) == n
-            # 2 per session from _discover_with_identity (events + plan),
-            # no additional stat calls in the main loop.
-            assert spy.call_count == 2 * n
+            # 1 for _CONFIG_PATH + 2 per session from _discover_with_identity
+            # (events + plan), no additional stat calls in the main loop.
+            assert spy.call_count == 1 + 2 * n
 
     def test_stale_cache_entries_evicted_on_session_delete(
         self, tmp_path: Path
