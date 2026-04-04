@@ -614,7 +614,7 @@ class TestPureActiveSessionActivityE2E:
         """Pure active session appears in the live view."""
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        clean = _strip_ansi(result.output)
         lines = clean.splitlines()
         active_line = next(line for line in lines if "pure-act" in line)
         # Live table columns: Session ID | Name | Model | Running | Messages | Output Tokens | CWD
@@ -698,7 +698,7 @@ class TestCostDateFilterE2E:
             line for line in result.output.splitlines() if "Grand Total" in line
         )
         columns = [c.strip() for c in grand_total_line.split("│")]
-        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        premium_cost_col = _strip_ansi(columns[4])
         assert premium_cost_col == "288"
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
@@ -718,7 +718,7 @@ class TestCostDateFilterE2E:
             line for line in result.output.splitlines() if "Grand Total" in line
         )
         columns = [c.strip() for c in grand_total_line.split("│")]
-        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        premium_cost_col = _strip_ansi(columns[4])
         assert premium_cost_col == "537"
 
     def test_cost_inverted_date_range_shows_error(self) -> None:
@@ -736,7 +736,7 @@ class TestCostDateFilterE2E:
             ],
         )
         assert result.exit_code != 0
-        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        output = _strip_ansi(result.output)
         assert "--since" in output
         assert "after" in output
 
