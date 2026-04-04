@@ -401,6 +401,21 @@ class _ResumeInfo:
 # Summary builder — helpers
 # ---------------------------------------------------------------------------
 
+# O(1) pre-filter for _first_pass: skip events whose type is not checked.
+# Some of these types are only conditionally acted upon (e.g.
+# TOOL_EXECUTION_COMPLETE is used only until tool_model is set), but they
+# all appear in the ``if/elif`` chain inside _first_pass.
+_FIRST_PASS_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        EventType.SESSION_START,
+        EventType.SESSION_SHUTDOWN,
+        EventType.USER_MESSAGE,
+        EventType.ASSISTANT_TURN_START,
+        EventType.ASSISTANT_MESSAGE,
+        EventType.TOOL_EXECUTION_COMPLETE,
+    }
+)
+
 
 def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     """Iterate *events* once, extracting identity, shutdown data, and counters."""
@@ -417,6 +432,8 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     tool_model: str | None = None
 
     for idx, ev in enumerate(events):
+        if ev.type not in _FIRST_PASS_EVENT_TYPES:
+            continue
         if ev.type == EventType.SESSION_START:
             try:
                 data = ev.as_session_start()

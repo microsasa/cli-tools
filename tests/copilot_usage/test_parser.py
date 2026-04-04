@@ -33,6 +33,7 @@ from copilot_usage.models import (
 )
 from copilot_usage.parser import (
     _EVENTS_CACHE,
+    _FIRST_PASS_EVENT_TYPES,
     _MAX_CACHED_EVENTS,
     _MAX_CACHED_SESSIONS,
     _SESSION_CACHE,
@@ -6347,3 +6348,173 @@ class TestSessionCacheLRUEviction:
         assert paths[1] not in _SESSION_CACHE
         assert paths[3] not in _SESSION_CACHE
         assert len(_SESSION_CACHE) == total - 2
+
+
+# ---------------------------------------------------------------------------
+# Issue #723 — _first_pass frozenset pre-filter performance
+# ---------------------------------------------------------------------------
+
+
+class TestFirstPassPreFilter:
+    """Verify the _FIRST_PASS_EVENT_TYPES frozenset guard works correctly."""
+
+    def test_frozenset_contains_all_handled_types(self) -> None:
+        """_FIRST_PASS_EVENT_TYPES covers exactly the six handled event types."""
+        expected = frozenset(
+            {
+                EventType.SESSION_START,
+                EventType.SESSION_SHUTDOWN,
+                EventType.USER_MESSAGE,
+                EventType.ASSISTANT_TURN_START,
+                EventType.ASSISTANT_MESSAGE,
+                EventType.TOOL_EXECUTION_COMPLETE,
+            }
+        )
+        assert expected == _FIRST_PASS_EVENT_TYPES
+
+    def test_unhandled_types_not_in_frozenset(self) -> None:
+        """Unhandled event types are not in _FIRST_PASS_EVENT_TYPES."""
+        unhandled = [
+            EventType.TOOL_EXECUTION_START,
+            EventType.ASSISTANT_TURN_END,
+            EventType.SESSION_RESUME,
+            EventType.SESSION_ERROR,
+            EventType.SESSION_PLAN_CHANGED,
+            EventType.SESSION_WORKSPACE_FILE_CHANGED,
+            EventType.ABORT,
+        ]
+        for et in unhandled:
+            assert et not in _FIRST_PASS_EVENT_TYPES
+
+    def test_first_pass_skips_unhandled_events(self, tmp_path: Path) -> None:
+        """_first_pass produces correct results when unhandled events are mixed in."""
+        ts = "2026-03-07T10:00:00.000Z"
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "perf-test",
+                    "startTime": ts,
+                    "context": {"cwd": "/test"},
+                },
+                "id": "ev-start",
+                "timestamp": ts,
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {},
+                "id": "ev-user",
+                "timestamp": ts,
+            }
+        )
+        # Unhandled events that should be skipped
+        unhandled_events = [
+            json.dumps(
+                {
+                    "type": "tool.execution_start",
+                    "data": {},
+                    "id": f"ev-unhandled-{i}",
+                    "timestamp": ts,
+                }
+            )
+            for i in range(20)
+        ]
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, start, *unhandled_events, user_msg)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.session_id == "perf-test"
+        assert fp.user_message_count == 1
+
+    def test_first_pass_10k_events_prefilter_consulted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The frozenset pre-filter is consulted exactly once per event.
+
+        Instead of a wall-clock ``timeit`` assertion (which is flaky on
+        shared/loaded CI runners), we monkeypatch the module-level frozenset
+        with a counting wrapper and verify it is checked once per event.
+        """
+        ts = "2026-03-07T10:00:00.000Z"
+        start_line = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "bench",
+                    "startTime": ts,
+                    "context": {"cwd": "/bench"},
+                },
+                "id": "ev-start",
+                "timestamp": ts,
+            }
+        )
+        # Build a realistic mix: ~40% handled, ~60% unhandled
+        handled_types: list[tuple[str, dict[str, str | int]]] = [
+            ("user.message", {}),
+            ("assistant.turn_start", {}),
+            ("assistant.message", {"outputTokens": 10}),
+            ("tool.execution_complete", {"model": "gpt-4"}),
+        ]
+        unhandled_types = [
+            "tool.execution_start",
+            "assistant.turn_end",
+            "session.resume",
+            "session.error",
+            "session.plan_changed",
+            "session.workspace_file_changed",
+        ]
+        lines = [start_line]
+        for i in range(9999):
+            if i % 10 < 4:
+                etype, data = handled_types[i % len(handled_types)]
+                lines.append(
+                    json.dumps(
+                        {
+                            "type": etype,
+                            "data": data,
+                            "id": f"ev-{i}",
+                            "timestamp": ts,
+                        }
+                    )
+                )
+            else:
+                etype_str = unhandled_types[i % len(unhandled_types)]
+                lines.append(
+                    json.dumps(
+                        {
+                            "type": etype_str,
+                            "data": {},
+                            "id": f"ev-{i}",
+                            "timestamp": ts,
+                        }
+                    )
+                )
+
+        p = tmp_path / "bench" / "events.jsonl"
+        _write_events(p, *lines)
+        events = parse_events(p)
+        assert len(events) == 10000
+
+        check_count = 0
+        original = _FIRST_PASS_EVENT_TYPES
+
+        class _CountingFrozenset(frozenset):  # type: ignore[type-arg]
+            def __contains__(self, item: object) -> bool:
+                nonlocal check_count
+                check_count += 1
+                return item in original
+
+        monkeypatch.setattr(
+            "copilot_usage.parser._FIRST_PASS_EVENT_TYPES",
+            _CountingFrozenset(original),
+        )
+
+        fp = _first_pass(events)
+
+        # Guard consulted exactly once per event
+        assert check_count == 10_000, (
+            f"Expected 10 000 frozenset membership checks, got {check_count}"
+        )
+        assert fp.session_id == "bench"
