@@ -942,11 +942,28 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
                 cache_hit_paths.append(events_path)
             summaries.append(summary)
             continue
+        # Reuse _EVENTS_CACHE for incremental append-only parsing so
+        # that the session-summary rebuild only validates newly appended
+        # events instead of re-parsing the entire file from offset 0.
+        events_cached = _EVENTS_CACHE.get(events_path)
+        start_offset = 0
+        prior_events: tuple[SessionEvent, ...] = ()
+        if (
+            events_cached is not None
+            and file_id is not None
+            and file_id[1] >= events_cached.end_offset
+            and events_cached.end_offset > 0
+        ):
+            start_offset = events_cached.end_offset
+            prior_events = events_cached.events
         try:
-            events, safe_end = _parse_events_from_offset(events_path, 0)
+            new_events, safe_end = _parse_events_from_offset(events_path, start_offset)
         except OSError as exc:
             logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
+        events: list[SessionEvent] = (
+            list(prior_events) + new_events if prior_events else new_events
+        )
         if not events:
             continue
         if len(deferred_events) < _MAX_CACHED_EVENTS:

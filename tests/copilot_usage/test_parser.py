@@ -5057,7 +5057,8 @@ class TestSessionCacheMtime:
         stat = p1.stat()
         os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
 
-        # Second call — only the modified file should be re-parsed.
+        # Second call — only the modified file should be re-parsed,
+        # using the incremental path (non-zero offset from _EVENTS_CACHE).
         with patch(
             "copilot_usage.parser._parse_events_from_offset",
             wraps=_parse_events_from_offset,
@@ -5065,7 +5066,10 @@ class TestSessionCacheMtime:
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 2
             assert spy.call_count == 1
-            spy.assert_called_once_with(p1, 0)
+            call_args = spy.call_args
+            assert call_args is not None
+            assert call_args[0][0] == p1  # correct path
+            assert call_args[0][1] > 0  # incremental, not full reparse
 
     def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
         """Cached entries produce the same summaries as a fresh parse."""
@@ -5406,7 +5410,10 @@ class TestActiveSessionCaching:
             get_all_sessions(tmp_path / "sessions")
 
             # Second call — same config, same file → cache hit
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result = get_all_sessions(tmp_path / "sessions")
                 assert len(result) == 1
                 assert result[0].model == "gpt-5.1"
@@ -5481,7 +5488,10 @@ class TestActiveSessionCaching:
             # Change config — should NOT trigger re-parse
             config.write_text('{"model": "gpt-5.2"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
