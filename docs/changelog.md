@@ -4,6 +4,80 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## hotfix: remove keepalive-interval — gateway rejects it — 2026-04-04
+
+**Problem**: PR #709 added `sandbox.mcp.keepalive-interval: 120` to all 8 agent workflow frontmatters. MCP Gateway v0.2.12 (shipped with gh-aw v0.66.1) rejects this field during schema validation — `additionalProperties 'keepaliveInterval' not allowed`. Every agent workflow broken at startup.
+
+**Root cause**: gh-aw v0.65.7 PR #24220 added keepalive-interval as a compiler feature, but the gateway binary in v0.66.1 doesn't have the corresponding schema update.
+
+**Fix (PR #717)**: Removed `sandbox.mcp.keepalive-interval` from all 8 frontmatters and recompiled. The v0.66.1 upgrade itself is fine — only the keepalive config is the problem. The 5-minute MCP timeout (#707) remains open. Fixes #718.
+
+---
+
+## chore: upgrade gh-aw from v0.64.3 to v0.66.1 — 2026-04-04
+
+**Changes (PR #709)**: Upgraded gh-aw CLI and recompiled all workflow lock files. Key improvements in this release range:
+- MCP Gateway v0.2.12 with keepalive support (not yet functional — see hotfix above)
+- Safe outputs MCP server receives `GH_AW_SAFE_OUTPUTS` env var (was silently dropped in v0.65.6)
+- WASM guard startup time reduced
+- Effective token tracking in workflow footers
+
+Fixes #707 (partially — keepalive blocked by schema). Closes #708.
+
+---
+
+## docs: add vscode command to architecture, implementation, and changelog — 2026-04-04
+
+**Changes (PR #682)**: Updated `architecture.md` (vscode modules in components table), `implementation.md` (VS Code log discovery, format, aggregation), and `src/copilot_usage/docs/changelog.md` (entry for PR #319). README already updated by @AshleyF in PR #319. Closes #468.
+
+---
+
+## fix: format_duration renders sub-second values as milliseconds — 2026-04-02
+
+**Problem**: `format_timedelta` called `int(td.total_seconds())`, throwing away sub-second precision. The vscode command showed `0s` for API calls under 1 second, and durations like `6m 29.114s` lost the `.114`.
+
+**Fix (PR #665)**: Durations now always include milliseconds when present — `481ms`, `1s 500ms`, `6m 29s 114ms`. Zero shows as `0ms`. 15 new tests. Closes #467.
+
+---
+
+## chore: upgrade gh-aw from v0.62.5 to v0.64.3 — 2026-03-30
+
+**Changes (PR #525)**: Upgraded gh-aw CLI, updated `copilot-setup-steps.yml` SHA and version pin, recompiled all lock files. Supersedes dependabot PRs #515 and #516. Dependabot PRs should not be merged directly for gh-aw — use `gh aw compile` to regenerate lock files.
+
+---
+
+## pipeline: add feature planner agent workflow — 2026-04-01
+
+**Changes (PR #600)**: New scheduled workflow (every 3 hours) that reads `.github/PRODUCT_VISION.md`, compares against current codebase, and files one implementable feature issue. Organic progression — no step tracking, code is ground truth. One feature in flight at a time (`auto-feature` label gate). Vision doc is empty until filled by the user. Closes #599.
+
+---
+
+## fix: agents read copilot-instructions.md + add prioritization — 2026-03-29
+
+**Problem (#486)**: All 7 agent workflows hardcoded `.github/CODING_GUIDELINES.md` directly instead of reading `.github/copilot-instructions.md` (the central instruction hub). Adding new instruction files would require editing every workflow.
+
+**Fix (PR #488)**: All agents now read `copilot-instructions.md` which points to guidelines. Also added prioritization instructions to 3 scheduled workflows (#487) — code-health prefers bugs over cosmetic, test-analysis prefers core logic gaps, perf-analysis prefers hot paths.
+
+---
+
+## pipeline: add performance analysis agent workflow — 2026-03-29
+
+**Changes (PR #485)**: New scheduled workflow (every 6 hours) for performance analysis. Finds algorithmic inefficiency, redundant I/O, wasteful allocations. Added `perf` label. Code-health updated to exclude performance problems (belong to perf-analysis). Closes #484.
+
+---
+
+## fix: exclude e2e from CI coverage + remove dead ValueError — 2026-03-29
+
+**Changes (PR #483)**: Applied patch from agent's fallback issue #477. CI now runs unit tests with coverage separately from e2e tests (matching Makefile). Removed unreachable `ValueError` guard in `_render_summary_header`. Closes #472, #477.
+
+---
+
+## docs: add coding guidelines and copilot instructions — 2026-03-29
+
+**Changes (PR #482)**: Created `.github/CODING_GUIDELINES.md` (type safety, data modelling, error handling, testing, security, formatting) and `.github/copilot-instructions.md` (pointer to guidelines). Copilot code review reads instructions automatically and follows the link — verified empirically on PRs #478 and #479. All 6 agent workflows updated to reference guidelines. Removed `TYPE_CHECKING` from `logging_config.py`. Closes #110.
+
+---
+
 ## feat: enforce 90% coverage on new/changed lines in PRs — 2026-03-21
 
 **Problem**: CI only checked overall coverage (≥80%). A PR could add new code with zero tests and still pass as long as the average held.

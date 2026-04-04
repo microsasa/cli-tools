@@ -27,14 +27,27 @@ gh aw fix --write             # Auto-fix deprecated fields
 Our autonomous pipeline:
 
 ```
-Audit/Health Agent → creates issue (labeled code-health or test-audit)
-  → (pending: pipeline-orchestrator.yml #135 will dispatch Implementer)
-  → Implementer creates PR (lint-clean, non-draft, auto-merge, aw label)
-    → CI runs + Copilot auto-reviews (parallel, via ruleset)
-      → Copilot has comments? → Review Responder addresses them (pushes fixes, resolves threads via GraphQL)
-      → Copilot reviews (COMMENTED state) → Quality Gate evaluates quality + blast radius
-        → LOW/MEDIUM impact → approves + adds quality-gate-approved label → auto-merge fires
-        → HIGH impact → flags for human review (auto-merge stays blocked)
+Scheduled Analysis Agents (code-health, test-analysis, perf-analysis)
+  → create issues (labeled aw + domain label)
+
+Feature Planner (every 3 hours)
+  → reads PRODUCT_VISION.md + codebase
+  → files one implementable feature issue (aw + auto-feature)
+
+Pipeline Orchestrator (bash, every 30 min + event-driven)
+  → finds oldest eligible aw issue → dispatches Implementer
+  → monitors aw PRs: CI status, review threads, Copilot review
+  → dispatches CI Fixer / Review Responder / Quality Gate as needed
+  → rebases PRs behind main
+  → labels stuck PRs for human intervention
+
+Implementer → creates PR (lint-clean, non-draft, auto-merge, aw label)
+  → CI runs + Copilot auto-reviews (parallel)
+    → CI fails? → Orchestrator dispatches CI Fixer
+    → Copilot has comments? → Orchestrator dispatches Review Responder
+    → CI green + threads resolved + Copilot reviewed → Orchestrator dispatches Quality Gate
+      → LOW/MEDIUM impact → approves → auto-merge fires
+      → HIGH impact → flags for human review
 ```
 
 </details>
@@ -520,6 +533,30 @@ Copilot code review does not reliably auto-trigger on every push — observed on
 ### 34. Check for in-flight workflows before dispatching
 Before dispatching any agent workflow (implementer, quality gate, responder), check if one is already running. Use `gh run list --workflow=NAME --json databaseId,status | jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length'`. Without this check, multiple orchestrator runs from rapid-fire `workflow_run` triggers will dispatch duplicates, wasting compute and inference tokens. This bug occurred for both the implementer (#164) and quality gate (#213).
 
+### 35. MCP gateway SSE connections die after 5 minutes of idle (#707)
+The MCP gateway's HTTP transport drops connections after exactly 5 minutes of no MCP traffic. Confirmed via gateway logs showing `duration=5m0.8s (empty body)` on **every single run**. Successful runs happen to call safe-output tools before the 5-minute mark. Runs where the agent spends >5 minutes on local work (reading, editing, running tests) before calling safe-outputs fail silently — no PR created. Gateway config says `idleTimeout=30m0s` but the timeout is in the SSE transport layer, not the gateway pool. gh-aw v0.65.7 added a `keepalive-interval` frontmatter option to send periodic pings, but as of v0.66.1 the gateway binary (v0.2.12) rejects the field during schema validation. No fix available yet — affects ~15-25% of implementer and responder runs.
+
+### 36. Copilot code review reads copilot-instructions.md from the PR branch, not main
+Empirically verified on PRs #478 and #479. The instructions file existed only in the PR branch — Copilot flagged violations citing the guidelines file by name. GitHub docs say "Copilot uses the custom instructions in the base branch" — this is wrong. PR branch is the source. This means new instructions take effect immediately on the PR that adds them.
+
+### 37. Copilot code review drip-feeds comments (~2 per review pass)
+Copilot leaves a limited number of comments per review — observed to be ~2. When the responder fixes those and pushes, Copilot re-reviews and finds more. This creates cycles where the responder is dispatched 3+ times, each time getting 2 new comments. PR #514 had 13 comments across 6 rounds — the responder exhausted its 3-attempt limit and the PR got stuck. There is no configurable setting to increase the per-review comment limit. Tracked in #520.
+
+### 38. copilot-instructions.md should be the single hub — don't hardcode guideline paths
+All agent workflows should read `.github/copilot-instructions.md` which points to guideline files. Don't hardcode `.github/CODING_GUIDELINES.md` directly in each workflow — that creates coupling where every new instruction file requires editing all agents. The instructions file is the indirection layer. Bug #486 was filed and fixed in PR #488 after this was done wrong initially.
+
+### 39. Dependabot PRs for gh-aw must not be merged directly
+Dependabot PRs that modify generated lock files should be closed. Instead: upgrade `gh aw` CLI, run `gh aw compile` to regenerate lock files, update `copilot-setup-steps.yml` SHA and version pin, and create a single PR with all changes. Use `@dependabot rebase` to rebase Dependabot branches if needed. See PR #525 for the pattern.
+
+### 40. TYPE_CHECKING is banned — use runtime imports
+`from typing import TYPE_CHECKING` and `if TYPE_CHECKING:` guards are banned per `.github/CODING_GUIDELINES.md`. Every import used in an annotation must be a real runtime import. For type-stub-only symbols like `loguru.Record`, use a runtime `import loguru` with a string annotation `"loguru.Record"` — Python never evaluates it at runtime but pyright resolves it via the stub. Do not use `from __future__ import annotations` as a workaround — it defers evaluation but breaks `typing.get_type_hints()` for stub-only types.
+
+### 41. Protected files fall back to issues — apply patches manually
+When the implementer modifies a protected file (e.g., `ci.yml`), the `protected-files: fallback-to-issue` config creates a fallback issue with the patch attached instead of a PR. The patch must be applied manually: `gh run download <RUN_ID> -n agent-artifacts`, `git am --3way <patch>`, push and create PR. See PR #483 for the pattern. The orchestrator skips issues with the `aw-protected-files` label.
+
+### 42. COPILOT_GITHUB_TOKEN is a separate secret from GH_AW_WRITE_TOKEN
+`COPILOT_GITHUB_TOKEN` authenticates the Copilot CLI agent — needed by implementer, responder, ci-fixer, quality-gate, code-health, test-analysis, perf-analysis, feature-planner. `GH_AW_WRITE_TOKEN` authenticates safe-output operations (creating PRs, posting comments). They can be the same PAT but both must have valid credentials. When `COPILOT_GITHUB_TOKEN` expires, agents fail with `Error: Authentication failed` but CI, Copilot code review, and the orchestrator keep working (they use `GITHUB_TOKEN` or `GH_AW_WRITE_TOKEN`). Check agent artifacts for the real error — don't guess "transient API outage."
+
 </details>
 
 ---
@@ -654,19 +691,23 @@ The scripts exist because Copilot CLI repeatedly broke branch protection by manu
 
 | Agent | Trigger | Purpose | Safe outputs |
 |---|---|---|---|
-| `test-analysis.md` | schedule (weekly) / manual | Find test coverage gaps | `create-issue` (max 2), `dispatch-workflow` (implementer) |
-| `code-health.md` | schedule (daily) / manual | Find refactoring/cleanup opportunities | `create-issue` (max 2), `dispatch-workflow` (implementer) |
+| `test-analysis.md` | schedule (every 6h) / manual | Find test coverage gaps | `create-issue` (max 2) |
+| `code-health.md` | schedule (every 6h) / manual | Find refactoring/cleanup opportunities (excludes perf) | `create-issue` (max 2) |
+| `perf-analysis.md` | schedule (every 6h) / manual | Find performance problems | `create-issue` (max 2) |
+| `feature-planner.md` | schedule (every 3h) / manual | File one feature step toward PRODUCT_VISION.md | `create-issue` (max 1) |
 | `issue-implementer.md` | `workflow_dispatch` (issue number) | Implement fix from issue spec, open PR | `create-pull-request` (draft: false, auto-merge), `push-to-pull-request-branch` |
 | `ci-fixer.md` | `workflow_dispatch` (PR number) | Fix CI failures on agent PRs | `push-to-pull-request-branch`, `add-labels`, `add-comment` |
 | `review-responder.md` | `workflow_dispatch` (PR number) | Address review comments | `push-to-pull-request-branch`, `reply-to-pull-request-review-comment`, `add-labels` |
-| `quality-gate.md` | `workflow_dispatch` | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
-| `pipeline-orchestrator.yml` | `workflow_run` / `pull_request_review` / `workflow_dispatch` / `schedule` | Dispatch implementer/ci-fixer/responder/quality-gate, resolve threads, rebase PRs | N/A (bash, not gh-aw) |
+| `quality-gate.md` | `workflow_dispatch` (PR number) | Evaluate quality + blast radius, approve or close | `submit-pull-request-review`, `close-pull-request`, `add-comment`, `add-labels` |
+| `pipeline-orchestrator.yml` | `workflow_run` / `pull_request_review` / `workflow_dispatch` / `schedule` | Dispatch agents, resolve threads, rebase PRs, label stuck PRs | N/A (bash, not gh-aw) |
 
 ### Loop prevention
 
-- **CI Fixer**: Checks for `ci-fix-attempted` label. CI dispatch also checks `!contains(labels, 'ci-fix-attempted')`. Max 1 retry.
-- **Review Responder**: Checks for `review-response-attempted` label. Max 1 attempt.
+- **CI Fixer**: `aw-ci-fix-attempted` label. Max 1 retry.
+- **Review Responder**: `aw-review-response-attempted` label + round tracking (`aw-review-response-1`, `-2`, `-3`). Max 3 attempts. If all fail, orchestrator adds `aw-pr-stuck:review`.
 - **All agents**: Only act on PRs with the `aw` label.
+- **Feature Planner**: Won't file if any open issue has `auto-feature` label.
+- **Scheduled analysis**: Prioritization instructions (code-health: severity, test-analysis: risk, perf-analysis: impact) when findings exceed `max: 2` cap.
 
 </details>
 
@@ -832,5 +873,37 @@ The enhanced PR rescue (#116) went through three complete rewrites:
   - `gh run list --status` is single-value — use jq for multi-status filtering.
   - Labels are hints, not source of truth — always verify actual state (review approval, run status).
   - When a bug looks non-deterministic (one agent fails, others don't), it's almost always a config difference — find it.
+
+### 2026-03-28/29 — Coding guidelines, perf pipeline, copilot instructions
+
+- **PR #482**: Created `.github/CODING_GUIDELINES.md` and `.github/copilot-instructions.md`. Verified empirically that Copilot code review reads instructions from the PR branch (not main) and follows links to guideline files. All agent workflows updated to reference guidelines. Removed `TYPE_CHECKING` from `logging_config.py`. Closes #110.
+- **PR #485**: Added performance analysis pipeline (`perf-analysis.md`). Runs every 6 hours. Created `perf` label. Updated code-health to exclude performance problems (belong to perf-analysis).
+- **PR #488**: Fixed agent indirection — all agents now read `copilot-instructions.md` (the hub) instead of hardcoding `CODING_GUIDELINES.md`. Added prioritization instructions to scheduled analysis workflows.
+- **PR #483**: Applied agent's patch for protected-files fallback (#477). CI now excludes e2e from coverage measurement.
+- **PR #525**: Upgraded gh-aw from v0.62.5 to v0.64.3. Dependabot PRs closed — proper upgrade path is `gh aw compile`.
+- **Key lessons**:
+  - `copilot-instructions.md` is the single hub for agent instructions — never hardcode paths to individual guideline files.
+  - Copilot code review reads from the PR branch, not main — contradicts GitHub docs.
+  - Copilot drip-feeds comments (~2 per review pass) — no configurable setting to change this.
+  - Protected-files fallback creates an issue with a patch — human applies it manually.
+
+### 2026-04-01 — Feature planner pipeline
+
+- **PR #600**: Added feature planner pipeline (`feature-planner.md`). Runs every 3 hours. Reads `.github/PRODUCT_VISION.md`, compares against codebase, files one implementable feature issue. Empty vision = no-op. One feature in flight at a time (`auto-feature` label gate). Organic progression — code is ground truth.
+- **COPILOT_GITHUB_TOKEN outage**: All agent workflows failed for ~12 hours due to expired/invalid token. CI, Copilot review, and orchestrator kept working (different tokens). Root cause was in the agent artifacts (`Error: Authentication failed`) — not a transient API outage.
+- **Copilot CLI version change**: CLI upgraded from 1.0.12 to 1.0.14 between runs. Agents struggled more with `uv` installation but this was a pre-existing fragility, not a new bug.
+
+### 2026-04-03/04 — MCP timeout investigation and gh-aw upgrade
+
+- **Issue #707**: Discovered MCP gateway SSE connections die after exactly 5 minutes of idle on every run. Gateway logs: `duration=5m0.8s (empty body)`. Successful runs call safe-outputs before the 5-minute mark; failures spend >5 minutes on local work. Upstream issue gh-aw#20885 was closed March 14 but fix was incomplete.
+- **PR #709**: Upgraded gh-aw to v0.66.1. Added `keepalive-interval: 120` to all workflow frontmatters.
+- **PR #717 (hotfix)**: Immediately reverted keepalive config — MCP Gateway v0.2.12 rejects `keepaliveInterval` during schema validation. All agent workflows broken at startup. The gh-aw compiler emits the field but the gateway binary doesn't support it yet. The 5-minute timeout remains unfixed (#707).
+- **Issue #114 investigation**: PRRT_ thread ID bug still present upstream. MCP server PR #2245 (2-line fix) is open but unmerged. gh-aw smoke tests still skip "Resolve Review Thread." Our pre-fetch workaround remains necessary.
+- **Key lessons**:
+  - Always download and read agent artifacts (agent-stdio.log, mcp-gateway.log) — never guess from workflow conclusion alone.
+  - The gateway config `idleTimeout=30m0s` is the pool timeout; the 5-minute kill is in the SSE transport layer.
+  - `keepalive-interval` in frontmatter is a heartbeat interval (pings every N seconds), not a timeout duration.
+  - Test workflow changes with `workflow_dispatch` before merging — the keepalive schema rejection broke every agent workflow.
+  - gh-aw releases are frequent (~2/day) — always check the latest version before upgrading.
 
 </details>
