@@ -97,9 +97,11 @@ def _insert_session_entry(
 class _CachedEvents:
     """Cache entry pairing a file identity with parsed events.
 
-    ``end_offset`` is the byte position after the last successfully
-    parsed event.  When the file grows (append-only), only bytes after
-    ``end_offset`` need to be parsed — avoiding a full re-read.
+    ``end_offset`` is the byte position after the last fully consumed
+    line. When the file grows (append-only), only bytes after
+    ``end_offset`` need to be parsed — avoiding a full re-read, even if
+    some fully consumed lines were skipped due to parse or validation
+    errors.
     """
 
     file_id: tuple[int, int] | None
@@ -248,7 +250,7 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
             _EVENTS_CACHE.move_to_end(events_path)
             return cached.events
         # Append-only growth: new size ≥ cached end_offset → incremental
-        if new_size >= cached.end_offset and cached.end_offset > 0:
+        if new_size >= cached.end_offset:
             new_events, safe_end = _parse_events_from_offset(
                 events_path, cached.end_offset
             )
