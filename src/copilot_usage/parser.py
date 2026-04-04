@@ -255,14 +255,18 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
             _insert_events_entry(events_path, file_id, merged, safe_end)
             return _EVENTS_CACHE[events_path].events
 
-    # Full reparse: cold start, truncation, or unknown file
-    events = parse_events(events_path)
-    # Re-stat after parsing to capture the file size at EOF, avoiding
-    # duplication if the file grew between the pre-parse stat and the read.
+    # Full reparse: cold start, truncation, or unknown file.
+    # Use _parse_events_from_offset(offset=0) instead of parse_events() so
+    # we get a safe_end byte boundary that reflects only bytes actually
+    # consumed.  A post-parse stat() could observe bytes appended after
+    # parsing completed, overstating the consumed boundary and causing
+    # later incremental refreshes to skip unparsed data.
+    events, safe_end = _parse_events_from_offset(events_path, 0)
+    # Re-stat so the cached file_id reflects the current mtime/size for
+    # exact-match lookups; end_offset is derived from safe_end, not size.
     post_id = _safe_file_identity(events_path)
     stored_id = post_id if post_id is not None else file_id
-    end_offset = stored_id[1] if stored_id is not None else 0
-    _insert_events_entry(events_path, stored_id, events, end_offset)
+    _insert_events_entry(events_path, stored_id, events, safe_end)
     return _EVENTS_CACHE[events_path].events
 
 
@@ -887,7 +891,9 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Only the newest _MAX_CACHED_EVENTS entries are retained for
     # _EVENTS_CACHE to avoid a temporary memory spike when many sessions
     # are cache-misses.
-    deferred_events: list[tuple[Path, tuple[int, int] | None, list[SessionEvent]]] = []
+    deferred_events: list[
+        tuple[Path, tuple[int, int] | None, list[SessionEvent], int]
+    ] = []
     deferred_sessions: list[tuple[Path, _CachedSession]] = []
     cache_hit_paths: list[Path] = []
     for events_path, file_id, plan_id in discovered:
@@ -923,14 +929,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             summaries.append(summary)
             continue
         try:
-            events = parse_events(events_path)
+            events, safe_end = _parse_events_from_offset(events_path, 0)
         except OSError as exc:
             logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
         if not events:
             continue
         if len(deferred_events) < _MAX_CACHED_EVENTS:
-            deferred_events.append((events_path, file_id, events))
+            deferred_events.append((events_path, file_id, events, safe_end))
         meta = _build_session_summary_with_meta(
             events,
             session_dir=events_path.parent,
@@ -965,13 +971,11 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
 
     # Populate _EVENTS_CACHE in oldest→newest order so that the newest
     # sessions sit at the back (MRU) and eviction drops the oldest.
-    for ep, fid, evts in reversed(deferred_events):
-        # Re-stat after parsing so end_offset reflects bytes actually
-        # consumed, not the discovery-time snapshot that may be stale.
-        post_id = _safe_file_identity(ep)
-        stored_id = post_id if post_id is not None else fid
-        end_off = stored_id[1] if stored_id is not None else 0
-        _insert_events_entry(ep, stored_id, evts, end_off)
+    for ep, fid, evts, safe_end in reversed(deferred_events):
+        # Use the safe_end byte boundary returned by the parser rather
+        # than a post-parse stat() size, which can overstate the bytes
+        # actually consumed if the file grew after parsing completed.
+        _insert_events_entry(ep, fid, evts, safe_end)
 
     # Prune stale cache entries for sessions no longer on disk.
     discovered_paths = {p for p, _, _ in discovered}

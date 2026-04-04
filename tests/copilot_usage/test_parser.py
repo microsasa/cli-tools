@@ -5024,7 +5024,10 @@ class TestSessionCacheMtime:
         self._make_session(tmp_path, "sess-b", "b")
 
         # First call — populates cache; both files must be parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 2
             assert spy.call_count == 2
@@ -5055,11 +5058,14 @@ class TestSessionCacheMtime:
         os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
 
         # Second call — only the modified file should be re-parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 2
             assert spy.call_count == 1
-            spy.assert_called_once_with(p1)
+            spy.assert_called_once_with(p1, 0)
 
     def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
         """Cached entries produce the same summaries as a fresh parse."""
@@ -5094,7 +5100,7 @@ class TestSessionCacheMtime:
         assert cached_summary.name == "Renamed Session"
 
     def test_single_stat_per_file(self, tmp_path: Path) -> None:
-        """events.jsonl stat'd twice (discovery + post-parse), plan.md stat'd once."""
+        """events.jsonl stat'd once (discovery), plan.md stat'd once."""
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
@@ -5102,9 +5108,10 @@ class TestSessionCacheMtime:
         ) as spy:
             get_all_sessions(tmp_path)
             # _safe_file_identity called once by _discover_with_identity for
-            # events.jsonl, once for plan.md when storing the cache entry,
-            # and once after parsing to capture a consistent end_offset.
-            assert spy.call_count == 3
+            # events.jsonl and once for plan.md when storing the cache entry.
+            # No post-parse stat is needed because _parse_events_from_offset
+            # returns a safe_end byte boundary directly.
+            assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
@@ -5332,7 +5339,10 @@ class TestActiveSessionCaching:
         # First call — must parse
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 1
@@ -5342,7 +5352,10 @@ class TestActiveSessionCaching:
         # Second call — no file changes, should use cache
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 1
@@ -5369,7 +5382,10 @@ class TestActiveSessionCaching:
             config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
 
             # Second call should re-parse because config model changed
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
@@ -5433,7 +5449,10 @@ class TestActiveSessionCaching:
             # Now create a config with a model
             config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "gpt-5.1"
@@ -5491,7 +5510,10 @@ class TestActiveSessionCaching:
             # Delete the config file — config_model should now be None
             config.unlink()
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model is None  # config-sourced model gone
@@ -5748,7 +5770,10 @@ class TestIncrementalEventsParsing:
         # Overwrite with a shorter file (simulates truncation)
         _write_events(p, _START_EVENT)
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             second = get_cached_events(p)
             assert spy.call_count == 1  # full reparse
         assert len(second) == 1
@@ -5799,7 +5824,10 @@ class TestIncrementalEventsParsing:
         p = tmp_path / "s1" / "events.jsonl"
         _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result = get_cached_events(p)
             assert spy.call_count == 1
         assert len(result) == 3
@@ -5947,12 +5975,15 @@ class TestGetAllSessionsPopulatesEventsCache:
         — parse_events is called only once per session, not twice."""
         p = self._make_session(tmp_path, "sess-a", "a")
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             get_all_sessions(tmp_path)
             assert spy.call_count == 1  # single parse during get_all_sessions
 
             events = get_cached_events(p)
-            # Still 1 — no additional parse_events call
+            # Still 1 — no additional _parse_events_from_offset call
             assert spy.call_count == 1
 
         assert len(events) == 3  # start + user + shutdown
@@ -6023,7 +6054,10 @@ class TestGetAllSessionsEventsCacheOverflow:
         excluded_path = paths[0]
         assert excluded_path not in _EVENTS_CACHE
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             events = get_cached_events(excluded_path)
             spy.assert_called_once()  # cache miss → re-parse
 
