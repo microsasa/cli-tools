@@ -756,17 +756,19 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     current_config_model = _read_config_model(None)
     discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
-    # Deferred _EVENTS_CACHE insertions.  _discover_with_identity returns
-    # sessions newest-first; inserting in that order would place the
-    # newest entries at the *front* of the OrderedDict where they would
-    # be evicted first by popitem(last=False).  We collect them here and
-    # insert in reversed (oldest→newest) order after the loop so that
-    # the newest sessions end up at the back (MRU) and eviction drops
-    # the oldest (LRU) entries.
+    # Deferred cache insertions.  _discover_with_identity returns sessions
+    # newest-first; inserting or promoting in that order would leave the
+    # oldest session at MRU and the newest at LRU (wrong).  We collect
+    # cache writes here and apply them in reversed (oldest→newest) order
+    # after the loop so that the newest sessions end up at the back (MRU)
+    # and eviction drops the oldest (LRU) entries.
     #
-    # Only the newest _MAX_CACHED_EVENTS entries are retained to avoid a
-    # temporary memory spike when many sessions are cache-misses.
+    # Only the newest _MAX_CACHED_EVENTS entries are retained for
+    # _EVENTS_CACHE to avoid a temporary memory spike when many sessions
+    # are cache-misses.
     deferred_events: list[tuple[Path, tuple[int, int] | None, list[SessionEvent]]] = []
+    deferred_sessions: list[tuple[Path, _CachedSession]] = []
+    cache_hit_paths: list[Path] = []
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         # Config changes only invalidate cached entries that declared a
@@ -782,19 +784,21 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             if plan_id != cached.plan_id:
                 fresh_name = _extract_session_name(events_path.parent)
                 summary = cached.summary.model_copy(update={"name": fresh_name})
-                _insert_session_entry(
-                    events_path,
-                    _CachedSession(
-                        file_id,
-                        plan_id,
-                        cached.config_model,
-                        cached.depends_on_config,
-                        summary,
-                    ),
+                deferred_sessions.append(
+                    (
+                        events_path,
+                        _CachedSession(
+                            file_id,
+                            plan_id,
+                            cached.config_model,
+                            cached.depends_on_config,
+                            summary,
+                        ),
+                    )
                 )
             else:
                 summary = cached.summary
-                _SESSION_CACHE.move_to_end(events_path)
+                cache_hit_paths.append(events_path)
             summaries.append(summary)
             continue
         try:
@@ -813,17 +817,30 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             plan_exists=plan_id is not None,
         )
         summary = meta.summary
-        _insert_session_entry(
-            events_path,
-            _CachedSession(
-                file_id,
-                plan_id,
-                current_config_model if meta.used_config_fallback else None,
-                meta.used_config_fallback,
-                summary,
-            ),
+        deferred_sessions.append(
+            (
+                events_path,
+                _CachedSession(
+                    file_id,
+                    plan_id,
+                    current_config_model if meta.used_config_fallback else None,
+                    meta.used_config_fallback,
+                    summary,
+                ),
+            )
         )
         summaries.append(summary)
+
+    # Populate _SESSION_CACHE in oldest→newest order so that the newest
+    # sessions sit at the back (MRU) and eviction drops the oldest.
+    for ep, entry in reversed(deferred_sessions):
+        _insert_session_entry(ep, entry)
+
+    # Promote unchanged cache hits in oldest→newest order so that the
+    # newest sessions end up at the MRU position.
+    for ep in reversed(cache_hit_paths):
+        if ep in _SESSION_CACHE:
+            _SESSION_CACHE.move_to_end(ep)
 
     # Populate _EVENTS_CACHE in oldest→newest order so that the newest
     # sessions sit at the back (MRU) and eviction drops the oldest.
