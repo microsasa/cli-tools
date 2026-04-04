@@ -228,6 +228,37 @@ class TestBuildVscodeSummary:
         assert summary.log_files_found == 5
         assert summary.log_files_parsed == 2
 
+    def test_first_last_timestamps_unsorted_input(self) -> None:
+        """build_vscode_summary must derive correct bounds even when input is not chronological."""
+        from datetime import datetime
+
+        requests = [
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 14, 0),
+                request_id="a",
+                model="gpt-4o",
+                duration_ms=100,
+                category="cat",
+            ),  # middle
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 10, 0),
+                request_id="b",
+                model="gpt-4o",
+                duration_ms=200,
+                category="cat",
+            ),  # earliest
+            VSCodeRequest(
+                timestamp=datetime(2026, 3, 14, 18, 0),
+                request_id="c",
+                model="gpt-4o",
+                duration_ms=150,
+                category="cat",
+            ),  # latest
+        ]
+        summary = build_vscode_summary(requests)
+        assert summary.first_timestamp == datetime(2026, 3, 14, 10, 0)
+        assert summary.last_timestamp == datetime(2026, 3, 14, 18, 0)
+
 
 # ---------------------------------------------------------------------------
 # discover_vscode_logs — platform defaults
@@ -871,8 +902,8 @@ class TestNonChronologicalRequests:
     def test_non_chronological_date_accumulation(self) -> None:
         """Requests arriving Mar 5 → Mar 3 → Mar 5 are aggregated by date value.
 
-        Note: timestamp bounds (first/last) use O(1) head/tail indexing, so
-        they reflect the first and last element, not the global min/max.
+        Timestamp bounds (first/last) use a per-request min/max scan, so
+        they reflect the global min/max regardless of input ordering.
         Date-bucketing is still correct regardless of ordering.
         """
         mar5_a = VSCodeRequest(
@@ -901,22 +932,20 @@ class TestNonChronologicalRequests:
 
         assert summary.requests_by_date["2026-03-05"] == 2
         assert summary.requests_by_date["2026-03-03"] == 1
-        # Timestamp bounds come from head/tail of the provided batch (assumed
-        # chronological in production).  This test intentionally uses an
-        # out-of-order list to verify that date-bucketing still works; the
-        # first/last assertions reflect head/tail indexing, not global min/max.
-        assert summary.first_timestamp == mar5_a.timestamp
+        # Timestamp bounds reflect the global min/max across all requests,
+        # regardless of input order.
+        assert summary.first_timestamp == mar3.timestamp
         assert summary.last_timestamp == mar5_b.timestamp
         assert summary.total_requests == 3
 
 
 # ---------------------------------------------------------------------------
-# O(1) timestamp-bounds optimisation
+# Timestamp-bounds correctness
 # ---------------------------------------------------------------------------
 
 
-class TestTimestampBoundsOptimisation:
-    """Timestamp bounds are derived from first/last elements per batch."""
+class TestTimestampBoundsCorrectness:
+    """Timestamp bounds are derived from per-request min/max scan."""
 
     def test_single_batch_chronological(self) -> None:
         """first/last timestamps equal the head/tail of a chronological batch."""
