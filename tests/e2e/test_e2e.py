@@ -97,14 +97,17 @@ class TestSessionE2E:
         """b5df fixture has codeChanges: 1877 added, 71 removed."""
         result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "Code Changes" in result.output
-        assert "1,877" in result.output or "1877" in result.output
-        assert "71" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+1877\b", plain) is not None
+        assert re.search(r"Lines removed\b.*-71\b", plain) is not None
 
     def test_session_detail_shows_modified_files(self) -> None:
         result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "files" in result.output.lower()
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Files modified" in plain
+        assert re.search(r"Files modified\b.*\b4\b", plain) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -428,8 +431,11 @@ class TestMultiShutdownCompletedE2E:
             main, ["session", "multi-shutdown-c", "--path", str(FIXTURES)]
         )
         assert result.exit_code == 0
-        assert "Code Changes" in result.output
-        assert "160" in result.output  # 40 + 120 linesAdded
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+160\b", plain) is not None
+        assert re.search(r"Lines removed\b.*-10\b", plain) is not None
+        assert re.search(r"Files modified\b.*\b5\b", plain) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +482,10 @@ class TestMultiShutdownResumedE2E:
             main, ["session", "multi-shutdown-r", "--path", str(FIXTURES)]
         )
         assert result.exit_code == 0
-        assert "Code Changes" in result.output
-        assert "75" in result.output  # 20 + 55 linesAdded
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+75\b", plain) is not None  # 20 + 55
+        assert re.search(r"Files modified\b.*\b2\b", plain) is not None
 
 
 # ---------------------------------------------------------------------------
