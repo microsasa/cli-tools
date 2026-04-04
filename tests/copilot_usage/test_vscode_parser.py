@@ -146,6 +146,40 @@ class TestParseVscodeLog:
         result = parse_vscode_log(log_file)
         assert result == []
 
+    def test_non_utf8_only_file_returns_empty(self, tmp_path: Path) -> None:
+        """A file containing only non-UTF-8 bytes returns [] without raising."""
+        log_path = tmp_path / "test.log"
+        log_path.write_bytes(b"\xff\xfe\x80\x81\x82")
+        result = parse_vscode_log(log_path)
+        assert result == []
+
+    def test_valid_lines_around_non_utf8_bytes_are_parsed(self, tmp_path: Path) -> None:
+        """Valid ccreq lines survive surrounding non-UTF-8 garbage."""
+        valid_line = (
+            b"2026-01-15 10:00:00.000 [info] ccreq:abc123.copilotmd"
+            b" | success | gpt-4o | 500ms | [chat]\n"
+        )
+        log_path = tmp_path / "test.log"
+        log_path.write_bytes(
+            b"\xff\xfe garbage\n" + valid_line + b"\x80\x81 more garbage\n"
+        )
+        result = parse_vscode_log(log_path)
+        assert len(result) == 1
+        assert result[0].request_id == "abc123"
+
+    def test_ccreq_line_with_replacement_char_is_skipped(self, tmp_path: Path) -> None:
+        """A ccreq line whose timestamp contains a non-UTF-8 byte is skipped."""
+        # b"\\xff" in the middle of the timestamp → replaced with U+FFFD →
+        # regex fails to match the corrupted timestamp field.
+        corrupted_line = (
+            b"2026-01\xff15 10:00:00.000 [info] ccreq:xyz.copilotmd"
+            b" | success | gpt-4o | 200ms | [chat]\n"
+        )
+        log_path = tmp_path / "test.log"
+        log_path.write_bytes(corrupted_line)
+        result = parse_vscode_log(log_path)
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # build_vscode_summary
