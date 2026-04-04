@@ -47,6 +47,7 @@ from copilot_usage.parser import (
     _FirstPassResult,
     _infer_model_from_metrics,
     _insert_session_entry,
+    _parse_events_from_offset,
     _read_config_model,
     _ResumeInfo,
     _safe_file_identity,
@@ -5801,6 +5802,71 @@ class TestIncrementalEventsParsing:
             result = get_cached_events(p)
             assert spy.call_count == 1
         assert len(result) == 3
+
+
+class TestParseEventsFromOffset:
+    """Exercise error-handling paths in _parse_events_from_offset."""
+
+    def test_blank_lines_are_skipped(self, tmp_path: Path) -> None:
+        """Empty / whitespace-only lines after the offset are ignored."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        offset = p.stat().st_size
+
+        # Append a blank line followed by a valid event
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+            fh.write("   \n")
+            fh.write(_ASSISTANT_MSG + "\n")
+
+        result = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "assistant.message"
+
+    def test_malformed_json_skipped(self, tmp_path: Path) -> None:
+        """Lines that are not valid JSON are skipped with a warning."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write("{not valid json\n")
+            fh.write(_USER_MSG + "\n")
+
+        result = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "user.message"
+
+    def test_validation_error_skipped(self, tmp_path: Path) -> None:
+        """JSON that is valid but fails Pydantic validation is skipped."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Valid JSON but 'type' is an int — triggers ValidationError
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": 123}) + "\n")
+            fh.write(_USER_MSG + "\n")
+
+        result = _parse_events_from_offset(p, offset)
+        # The valid user message should be parsed; the invalid one skipped
+        assert len(result) == 1
+        assert result[0].type == "user.message"
+
+    def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
+        """A mid-stream UTF-8 decode error returns events parsed so far."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Write a valid event followed by invalid UTF-8 bytes
+        with p.open("ab") as fh:
+            fh.write((_USER_MSG + "\n").encode("utf-8"))
+            fh.write(b"\xff\xfe invalid utf8\n")
+
+        result = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "user.message"
 
 
 # ---------------------------------------------------------------------------
