@@ -21,11 +21,8 @@ from rich.text import Text
 from copilot_usage import __version__
 from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
 from copilot_usage.parser import (
-    build_session_summary,
-    discover_sessions,
     get_all_sessions,
     get_cached_events,
-    parse_events,
 )
 from copilot_usage.report import (
     render_cost_view,
@@ -46,9 +43,6 @@ _WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
 )
 
-_UUID_STR_LEN: Final[int] = 36
-_UUID_DASH_COUNT: Final[int] = 4
-_MIN_PREFIX_LEN_FOR_PREFILTER: Final[int] = 4
 
 console: Final[Console] = Console()
 
@@ -477,51 +471,38 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     _print_version_header()
     path = path or ctx.obj.get("path")
     try:
-        event_paths = discover_sessions(path)
+        all_sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
-    if not event_paths:
+    if not all_sessions:
         click.echo("No sessions found.", err=True)
         sys.exit(1)
 
-    # Fast path: skip directories that clearly cannot match the prefix.
-    # Only apply the pre-filter on UUID-shaped directory names (36 chars
-    # with 4 dashes), where the directory name IS the session ID.
-    # Non-UUID dirs (e.g. test fixtures) always need a full parse.
-    available: list[str] = []
-    for events_path in event_paths:
-        dir_name = events_path.parent.name
-        is_uuid_dir = (
-            len(dir_name) == _UUID_STR_LEN and dir_name.count("-") == _UUID_DASH_COUNT
-        )
-        if (
-            len(session_id) >= _MIN_PREFIX_LEN_FOR_PREFILTER
-            and is_uuid_dir
-            and not dir_name.startswith(session_id)
-        ):
-            available.append(dir_name[:8])
-            continue
-        try:
-            events = parse_events(events_path)
-        except OSError as exc:
-            logger.warning("Skipping unreadable session {}: {}", events_path, exc)
-            continue
-        if not events:
-            continue
-        s = build_session_summary(
-            events, session_dir=events_path.parent, events_path=events_path
-        )
+    matched: SessionSummary | None = None
+    for s in all_sessions:
         if s.session_id.startswith(session_id):
-            render_session_detail(events, s)
-            return
-        if s.session_id:
-            available.append(s.session_id[:8])
+            matched = s
+            break
 
-    click.echo(f"Error: no session matching '{session_id}'", err=True)
-    if available:
-        click.echo(f"Available: {', '.join(available)}", err=True)
-    sys.exit(1)
+    if matched is None:
+        available = [s.session_id[:8] for s in all_sessions if s.session_id]
+        click.echo(f"Error: no session matching '{session_id}'", err=True)
+        if available:
+            click.echo(f"Available: {', '.join(available)}", err=True)
+        sys.exit(1)
+
+    if matched.events_path is None:
+        click.echo("Error: no events path for this session.", err=True)
+        sys.exit(1)
+
+    try:
+        events = get_cached_events(matched.events_path)
+    except OSError as exc:
+        click.echo(f"Error reading session: {exc}", err=True)
+        sys.exit(1)
+
+    render_session_detail(list(events), matched)
 
 
 # ---------------------------------------------------------------------------
