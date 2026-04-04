@@ -45,10 +45,8 @@ class VSCodeRequest:
 class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs.
 
-    ``first_timestamp`` and ``last_timestamp`` are derived from the head and
-    tail of each request batch, **not** from a global min/max scan.  This is
-    correct when the input requests are in chronological order (the normal
-    case for VS Code log files).
+    ``first_timestamp`` and ``last_timestamp`` are derived from a per-request
+    min/max scan, so input order does not matter.
     """
 
     total_requests: int = 0
@@ -57,9 +55,9 @@ class VSCodeLogSummary:
     duration_by_model: dict[str, int] = field(default_factory=lambda: {})
     requests_by_category: dict[str, int] = field(default_factory=lambda: {})
     requests_by_date: dict[str, int] = field(default_factory=lambda: {})
-    # Earliest timestamp seen (head of the first batch).
+    # Earliest timestamp seen across all requests.
     first_timestamp: datetime | None = None
-    # Latest timestamp seen (tail of the last batch).
+    # Latest timestamp seen across all requests.
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
     log_files_found: int = 0
@@ -202,13 +200,12 @@ def _update_vscode_summary(
             last_date_val = ts_date
         acc.requests_by_date[last_date_key] += 1
 
-    # Timestamp bounds: within a log file, requests are in chronological order,
-    # so only the first and last entries can affect the running min/max.
-    if requests:
-        if acc.first_timestamp is None or requests[0].timestamp < acc.first_timestamp:
-            acc.first_timestamp = requests[0].timestamp
-        if acc.last_timestamp is None or requests[-1].timestamp > acc.last_timestamp:
-            acc.last_timestamp = requests[-1].timestamp
+        # Timestamp bounds: full min/max scan so callers (especially
+        # build_vscode_summary) need not pre-sort their input.
+        if acc.first_timestamp is None or req.timestamp < acc.first_timestamp:
+            acc.first_timestamp = req.timestamp
+        if acc.last_timestamp is None or req.timestamp > acc.last_timestamp:
+            acc.last_timestamp = req.timestamp
 
 
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
@@ -235,10 +232,8 @@ def build_vscode_summary(
 ) -> VSCodeLogSummary:
     """Aggregate a list of parsed requests into a summary.
 
-    *requests* **must** be in chronological order.  Timestamp bounds are
-    derived from the head and tail of the list (O(1)) rather than a full
-    min/max scan, so out-of-order inputs will produce incorrect
-    ``first_timestamp`` / ``last_timestamp`` values.
+    *requests* may be in any order.  Timestamp bounds are derived from a
+    per-request min/max scan so unsorted inputs are handled correctly.
     """
     acc = _SummaryAccumulator(
         log_files_parsed=log_files_parsed,
