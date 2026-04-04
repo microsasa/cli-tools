@@ -24,10 +24,6 @@ safe-outputs:
     max: 1
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
-
-sandbox:
-  mcp:
-    keepalive-interval: 120
 ---
 
 # Feature Planner

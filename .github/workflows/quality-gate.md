@@ -42,10 +42,6 @@ safe-outputs:
     target: "*"
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
-
-sandbox:
-  mcp:
-    keepalive-interval: 120
 ---
 
 # Quality Gate
