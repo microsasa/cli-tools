@@ -108,6 +108,10 @@ class _CachedEvents:
 _MAX_CACHED_EVENTS: Final[int] = 32
 _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 
+# Persists config file identity between invocations so that the
+# _read_config_model lru_cache is only cleared when the file changes.
+_config_file_id: tuple[int, int] | None = None
+
 
 def _insert_events_entry(
     events_path: Path,
@@ -762,12 +766,17 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     refreshed from ``plan.md`` only when ``plan.md``'s own file
     identity has changed, avoiding redundant file reads.
 
-    The ``_read_config_model`` cache is cleared at the start of each
-    invocation so that interactive callers (e.g. ``_interactive_loop``)
-    pick up config-file edits between refreshes while still avoiding
-    redundant reads *within* a single invocation.
+    The ``_read_config_model`` cache is only cleared when the config
+    file's ``(st_mtime_ns, st_size)`` identity changes, so interactive
+    callers (e.g. ``_interactive_loop``) pick up config-file edits
+    between refreshes while avoiding a redundant file read + JSON parse
+    on every invocation.
     """
-    _read_config_model.cache_clear()
+    global _config_file_id  # noqa: PLW0603
+    current_id = _safe_file_identity(_CONFIG_PATH)
+    if current_id != _config_file_id:
+        _config_file_id = current_id
+        _read_config_model.cache_clear()
     # Pass None explicitly to match the lru_cache key used by
     # build_session_summary (which passes config_path=None by default).
     current_config_model = _read_config_model(None)
