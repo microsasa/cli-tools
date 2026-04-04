@@ -1,0 +1,10 @@
+2026-03-13 09:10:15.123 [info] GitHub Copilot Chat v0.28.2026031301
+2026-03-13 09:10:15.456 [info] Starting Copilot Chat extension
+2026-03-13 09:12:30.100 [info] ccreq:a1b2c3d4.copilotmd | success | gpt-4o-mini | 320ms | [inline-chat]
+2026-03-13 09:14:45.200 [info] ccreq:a1b2c3d5.copilotmd | success | gpt-4o-mini | 480ms | [panel-chat]
+2026-03-13 09:18:10.300 [info] ccreq:a1b2c3d6.copilotmd | success | claude-sonnet-4.6 | 1250ms | [panel-chat]
+2026-03-13 09:22:05.400 [info] ccreq:a1b2c3d7.copilotmd | success | gpt-4o-mini | 290ms | [inline-chat]
+2026-03-13 09:25:30.500 [info] ccreq:a1b2c3d8.copilotmd | success | claude-sonnet-4.6 | 980ms | [panel-chat]
+2026-03-13 09:30:00.600 [info] ccreq:a1b2c3d9.copilotmd | success | gpt-4o-mini -> gpt-4o-mini-fallback | 410ms | [inline-chat]
+2026-03-13 09:35:22.700 [info] Some other log line that should be ignored
+2026-03-13 09:40:15.800 [info] ccreq:a1b2c3da.copilotmd | success | claude-sonnet-4.6 | 1100ms | [panel-chat]
