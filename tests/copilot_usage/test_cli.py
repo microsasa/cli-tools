@@ -503,15 +503,15 @@ def test_session_command_get_cached_events_oserror(
     assert "Traceback" not in (result.output or "")
 
 
-def test_session_command_logs_warning_on_unreadable_session(
+def test_session_command_logs_warning_on_malformed_events(
     tmp_path: Path,
 ) -> None:
-    """When get_all_sessions encounters an unreadable session, it logs a
-    warning but the session command still works for valid sessions."""
+    """When get_all_sessions encounters a session with malformed JSON,
+    it logs a warning but the session command still works for valid sessions."""
     # Create a valid session
     _write_session(tmp_path, "valid000-0000-0000-0000-000000000000", name="Valid")
 
-    # Create an unreadable session with invalid content
+    # Create a session dir with malformed (non-JSON) content
     bad_dir = tmp_path / "bad-sess"
     bad_dir.mkdir()
     (bad_dir / "events.jsonl").write_text("not json\n", encoding="utf-8")
