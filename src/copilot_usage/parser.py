@@ -401,7 +401,10 @@ class _ResumeInfo:
 # Summary builder — helpers
 # ---------------------------------------------------------------------------
 
-# O(1) pre-filter for _first_pass: skip events whose type is not handled.
+# O(1) pre-filter for _first_pass: skip events whose type is not checked.
+# Some of these types are only conditionally acted upon (e.g.
+# TOOL_EXECUTION_COMPLETE is used only until tool_model is set), but they
+# all appear in the ``if/elif`` chain inside _first_pass.
 _FIRST_PASS_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
         EventType.SESSION_START,

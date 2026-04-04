@@ -6428,15 +6428,15 @@ class TestFirstPassPreFilter:
         assert fp.session_id == "perf-test"
         assert fp.user_message_count == 1
 
-    def test_first_pass_10k_events_performance(self, tmp_path: Path) -> None:
-        """_first_pass with 10 000 events (mix of handled/unhandled) stays fast.
+    def test_first_pass_10k_events_prefilter_consulted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The frozenset pre-filter is consulted exactly once per event.
 
-        A synthetic event list with ~60 % unhandled types must complete within
-        a tight time budget.  The frozenset pre-filter ensures unhandled events
-        cost a single O(1) ``not in`` check rather than six ``elif`` misses.
+        Instead of a wall-clock ``timeit`` assertion (which is flaky on
+        shared/loaded CI runners), we monkeypatch the module-level frozenset
+        with a counting wrapper and verify it is checked once per event.
         """
-        import timeit
-
         ts = "2026-03-07T10:00:00.000Z"
         start_line = json.dumps(
             {
@@ -6497,14 +6497,24 @@ class TestFirstPassPreFilter:
         events = parse_events(p)
         assert len(events) == 10000
 
-        # Warm up, then time 20 iterations
-        _first_pass(events)
-        elapsed = timeit.timeit(lambda: _first_pass(events), number=20)
-        avg_ms = (elapsed / 20) * 1000
+        check_count = 0
+        original = _FIRST_PASS_EVENT_TYPES
 
-        # Budget: 15 ms per call.  With the frozenset guard this typically
-        # completes in <5 ms; without it, >6 ms on the same hardware.
-        assert avg_ms < 15, (
-            f"_first_pass averaged {avg_ms:.2f} ms over 20 runs "
-            f"(budget: 15 ms) — possible regression"
+        class _CountingFrozenset(frozenset):  # type: ignore[type-arg]
+            def __contains__(self, item: object) -> bool:
+                nonlocal check_count
+                check_count += 1
+                return item in original
+
+        monkeypatch.setattr(
+            "copilot_usage.parser._FIRST_PASS_EVENT_TYPES",
+            _CountingFrozenset(original),
         )
+
+        fp = _first_pass(events)
+
+        # Guard consulted exactly once per event
+        assert check_count == 10_000, (
+            f"Expected 10 000 frozenset membership checks, got {check_count}"
+        )
+        assert fp.session_id == "bench"
