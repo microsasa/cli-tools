@@ -925,7 +925,7 @@ class TestInteractiveSummaryE2E:
 class TestVscodeE2E:
     """Tests for the ``vscode`` command against fixture log files."""
 
-    VSCODE_FIXTURES = FIXTURES.parent / "fixtures" / "vscode-logs"
+    VSCODE_FIXTURES = FIXTURES / "vscode-logs"
 
     def test_exit_code_zero_with_requests(self) -> None:
         result = CliRunner().invoke(
@@ -957,7 +957,9 @@ class TestVscodeE2E:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
-        assert re.search(r"\b12\b", result.output)
+        assert result.exit_code == 0
+        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert re.search(r"Requests:\s*12\b", clean_output)
 
     def test_model_names_in_output(self) -> None:
         """Both fixture models must appear in the Per-Model Breakdown."""
@@ -975,7 +977,7 @@ class TestVscodeE2E:
         assert "2026-03-13" in result.output
         assert "2026-03-14" in result.output
 
-    def test_empty_directory_exits_nonzero(self) -> None:
-        result = CliRunner().invoke(main, ["vscode", "--vscode-logs", str(FIXTURES)])
+    def test_empty_directory_exits_nonzero(self, tmp_path: Path) -> None:
+        result = CliRunner().invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
         assert result.exit_code == 1
         assert "No VS Code Copilot Chat requests found" in result.output
