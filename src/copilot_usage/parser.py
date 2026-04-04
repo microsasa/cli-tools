@@ -70,7 +70,27 @@ class _CachedSession:
 
 # Module-level file-identity cache: events_path → _CachedSession.
 # Avoids re-parsing unchanged files on every interactive refresh.
-_SESSION_CACHE: dict[Path, _CachedSession] = {}
+# Uses OrderedDict for LRU eviction: most-recently-used entries are at
+# the back, least-recently-used at the front.
+_MAX_CACHED_SESSIONS: Final[int] = 512
+_SESSION_CACHE: OrderedDict[Path, _CachedSession] = OrderedDict()
+
+
+def _insert_session_entry(
+    events_path: Path,
+    entry: _CachedSession,
+) -> None:
+    """Insert a session entry into ``_SESSION_CACHE`` with LRU eviction.
+
+    If *events_path* already exists in the cache (stale entry), the old
+    entry is removed first.  Otherwise, when the cache is full the
+    least-recently-used entry (front of the ``OrderedDict``) is evicted.
+    """
+    if events_path in _SESSION_CACHE:
+        del _SESSION_CACHE[events_path]
+    elif len(_SESSION_CACHE) >= _MAX_CACHED_SESSIONS:
+        _SESSION_CACHE.popitem(last=False)  # evict LRU (front)
+    _SESSION_CACHE[events_path] = entry
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -762,15 +782,19 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             if plan_id != cached.plan_id:
                 fresh_name = _extract_session_name(events_path.parent)
                 summary = cached.summary.model_copy(update={"name": fresh_name})
-                _SESSION_CACHE[events_path] = _CachedSession(
-                    file_id,
-                    plan_id,
-                    cached.config_model,
-                    cached.depends_on_config,
-                    summary,
+                _insert_session_entry(
+                    events_path,
+                    _CachedSession(
+                        file_id,
+                        plan_id,
+                        cached.config_model,
+                        cached.depends_on_config,
+                        summary,
+                    ),
                 )
             else:
                 summary = cached.summary
+                _SESSION_CACHE.move_to_end(events_path)
             summaries.append(summary)
             continue
         try:
@@ -789,12 +813,15 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             plan_exists=plan_id is not None,
         )
         summary = meta.summary
-        _SESSION_CACHE[events_path] = _CachedSession(
-            file_id,
-            plan_id,
-            current_config_model if meta.used_config_fallback else None,
-            meta.used_config_fallback,
-            summary,
+        _insert_session_entry(
+            events_path,
+            _CachedSession(
+                file_id,
+                plan_id,
+                current_config_model if meta.used_config_fallback else None,
+                meta.used_config_fallback,
+                summary,
+            ),
         )
         summaries.append(summary)
 
