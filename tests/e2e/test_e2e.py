@@ -915,3 +915,74 @@ class TestInteractiveSummaryE2E:
             assert result.exit_code == 0
             assert "No historical shutdown data" in result.output
             assert "Active Sessions" in result.output
+
+
+# ---------------------------------------------------------------------------
+# vscode
+# ---------------------------------------------------------------------------
+
+
+class TestVscodeE2E:
+    """Tests for the ``vscode`` command against fixture log files."""
+
+    VSCODE_FIXTURES = FIXTURES / "vscode-logs"
+
+    def test_exit_code_zero_with_requests(self) -> None:
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+
+    def test_totals_panel_present(self) -> None:
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "VS Code Copilot Chat" in result.output
+        assert "Requests:" in result.output
+
+    def test_per_model_table_present(self) -> None:
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "Per-Model Breakdown" in result.output
+
+    def test_daily_activity_present(self) -> None:
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "Daily Activity" in result.output
+
+    def test_request_count_matches_fixture(self) -> None:
+        """Exact request count derived from the fixture lines (12 total)."""
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        clean_output = _strip_ansi(result.output)
+        assert re.search(r"Requests:\s*12\b", clean_output)
+
+    def test_model_names_in_output(self) -> None:
+        """Both fixture models must appear in the Per-Model Breakdown."""
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "gpt-4o-mini" in result.output
+        assert "claude-sonnet-4.6" in result.output
+
+    def test_both_dates_in_daily_activity(self) -> None:
+        """Both fixture dates must appear in the Daily Activity table."""
+        result = CliRunner().invoke(
+            main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "2026-03-13" in result.output
+        assert "2026-03-14" in result.output
+
+    def test_empty_directory_exits_nonzero(self, tmp_path: Path) -> None:
+        result = CliRunner().invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "No VS Code Copilot Chat requests found" in result.output
