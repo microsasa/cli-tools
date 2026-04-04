@@ -31,7 +31,6 @@ from copilot_usage.cli import (
     main,
 )
 from copilot_usage.models import ensure_aware_opt
-from copilot_usage.parser import parse_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -346,70 +345,49 @@ def test_live_no_active(tmp_path: Path) -> None:
     assert "No active" in result.output
 
 
-def test_session_prefix_match(tmp_path: Path, monkeypatch: Any) -> None:
+def test_session_prefix_match(tmp_path: Path) -> None:
     """Test that session command matches by prefix when using custom path."""
     _write_session(tmp_path, "iiii9999-0000-0000-0000-000000000000", name="Prefix Test")
 
-    def _fake_discover(_base_path: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "iiii9999"])
+    result = runner.invoke(main, ["session", "iiii9999", "--path", str(tmp_path)])
     assert result.exit_code == 0
     assert "iiii9999" in result.output
 
 
-def test_session_prefix_collision_returns_newest_by_mtime(
-    tmp_path: Path, monkeypatch: Any
+def test_session_prefix_collision_returns_newest_by_start_time(
+    tmp_path: Path,
 ) -> None:
-    """When two sessions share the same prefix, the newest by mtime is returned.
+    """When two sessions share the same prefix, the newest by start_time is returned.
 
-    This documents the intentional 'first discovered wins' contract.
-    If ambiguity-detection logic is ever added, this test must be updated.
+    ``get_all_sessions`` sorts by ``start_time`` (newest first), so the first
+    prefix match is the most recent session.
     """
     older_uuid = "ab111111-0000-0000-0000-000000000000"
     newer_uuid = "ab222222-0000-0000-0000-000000000000"
-    older_dir = _write_session(tmp_path, older_uuid, name="OlderSession")
-    newer_dir = _write_session(tmp_path, newer_uuid, name="NewerSession")
-
-    # Set explicit mtimes so the newer session sorts first even on filesystems
-    # with coarse mtime resolution (avoids CI flakiness).
-    os.utime(older_dir / "events.jsonl", (1_000_000, 1_000_000))
-    os.utime(newer_dir / "events.jsonl", (2_000_000, 2_000_000))
-
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        paths = list(tmp_path.glob("*/events.jsonl"))
-        return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
+    _write_session(
+        tmp_path, older_uuid, name="OlderSession", start_time="2025-01-14T10:00:00Z"
+    )
+    _write_session(
+        tmp_path, newer_uuid, name="NewerSession", start_time="2025-01-16T10:00:00Z"
+    )
 
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "ab"])  # ambiguous prefix
+    result = runner.invoke(
+        main, ["session", "ab", "--path", str(tmp_path)]
+    )  # ambiguous prefix
     assert result.exit_code == 0
     # Newest match is returned — not an error, not a list of alternatives
     assert "ab222222" in result.output
     assert "ab111111" not in result.output
 
 
-def test_session_shows_available_on_miss(tmp_path: Path, monkeypatch: Any) -> None:
+def test_session_shows_available_on_miss(tmp_path: Path) -> None:
     """Test that session command shows available IDs when no match found."""
     _write_session(tmp_path, "jjjj0000-0000-0000-0000-000000000000", name="Exists")
 
-    def _fake_discover(_base_path: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "notfound"])
+    result = runner.invoke(main, ["session", "notfound", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "jjjj0000" in result.output
 
@@ -444,20 +422,20 @@ def test_summary_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
 
 
 def test_session_no_sessions(tmp_path: Path, monkeypatch: Any) -> None:
-    """session command with empty discover → 'No sessions found.' (lines 99-101)."""
+    """session command with empty get_all_sessions → 'No sessions found.'."""
 
-    def _empty_discover(_base: Path | None = None) -> list[Path]:
+    def _empty_sessions(_base: Path | None = None) -> list[object]:
         return []
 
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _empty_discover)
+    monkeypatch.setattr("copilot_usage.cli.get_all_sessions", _empty_sessions)
     runner = CliRunner()
     result = runner.invoke(main, ["session", "anything"])
     assert result.exit_code != 0
     assert "No sessions found" in result.output
 
 
-def test_session_skips_empty_events(tmp_path: Path, monkeypatch: Any) -> None:
-    """session command skips files with no parseable events (line 107, 118)."""
+def test_session_skips_empty_events(tmp_path: Path) -> None:
+    """session command skips sessions with no parseable events."""
     # Create a session dir with an empty events.jsonl
     empty_dir = tmp_path / "empty-sess"
     empty_dir.mkdir()
@@ -466,28 +444,20 @@ def test_session_skips_empty_events(tmp_path: Path, monkeypatch: Any) -> None:
     # Also create a valid session to generate the "Available" list
     _write_session(tmp_path, "kkkk1111-0000-0000-0000-000000000000", name="Valid")
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "nonexistent"])
+    result = runner.invoke(main, ["session", "nonexistent", "--path", str(tmp_path)])
     assert result.exit_code != 0
     assert "no session matching" in result.output
 
 
 def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
-    """PermissionError in discover_sessions produces a friendly error message."""
+    """OSError in get_all_sessions produces a friendly error message."""
 
-    def _exploding_discover(_base: Path | None = None) -> list[Path]:
+    def _exploding_sessions(_base: Path | None = None) -> list[object]:
         msg = "permission denied"
         raise PermissionError(msg)
 
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _exploding_discover)
+    monkeypatch.setattr("copilot_usage.cli.get_all_sessions", _exploding_sessions)
     runner = CliRunner()
     result = runner.invoke(main, ["session", "anything"])
     assert result.exit_code != 0
@@ -495,94 +465,58 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     assert "Traceback" not in (result.output or "")
 
 
-def test_session_command_continues_after_parse_oserror(
-    tmp_path: Path, monkeypatch: Any
+def test_session_command_skips_malformed_events(
+    tmp_path: Path,
 ) -> None:
-    """OSError from parse_events for one session is skipped;
-    the command still finds a matching session in another directory."""
-    target_session_dir = _write_session(tmp_path, "target-session-aaa", name="Target")
-    failing_session_dir = _write_session(
-        tmp_path, "failing-session-bbb", name="Failing"
-    )
+    """When get_all_sessions encounters a session with unparseable JSON,
+    it emits a warning, skips that session from the results, and the
+    command still finds a valid match."""
+    _write_session(tmp_path, "target-session-aaa", name="Target")
+    # Create a session dir with malformed (non-JSON) content
+    failing_dir = tmp_path / "failing-"
+    failing_dir.mkdir()
+    events_path = failing_dir / "events.jsonl"
+    events_path.write_text("invalid json that won't parse\n", encoding="utf-8")
 
-    # Set explicit mtimes so the failing session is visited first (higher mtime
-    # appears first in the reverse-sorted list), avoiding nondeterminism on
-    # filesystems with coarse mtime resolution.
-    target_events = target_session_dir / "events.jsonl"
-    failing_events = failing_session_dir / "events.jsonl"
-    os.utime(target_events, (1_000_000, 1_000_000))
-    os.utime(failing_events, (2_000_000, 2_000_000))
-
-    original_parse = parse_events
-
-    def _flaky_parse(path: Path) -> list[Any]:
-        if "failing" in str(path):
-            raise OSError("permission denied")
-        return original_parse(path)
-
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _flaky_parse)
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "target"])
+    result = runner.invoke(main, ["session", "target", "--path", str(tmp_path)])
     assert result.exit_code == 0
     assert "target" in result.output.lower()
     assert "Traceback" not in (result.output or "")
 
 
-def test_session_command_all_parse_oserror(tmp_path: Path, monkeypatch: Any) -> None:
-    """When all sessions fail to parse with OSError, the command shows
-    'no session matching' rather than crashing."""
-    _write_session(tmp_path, "sess-aaa-fail-0000", name="Fail1")
-    _write_session(tmp_path, "sess-bbb-fail-0000", name="Fail2")
+def test_session_command_get_cached_events_oserror(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When get_cached_events raises OSError for the matched session,
+    the command shows a friendly error."""
+    _write_session(tmp_path, "readfail-0000-0000-0000-000000000000", name="ReadFail")
 
-    def _always_fail(path: Path) -> list[Any]:
+    def _fail_cached_events(_path: Path) -> tuple[object, ...]:
         raise OSError("disk I/O error")
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _always_fail)
+    monkeypatch.setattr("copilot_usage.cli.get_cached_events", _fail_cached_events)
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "sess"])
+    result = runner.invoke(main, ["session", "readfail", "--path", str(tmp_path)])
     assert result.exit_code == 1
-    assert "no session matching" in result.output.lower()
+    assert "Error reading session" in result.output
+    assert "disk I/O error" in result.output
     assert "Traceback" not in (result.output or "")
 
 
-def test_session_command_logs_warning_on_parse_oserror(
-    tmp_path: Path, monkeypatch: Any
+def test_session_command_logs_warning_on_malformed_events(
+    tmp_path: Path,
 ) -> None:
-    """When parse_events raises OSError, the session command logs a warning
-    instead of silently swallowing the error."""
-    _write_session(tmp_path, "unreadable-sess-000", name="Unreadable")
+    """When get_all_sessions encounters a session with malformed JSON,
+    it logs a warning but the session command still works for valid sessions."""
+    # Create a valid session
+    _write_session(tmp_path, "valid000-0000-0000-0000-000000000000", name="Valid")
 
-    def _always_fail(path: Path) -> list[Any]:
-        raise OSError("permission denied")
+    # Create a session dir with malformed (non-JSON) content
+    bad_dir = tmp_path / "bad-sess"
+    bad_dir.mkdir()
+    (bad_dir / "events.jsonl").write_text("not json\n", encoding="utf-8")
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _always_fail)
-
-    # Capture loguru warnings: wrap setup_logging so our sink survives the
-    # logger.remove() call inside it.
     sink = io.StringIO()
     handler_id: int | None = None
     _real_setup = __import__(
@@ -594,19 +528,20 @@ def test_session_command_logs_warning_on_parse_oserror(
         _real_setup()
         handler_id = logger.add(sink, level="WARNING", format="{message}")
 
-    monkeypatch.setattr(
-        "copilot_usage.logging_config.setup_logging", _setup_then_add_sink
-    )
+    from copilot_usage import logging_config
+
+    original_setup = logging_config.setup_logging
+    logging_config.setup_logging = _setup_then_add_sink
 
     runner = CliRunner()
     try:
-        result = runner.invoke(main, ["session", "unreadable"])
-
-        assert result.exit_code == 1
-        log_output = sink.getvalue()
-        assert "Skipping unreadable session" in log_output
-        assert "permission denied" in log_output
+        result = runner.invoke(main, ["session", "valid000", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        warning_output = sink.getvalue()
+        assert warning_output
+        assert "bad-sess" in warning_output
     finally:
+        logging_config.setup_logging = original_setup
         if handler_id is not None:
             logger.remove(handler_id)
 
@@ -1120,18 +1055,10 @@ def test_group_path_propagates_to_summary(tmp_path: Path) -> None:
     assert "GrpSum" in result.output or "Summary" in result.output
 
 
-def test_group_path_propagates_to_session(tmp_path: Path, monkeypatch: Any) -> None:
+def test_group_path_propagates_to_session(tmp_path: Path) -> None:
     """Group-level --path is used by 'session' when subcommand omits --path."""
     _write_session(tmp_path, "grp_ses00-0000-0000-0000-000000000000", name="GrpSes")
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path), "session", "grp_ses00"])
     assert result.exit_code == 0
@@ -1995,64 +1922,44 @@ def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) 
 
 
 # ---------------------------------------------------------------------------
-# Issue #138 — fast pre-filter on directory name
+# Issue #684 — session command uses _SESSION_CACHE / _EVENTS_CACHE
 # ---------------------------------------------------------------------------
 
 
-def test_session_prefilter_skips_non_matching_dirs(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    """parse_events is only called for the matching directory when prefix ≥ 4 chars.
+def test_session_uses_cache_avoids_parse_events(tmp_path: Path) -> None:
+    """Pre-populating _SESSION_CACHE via get_all_sessions means
+    the session CLI command does NOT call parse_events directly.
 
-    Creates ≥ 5 UUID-named sessions and verifies the pre-filter skips parsing
-    directories whose names don't start with the requested prefix.
+    This verifies the optimised cached path introduced in issue #684.
     """
+    from copilot_usage.parser import get_all_sessions
+
     uuids = [
         "aaaaaaaa-1111-1111-1111-111111111111",
         "bbbbbbbb-2222-2222-2222-222222222222",
         "cccccccc-3333-3333-3333-333333333333",
-        "dddddddd-4444-4444-4444-444444444444",
-        "eeeeeeee-5555-5555-5555-555555555555",
     ]
-    target = uuids[2]  # cccccccc-...
-
     for uid in uuids:
         _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
-    parse_calls: list[Path] = []
-    original_parse = __import__(
-        "copilot_usage.parser", fromlist=["parse_events"]
-    ).parse_events
-
-    def _tracking_parse(events_path: Path) -> list[Any]:
-        parse_calls.append(events_path)
-        return original_parse(events_path)
-
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
+    # Pre-populate caches by calling get_all_sessions
+    sessions = get_all_sessions(tmp_path)
+    assert len(sessions) == 3
 
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "cccccccc"])
+    with patch("copilot_usage.parser.parse_events") as mock_parse:
+        result = runner.invoke(main, ["session", "cccccccc", "--path", str(tmp_path)])
+
     assert result.exit_code == 0
     assert "cccccccc" in result.output
-
-    # Only the matching directory should have been parsed
-    assert len(parse_calls) == 1
-    assert parse_calls[0].parent.name == target
+    # parse_events must NOT have been called — everything from cache
+    assert mock_parse.call_count == 0
 
 
-def test_session_prefilter_short_prefix_parses_all(
-    tmp_path: Path, monkeypatch: Any
+def test_session_prefix_matches_with_multiple_sessions(
+    tmp_path: Path,
 ) -> None:
-    """Short prefixes (< 4 chars) bypass the pre-filter and parse all sessions."""
+    """Prefix matching still works correctly with the cached approach."""
     uuids = [
         "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "ab222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -2061,45 +1968,14 @@ def test_session_prefilter_short_prefix_parses_all(
     for uid in uuids:
         _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        # Sort reverse-alphabetically so cd333… (non-matching) is visited
-        # before ab… dirs, proving the pre-filter didn't skip it.
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.parent.name,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
-    parse_calls: list[Path] = []
-    original_parse = __import__(
-        "copilot_usage.parser", fromlist=["parse_events"]
-    ).parse_events
-
-    def _tracking_parse(events_path: Path) -> list[Any]:
-        parse_calls.append(events_path)
-        return original_parse(events_path)
-
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
-
     runner = CliRunner()
-    # "ab" is only 2 chars — pre-filter should NOT skip anything
-    result = runner.invoke(main, ["session", "ab"])
+    result = runner.invoke(main, ["session", "cd", "--path", str(tmp_path)])
     assert result.exit_code == 0
-
-    # The non-matching cd333… dir must have been parsed (no pre-filter applied).
-    assert len(parse_calls) >= 2
-    parsed_dirs = {p.parent.name for p in parse_calls}
-    assert "cd333333-cccc-cccc-cccc-cccccccccccc" in parsed_dirs
-
-    # First match (reverse-alpha discovery: ab222222 before ab111111) is shown.
-    assert "ab222222" in result.output
-    assert "ab111111" not in result.output
+    assert "cd333333" in result.output
 
 
-def test_session_exact_uuid_wins_over_partial(tmp_path: Path, monkeypatch: Any) -> None:
-    """An exact full-UUID match is found regardless of discovery order."""
+def test_session_exact_uuid_wins_over_partial(tmp_path: Path) -> None:
+    """An exact full-UUID match is found regardless of order."""
     uuids = [
         "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "ab222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -2107,28 +1983,21 @@ def test_session_exact_uuid_wins_over_partial(tmp_path: Path, monkeypatch: Any) 
     for uid in uuids:
         _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        # ab222222 is discovered before ab111111
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.parent.name,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
     runner = CliRunner()
-    # Exact UUID targets ab111111 even though ab222222 is discovered first
-    result = runner.invoke(main, ["session", "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"])
+    # Exact UUID targets ab111111 even if ab222222 sorts first
+    result = runner.invoke(
+        main,
+        ["session", "ab111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--path", str(tmp_path)],
+    )
     assert result.exit_code == 0
     assert "ab111111" in result.output
     assert "ab222222" not in result.output
 
 
-def test_session_prefilter_non_uuid_dirs_always_parsed(
-    tmp_path: Path, monkeypatch: Any
+def test_session_non_uuid_dirs_found(
+    tmp_path: Path,
 ) -> None:
-    """Non-UUID directory names are always parsed even with long prefix."""
+    """Non-UUID directory names are found via get_all_sessions."""
     session_dir = tmp_path / "corrupt-session"
     session_dir.mkdir()
     events: list[dict[str, Any]] = [
@@ -2157,67 +2026,29 @@ def test_session_prefilter_non_uuid_dirs_always_parsed(
         for ev in events:
             fh.write(json.dumps(ev) + "\n")
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return list(tmp_path.glob("*/events.jsonl"))
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
     runner = CliRunner()
-    result = runner.invoke(main, ["session", "corrupt0"])
+    result = runner.invoke(main, ["session", "corrupt0", "--path", str(tmp_path)])
     assert result.exit_code == 0
     assert "corrupt0" in result.output
 
 
-def test_session_command_one_char_prefix_skips_prefilter(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    """A 1-character prefix bypasses the pre-filter and parses all sessions."""
+def test_session_short_prefix_matches(tmp_path: Path) -> None:
+    """Short prefixes (1-3 chars) still match sessions."""
     uuids = [
         "a1111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "a2222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         "b3333333-cccc-cccc-cccc-cccccccccccc",
     ]
     for uid in uuids:
         _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        # Non-matching dir first to prove prefilter was skipped
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.parent.name,
-            reverse=True,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
-    parse_calls: list[Path] = []
-    original_parse = __import__(
-        "copilot_usage.parser", fromlist=["parse_events"]
-    ).parse_events
-
-    def _tracking_parse(events_path: Path) -> list[Any]:
-        parse_calls.append(events_path)
-        return original_parse(events_path)
-
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
-
     runner = CliRunner()
-    # "a" is only 1 char — pre-filter must NOT skip anything
-    result = runner.invoke(main, ["session", "a"])
+    result = runner.invoke(main, ["session", "a", "--path", str(tmp_path)])
     assert result.exit_code == 0
-
-    # Non-matching b3333… was parsed (no pre-filter applied)
-    parsed_dirs = {p.parent.name for p in parse_calls}
-    assert "b3333333-cccc-cccc-cccc-cccccccccccc" in parsed_dirs
-
-    # First match in discovery order (reverse-alpha: a2222222 before a1111111)
-    assert "a2222222" in result.output
+    assert "a1111111" in result.output
 
 
-def test_session_command_three_char_prefix_skips_prefilter(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    """A 3-character prefix that matches nothing shows 'no session matching' + Available."""
+def test_session_no_match_shows_available(tmp_path: Path) -> None:
+    """Non-matching prefix shows error and available IDs."""
     uuids = [
         "aa111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "bb222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -2225,37 +2056,9 @@ def test_session_command_three_char_prefix_skips_prefilter(
     for uid in uuids:
         _write_session(tmp_path, uid, use_full_uuid_dir=True)
 
-    def _fake_discover(_base: Path | None = None) -> list[Path]:
-        return sorted(
-            tmp_path.glob("*/events.jsonl"),
-            key=lambda p: p.parent.name,
-        )
-
-    monkeypatch.setattr("copilot_usage.cli.discover_sessions", _fake_discover)
-
-    parse_calls: list[Path] = []
-    original_parse = __import__(
-        "copilot_usage.parser", fromlist=["parse_events"]
-    ).parse_events
-
-    def _tracking_parse(events_path: Path) -> list[Any]:
-        parse_calls.append(events_path)
-        return original_parse(events_path)
-
-    monkeypatch.setattr("copilot_usage.cli.parse_events", _tracking_parse)
-
     runner = CliRunner()
-    # "iii" is 3 chars and matches nothing — all sessions parsed, error shown
-    result = runner.invoke(main, ["session", "iii"])
+    result = runner.invoke(main, ["session", "zzz", "--path", str(tmp_path)])
     assert result.exit_code == 1
-
-    # Pre-filter was skipped: both UUID dirs were fully parsed
-    assert len(parse_calls) == 2
-    parsed_dirs = {p.parent.name for p in parse_calls}
-    assert "aa111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in parsed_dirs
-    assert "bb222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in parsed_dirs
-
-    # Error + Available list
     assert "no session matching" in result.output
     assert "Available" in result.output
 
