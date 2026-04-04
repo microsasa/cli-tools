@@ -12,6 +12,12 @@ from copilot_usage.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 @pytest.fixture(autouse=True)
 def _wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -92,6 +98,22 @@ class TestSessionE2E:
         result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
         assert "Session Detail" in result.output
         assert "Aggregate Stats" in result.output
+
+    def test_session_detail_shows_code_changes(self) -> None:
+        """b5df fixture has codeChanges: 1877 added, 71 removed."""
+        result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        plain = _strip_ansi(result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+1877\b", plain) is not None
+        assert re.search(r"Lines removed\b.*-71\b", plain) is not None
+
+    def test_session_detail_shows_modified_files(self) -> None:
+        result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        plain = _strip_ansi(result.output)
+        assert "Files modified" in plain
+        assert re.search(r"Files modified\b.*\b4\b", plain) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +431,18 @@ class TestMultiShutdownCompletedE2E:
         assert "multi-shutdown-completed" in result.output
         assert "Shutdown Cycles" in result.output
 
+    def test_code_changes_aggregated_across_shutdowns(self) -> None:
+        """Two shutdown events with 40+120=160 added lines; should appear summed."""
+        result = CliRunner().invoke(
+            main, ["session", "multi-shutdown-c", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        plain = _strip_ansi(result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+160\b", plain) is not None
+        assert re.search(r"Lines removed\b.*-10\b", plain) is not None
+        assert re.search(r"Files modified\b.*\b5\b", plain) is not None
+
 
 # ---------------------------------------------------------------------------
 # multi-shutdown resumed session (2 shutdowns, still active)
@@ -447,6 +481,17 @@ class TestMultiShutdownResumedE2E:
         assert "multi-shutdown-resumed" in result.output
         assert "Active" in result.output
         assert "Shutdown Cycles" in result.output
+
+    def test_code_changes_present_in_active_resumed_session(self) -> None:
+        """Resumed session with 2 shutdowns shows accumulated code changes."""
+        result = CliRunner().invoke(
+            main, ["session", "multi-shutdown-r", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        plain = _strip_ansi(result.output)
+        assert "Code Changes" in plain
+        assert re.search(r"Lines added\b.*\+75\b", plain) is not None  # 20 + 55
+        assert re.search(r"Files modified\b.*\b2\b", plain) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +614,7 @@ class TestPureActiveSessionActivityE2E:
         """Pure active session appears in the live view."""
         result = CliRunner().invoke(main, ["live", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        clean = _strip_ansi(result.output)
         lines = clean.splitlines()
         active_line = next(line for line in lines if "pure-act" in line)
         # Live table columns: Session ID | Name | Model | Running | Messages | Output Tokens | CWD
@@ -653,7 +698,7 @@ class TestCostDateFilterE2E:
             line for line in result.output.splitlines() if "Grand Total" in line
         )
         columns = [c.strip() for c in grand_total_line.split("│")]
-        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        premium_cost_col = _strip_ansi(columns[4])
         assert premium_cost_col == "288"
 
     def test_cost_until_excludes_newer_sessions(self) -> None:
@@ -673,7 +718,7 @@ class TestCostDateFilterE2E:
             line for line in result.output.splitlines() if "Grand Total" in line
         )
         columns = [c.strip() for c in grand_total_line.split("│")]
-        premium_cost_col = re.sub(r"\x1b\[[0-9;]*m", "", columns[4])
+        premium_cost_col = _strip_ansi(columns[4])
         assert premium_cost_col == "537"
 
     def test_cost_inverted_date_range_shows_error(self) -> None:
@@ -691,7 +736,7 @@ class TestCostDateFilterE2E:
             ],
         )
         assert result.exit_code != 0
-        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        output = _strip_ansi(result.output)
         assert "--since" in output
         assert "after" in output
 
@@ -721,8 +766,6 @@ class TestSessionNotFoundAvailableE2E:
 # interactive summary (two-section layout)
 # ---------------------------------------------------------------------------
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
 # Marker that separates the historical section from the active section
 _ACTIVE_MARKER = "Active Sessions (Since Last Shutdown)"
 
@@ -744,10 +787,6 @@ _FREE_COMPLETED_EVENTS = (
     '"id":"fc-shutdown","timestamp":"2026-03-07T10:30:00.000Z",'
     '"parentId":"fc-start"}\n'
 )
-
-
-def _strip_ansi(text: str) -> str:
-    return _ANSI_RE.sub("", text)
 
 
 def _historical_section(output: str) -> str:
