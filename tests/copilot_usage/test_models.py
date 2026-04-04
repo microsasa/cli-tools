@@ -20,6 +20,7 @@ from copilot_usage.models import (
     SessionSummary,
     TokenUsage,
     ToolExecutionData,
+    ToolRequest,
     UserMessageData,
     add_to_model_metrics,
     copy_model_metrics,
@@ -167,6 +168,20 @@ def test_assistant_message_data() -> None:
     d = AssistantMessageData.model_validate(RAW_ASSISTANT_MESSAGE["data"])
     assert d.outputTokens == 373
     assert d.reasoningText == "..."
+
+
+def test_assistant_message_data_tool_requests_default() -> None:
+    """toolRequests defaults to an empty list when not supplied."""
+    d = AssistantMessageData()
+    assert d.toolRequests == []
+
+
+def test_assistant_message_data_tool_requests_populated() -> None:
+    """toolRequests is populated correctly when provided."""
+    d = AssistantMessageData(toolRequests=[ToolRequest(name="bash", toolCallId="t1")])
+    assert len(d.toolRequests) == 1
+    assert d.toolRequests[0].name == "bash"
+    assert d.toolRequests[0].toolCallId == "t1"
 
 
 def test_session_shutdown_data() -> None:
