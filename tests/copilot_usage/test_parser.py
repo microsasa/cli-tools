@@ -47,6 +47,7 @@ from copilot_usage.parser import (
     _FirstPassResult,
     _infer_model_from_metrics,
     _insert_session_entry,
+    _parse_events_from_offset,
     _read_config_model,
     _ResumeInfo,
     _safe_file_identity,
@@ -5023,7 +5024,10 @@ class TestSessionCacheMtime:
         self._make_session(tmp_path, "sess-b", "b")
 
         # First call — populates cache; both files must be parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 2
             assert spy.call_count == 2
@@ -5053,12 +5057,19 @@ class TestSessionCacheMtime:
         stat = p1.stat()
         os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
 
-        # Second call — only the modified file should be re-parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        # Second call — only the modified file should be re-parsed,
+        # using the incremental path (non-zero offset from _EVENTS_CACHE).
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 2
             assert spy.call_count == 1
-            spy.assert_called_once_with(p1)
+            call_args = spy.call_args
+            assert call_args is not None
+            assert call_args[0][0] == p1  # correct path
+            assert call_args[0][1] > 0  # incremental, not full reparse
 
     def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
         """Cached entries produce the same summaries as a fresh parse."""
@@ -5093,7 +5104,7 @@ class TestSessionCacheMtime:
         assert cached_summary.name == "Renamed Session"
 
     def test_single_stat_per_file(self, tmp_path: Path) -> None:
-        """events.jsonl stat'd once (discovery), plan.md stat'd once (cache store)."""
+        """events.jsonl stat'd once (discovery), plan.md stat'd once."""
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
@@ -5101,7 +5112,9 @@ class TestSessionCacheMtime:
         ) as spy:
             get_all_sessions(tmp_path)
             # _safe_file_identity called once by _discover_with_identity for
-            # events.jsonl, and once for plan.md when storing the cache entry.
+            # events.jsonl and once for plan.md when storing the cache entry.
+            # No post-parse stat is needed because _parse_events_from_offset
+            # returns a safe_end byte boundary directly.
             assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
@@ -5330,7 +5343,10 @@ class TestActiveSessionCaching:
         # First call — must parse
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 1
@@ -5340,7 +5356,10 @@ class TestActiveSessionCaching:
         # Second call — no file changes, should use cache
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 1
@@ -5367,7 +5386,10 @@ class TestActiveSessionCaching:
             config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
 
             # Second call should re-parse because config model changed
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
@@ -5388,7 +5410,10 @@ class TestActiveSessionCaching:
             get_all_sessions(tmp_path / "sessions")
 
             # Second call — same config, same file → cache hit
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result = get_all_sessions(tmp_path / "sessions")
                 assert len(result) == 1
                 assert result[0].model == "gpt-5.1"
@@ -5431,7 +5456,10 @@ class TestActiveSessionCaching:
             # Now create a config with a model
             config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "gpt-5.1"
@@ -5460,7 +5488,10 @@ class TestActiveSessionCaching:
             # Change config — should NOT trigger re-parse
             config.write_text('{"model": "gpt-5.2"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
@@ -5489,7 +5520,10 @@ class TestActiveSessionCaching:
             # Delete the config file — config_model should now be None
             config.unlink()
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model is None  # config-sourced model gone
@@ -5665,6 +5699,267 @@ class TestGetCachedEvents:
 
 
 # ---------------------------------------------------------------------------
+# Issue #732 — incremental append-only parsing in get_cached_events
+# ---------------------------------------------------------------------------
+
+
+class TestIncrementalEventsParsing:
+    """Verify that get_cached_events incrementally parses only newly
+    appended events instead of re-reading the entire file.
+    """
+
+    def test_incremental_parse_only_validates_new_events(self, tmp_path: Path) -> None:
+        """Appending 10 events to a 5 000-event file triggers Pydantic
+        validation only for the new events, not the full file.
+
+        Patches ``SessionEvent.model_validate`` with a counter to confirm
+        the incremental path was taken.
+        """
+        p = tmp_path / "s1" / "events.jsonl"
+        initial_count = 5_000
+        _write_large_events_file(p, initial_count)
+
+        # Prime the cache with a cold read
+        first = get_cached_events(p)
+        assert len(first) == initial_count + 1  # 1 start + 5000 user messages
+
+        # Append 10 new events
+        append_count = 10
+        with p.open("a", encoding="utf-8") as fh:
+            for i in range(initial_count, initial_count + append_count):
+                fh.write(_make_user_event(i) + "\n")
+
+        # Patch model_validate to count calls during incremental parse
+        original_validate = SessionEvent.model_validate
+        validate_calls: list[int] = [0]
+
+        def counting_validate(
+            obj: object,
+            *args: object,
+            **kwargs: object,
+        ) -> SessionEvent:
+            validate_calls[0] += 1
+            return original_validate(obj, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(
+            SessionEvent, "model_validate", side_effect=counting_validate
+        ):
+            second = get_cached_events(p)
+
+        # Only the 10 new events should have been validated
+        assert validate_calls[0] == append_count
+        # Total should include all events
+        assert len(second) == initial_count + 1 + append_count
+
+    def test_incremental_parse_returns_all_events(self, tmp_path: Path) -> None:
+        """After incremental parse, the returned tuple contains every event."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        first = get_cached_events(p)
+        assert len(first) == 2
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_ASSISTANT_MSG + "\n")
+
+        second = get_cached_events(p)
+        assert len(second) == 3
+        # Original events are preserved
+        assert second[0].type == "session.start"
+        assert second[1].type == "user.message"
+        assert second[2].type == "assistant.message"
+
+    def test_truncated_file_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """If the file shrinks, the cache falls back to a full reparse."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        first = get_cached_events(p)
+        assert len(first) == 3
+
+        # Overwrite with a shorter file (simulates truncation)
+        _write_events(p, _START_EVENT)
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            second = get_cached_events(p)
+            assert spy.call_count == 1  # full reparse
+            spy.assert_called_once_with(p, 0)
+        assert len(second) == 1
+
+    def test_incremental_does_not_call_parse_events(self, tmp_path: Path) -> None:
+        """The incremental path reparses only from the cached non-zero offset."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_large_events_file(p, 100)
+
+        get_cached_events(p)  # prime
+        initial_size = p.stat().st_size
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_make_user_event(999) + "\n")
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            result = get_cached_events(p)
+
+        assert spy.call_count == 1
+        assert spy.call_args is not None
+        assert spy.call_args.args[0] == p
+        assert spy.call_args.args[1] == initial_size
+        assert spy.call_args.args[1] > 0
+        assert len(result) == 102  # 1 start + 100 + 1 appended
+
+    def test_cache_entry_stores_end_offset(self, tmp_path: Path) -> None:
+        """After a call, _EVENTS_CACHE entry has end_offset == file size."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        expected_size = p.stat().st_size
+
+        get_cached_events(p)
+
+        entry = _EVENTS_CACHE[p]
+        assert entry.end_offset == expected_size
+
+    def test_incremental_updates_end_offset(self, tmp_path: Path) -> None:
+        """After incremental parse, end_offset reflects the new file size."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        get_cached_events(p)
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_ASSISTANT_MSG + "\n")
+        new_size = p.stat().st_size
+
+        get_cached_events(p)
+
+        entry = _EVENTS_CACHE[p]
+        assert entry.end_offset == new_size
+
+    def test_cold_start_full_reparse(self, tmp_path: Path) -> None:
+        """A cold cache (no prior entry) always does a full reparse."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            result = get_cached_events(p)
+            spy.assert_called_once_with(p, 0)
+        assert len(result) == 3
+
+    def test_incomplete_event_retried_on_next_refresh(self, tmp_path: Path) -> None:
+        """When a line is incomplete at EOF, the next refresh retries it."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        get_cached_events(p)  # prime cache
+
+        # Write first part of assistant message (incomplete — no newline)
+        partial = _ASSISTANT_MSG.encode("utf-8")[:20]
+        with p.open("ab") as fh:
+            fh.write(partial)
+
+        mid = get_cached_events(p)
+        assert len(mid) == 2  # incomplete event not parsed
+
+        # Writer completes the line
+        rest = _ASSISTANT_MSG.encode("utf-8")[20:] + b"\n"
+        with p.open("ab") as fh:
+            fh.write(rest)
+
+        final = get_cached_events(p)
+        assert len(final) == 3
+        assert final[2].type == "assistant.message"
+
+
+class TestParseEventsFromOffset:
+    """Exercise error-handling paths in _parse_events_from_offset."""
+
+    def test_blank_lines_are_skipped(self, tmp_path: Path) -> None:
+        """Empty / whitespace-only lines after the offset are ignored."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        offset = p.stat().st_size
+
+        # Append a blank line followed by a valid event
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+            fh.write("   \n")
+            fh.write(_ASSISTANT_MSG + "\n")
+
+        result, end_off = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "assistant.message"
+        assert end_off == p.stat().st_size
+
+    def test_malformed_json_skipped(self, tmp_path: Path) -> None:
+        """Complete lines that are not valid JSON are skipped with a warning."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write("{not valid json\n")
+            fh.write(_USER_MSG + "\n")
+
+        result, end_off = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "user.message"
+        assert end_off == p.stat().st_size
+
+    def test_validation_error_skipped(self, tmp_path: Path) -> None:
+        """JSON that is valid but fails Pydantic validation is skipped."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Valid JSON but 'type' is an int — triggers ValidationError
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": 123}) + "\n")
+            fh.write(_USER_MSG + "\n")
+
+        result, end_off = _parse_events_from_offset(p, offset)
+        # The valid user message should be parsed; the invalid one skipped
+        assert len(result) == 1
+        assert result[0].type == "user.message"
+        assert end_off == p.stat().st_size
+
+    def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
+        """A mid-stream UTF-8 decode error returns events parsed so far."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Write a valid event followed by invalid UTF-8 bytes
+        with p.open("ab") as fh:
+            fh.write((_USER_MSG + "\n").encode("utf-8"))
+            fh.write(b"\xff\xfe invalid utf8\n")
+
+        result, _end_off = _parse_events_from_offset(p, offset)
+        assert len(result) == 1
+        assert result[0].type == "user.message"
+
+    def test_incomplete_line_stops_parsing(self, tmp_path: Path) -> None:
+        """An unterminated line with invalid JSON stops incremental parsing."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Append a partial JSON line (no trailing newline — simulates mid-write)
+        with p.open("ab") as fh:
+            fh.write(b'{"type": "assistant')
+
+        result, end_off = _parse_events_from_offset(p, offset)
+        assert len(result) == 0
+        assert end_off == offset  # did not advance past incomplete line
+
+
+# ---------------------------------------------------------------------------
 # Issue #668 — get_all_sessions populates _EVENTS_CACHE
 # ---------------------------------------------------------------------------
 
@@ -5700,12 +5995,15 @@ class TestGetAllSessionsPopulatesEventsCache:
         — parse_events is called only once per session, not twice."""
         p = self._make_session(tmp_path, "sess-a", "a")
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             get_all_sessions(tmp_path)
             assert spy.call_count == 1  # single parse during get_all_sessions
 
             events = get_cached_events(p)
-            # Still 1 — no additional parse_events call
+            # Still 1 — no additional _parse_events_from_offset call
             assert spy.call_count == 1
 
         assert len(events) == 3  # start + user + shutdown
@@ -5776,7 +6074,10 @@ class TestGetAllSessionsEventsCacheOverflow:
         excluded_path = paths[0]
         assert excluded_path not in _EVENTS_CACHE
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             events = get_cached_events(excluded_path)
             spy.assert_called_once()  # cache miss → re-parse
 
