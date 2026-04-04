@@ -937,6 +937,7 @@ class TestVscodeE2E:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
+        assert result.exit_code == 0
         assert "VS Code Copilot Chat" in result.output
         assert "Requests:" in result.output
 
@@ -944,12 +945,14 @@ class TestVscodeE2E:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
+        assert result.exit_code == 0
         assert "Per-Model Breakdown" in result.output
 
     def test_daily_activity_present(self) -> None:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
+        assert result.exit_code == 0
         assert "Daily Activity" in result.output
 
     def test_request_count_matches_fixture(self) -> None:
@@ -958,7 +961,7 @@ class TestVscodeE2E:
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
         assert result.exit_code == 0
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        clean_output = _strip_ansi(result.output)
         assert re.search(r"Requests:\s*12\b", clean_output)
 
     def test_model_names_in_output(self) -> None:
@@ -966,6 +969,7 @@ class TestVscodeE2E:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
+        assert result.exit_code == 0
         assert "gpt-4o-mini" in result.output
         assert "claude-sonnet-4.6" in result.output
 
@@ -974,6 +978,7 @@ class TestVscodeE2E:
         result = CliRunner().invoke(
             main, ["vscode", "--vscode-logs", str(self.VSCODE_FIXTURES)]
         )
+        assert result.exit_code == 0
         assert "2026-03-13" in result.output
         assert "2026-03-14" in result.output
 
