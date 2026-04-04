@@ -12,6 +12,12 @@ from copilot_usage.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 @pytest.fixture(autouse=True)
 def _wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +103,7 @@ class TestSessionE2E:
         """b5df fixture has codeChanges: 1877 added, 71 removed."""
         result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        plain = _strip_ansi(result.output)
         assert "Code Changes" in plain
         assert re.search(r"Lines added\b.*\+1877\b", plain) is not None
         assert re.search(r"Lines removed\b.*-71\b", plain) is not None
@@ -105,7 +111,7 @@ class TestSessionE2E:
     def test_session_detail_shows_modified_files(self) -> None:
         result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        plain = _strip_ansi(result.output)
         assert "Files modified" in plain
         assert re.search(r"Files modified\b.*\b4\b", plain) is not None
 
@@ -431,7 +437,7 @@ class TestMultiShutdownCompletedE2E:
             main, ["session", "multi-shutdown-c", "--path", str(FIXTURES)]
         )
         assert result.exit_code == 0
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        plain = _strip_ansi(result.output)
         assert "Code Changes" in plain
         assert re.search(r"Lines added\b.*\+160\b", plain) is not None
         assert re.search(r"Lines removed\b.*-10\b", plain) is not None
@@ -482,7 +488,7 @@ class TestMultiShutdownResumedE2E:
             main, ["session", "multi-shutdown-r", "--path", str(FIXTURES)]
         )
         assert result.exit_code == 0
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        plain = _strip_ansi(result.output)
         assert "Code Changes" in plain
         assert re.search(r"Lines added\b.*\+75\b", plain) is not None  # 20 + 55
         assert re.search(r"Files modified\b.*\b2\b", plain) is not None
@@ -760,8 +766,6 @@ class TestSessionNotFoundAvailableE2E:
 # interactive summary (two-section layout)
 # ---------------------------------------------------------------------------
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
 # Marker that separates the historical section from the active section
 _ACTIVE_MARKER = "Active Sessions (Since Last Shutdown)"
 
@@ -783,10 +787,6 @@ _FREE_COMPLETED_EVENTS = (
     '"id":"fc-shutdown","timestamp":"2026-03-07T10:30:00.000Z",'
     '"parentId":"fc-start"}\n'
 )
-
-
-def _strip_ansi(text: str) -> str:
-    return _ANSI_RE.sub("", text)
 
 
 def _historical_section(output: str) -> str:
