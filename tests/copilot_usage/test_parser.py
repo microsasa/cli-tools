@@ -34,6 +34,7 @@ from copilot_usage.models import (
 from copilot_usage.parser import (
     _EVENTS_CACHE,
     _MAX_CACHED_EVENTS,
+    _MAX_CACHED_SESSIONS,
     _SESSION_CACHE,
     _build_active_summary,
     _build_completed_summary,
@@ -44,6 +45,7 @@ from copilot_usage.parser import (
     _first_pass,
     _FirstPassResult,
     _infer_model_from_metrics,
+    _insert_session_entry,
     _read_config_model,
     _ResumeInfo,
     _safe_file_identity,
@@ -6225,3 +6227,123 @@ class TestEventsCacheLimitCoversTypicalSessions:
             for ep in paths:
                 get_cached_events(ep)
             assert spy.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #722 — _SESSION_CACHE bounded by _MAX_CACHED_SESSIONS
+# ---------------------------------------------------------------------------
+
+
+class TestSessionCacheLRUEviction:
+    """_SESSION_CACHE is bounded by _MAX_CACHED_SESSIONS and uses LRU eviction."""
+
+    def test_cache_bounded_after_many_sessions(self, tmp_path: Path) -> None:
+        """get_all_sessions with > _MAX_CACHED_SESSIONS dirs caps the cache."""
+        total = _MAX_CACHED_SESSIONS + 10
+        created_paths: list[Path] = []
+        base_mtime = time.time()
+
+        for i in range(total):
+            session_path = _make_completed_session(
+                tmp_path, f"sess-{i:04d}", f"sid-{i:04d}"
+            )
+            created_paths.append(session_path)
+
+            # Make recency deterministic so the newest sessions are unambiguous.
+            mtime = base_mtime + i
+            os.utime(session_path, (mtime, mtime))
+            os.utime(session_path.parent, (mtime, mtime))
+
+        summaries = get_all_sessions(tmp_path)
+        assert len(summaries) == total
+        assert len(_SESSION_CACHE) == _MAX_CACHED_SESSIONS
+
+        oldest_paths = created_paths[: total - _MAX_CACHED_SESSIONS]
+        newest_paths = created_paths[total - _MAX_CACHED_SESSIONS :]
+
+        for path in oldest_paths:
+            assert path not in _SESSION_CACHE
+
+        for path in newest_paths:
+            assert path in _SESSION_CACHE
+
+    def test_insert_session_entry_evicts_lru(self) -> None:
+        """_insert_session_entry evicts the oldest entry at capacity."""
+        _SESSION_CACHE.clear()
+        dummy = _CachedSession(
+            file_id=(1, 1),
+            plan_id=None,
+            config_model=None,
+            depends_on_config=False,
+            summary=SessionSummary(session_id="s"),
+        )
+        # Fill to capacity.
+        for i in range(_MAX_CACHED_SESSIONS):
+            _insert_session_entry(Path(f"/fake/{i}/events.jsonl"), dummy)
+        assert len(_SESSION_CACHE) == _MAX_CACHED_SESSIONS
+
+        first_key = next(iter(_SESSION_CACHE))
+
+        # Insert one more — should evict the first.
+        _insert_session_entry(Path("/fake/new/events.jsonl"), dummy)
+        assert len(_SESSION_CACHE) == _MAX_CACHED_SESSIONS
+        assert first_key not in _SESSION_CACHE
+        assert Path("/fake/new/events.jsonl") in _SESSION_CACHE
+
+    def test_cache_hit_promotes_to_mru(self, tmp_path: Path) -> None:
+        """Accessing a cached session promotes it in correct LRU order."""
+        # Create 3 sessions and force a deterministic discovery order:
+        # newest-first by mtime => p3, p2, p1.
+        p1 = _make_completed_session(tmp_path, "sess-a", "sid-a")
+        p2 = _make_completed_session(tmp_path, "sess-b", "sid-b")
+        p3 = _make_completed_session(tmp_path, "sess-c", "sid-c")
+        base_time = time.time()
+        os.utime(p1, (base_time - 30, base_time - 30))
+        os.utime(p2, (base_time - 20, base_time - 20))
+        os.utime(p3, (base_time - 10, base_time - 10))
+
+        get_all_sessions(tmp_path)
+        assert p1 in _SESSION_CACHE
+        assert p2 in _SESSION_CACHE
+        assert p3 in _SESSION_CACHE
+
+        # After first call, oldest (p1) should be at front (LRU) and
+        # newest (p3) at back (MRU).
+        assert list(_SESSION_CACHE) == [p1, p2, p3]
+
+        # Scramble the cache order so the next call must actively
+        # restore the correct LRU ordering.
+        _SESSION_CACHE.move_to_end(p3, last=False)
+        assert list(_SESSION_CACHE) == [p3, p1, p2]
+
+        # Second call hits the cache; all sessions should be promoted in
+        # oldest→newest order, restoring newest-at-MRU.
+        get_all_sessions(tmp_path)
+
+        # Cache should still contain all three sessions, and the newest
+        # entry (p3) should be last (MRU).
+        assert len(_SESSION_CACHE) == 3
+        assert list(_SESSION_CACHE) == [p1, p2, p3]
+
+    def test_stale_pruning_bounded(self, tmp_path: Path) -> None:
+        """Stale entries for deleted session directories are removed from the cache."""
+        import shutil
+
+        total = 5
+        paths: list[Path] = []
+        for i in range(total):
+            ep = _make_completed_session(tmp_path, f"sess-{i}", f"sid-{i}")
+            paths.append(ep)
+
+        get_all_sessions(tmp_path)
+        assert len(_SESSION_CACHE) == total
+
+        # Delete 2 sessions from disk.
+        shutil.rmtree(paths[1].parent)
+        shutil.rmtree(paths[3].parent)
+
+        summaries = get_all_sessions(tmp_path)
+        assert len(summaries) == total - 2
+        assert paths[1] not in _SESSION_CACHE
+        assert paths[3] not in _SESSION_CACHE
+        assert len(_SESSION_CACHE) == total - 2
