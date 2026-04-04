@@ -465,13 +465,13 @@ def test_session_error_handling(tmp_path: Path, monkeypatch: Any) -> None:
     assert "Traceback" not in (result.output or "")
 
 
-def test_session_command_continues_after_parse_oserror(
+def test_session_command_skips_malformed_events(
     tmp_path: Path,
 ) -> None:
-    """When get_all_sessions internally skips an unreadable session,
-    the command still finds a matching session in another directory."""
+    """When get_all_sessions encounters a session with unparseable JSON,
+    it silently skips it and the command still finds a valid match."""
     _write_session(tmp_path, "target-session-aaa", name="Target")
-    # Create a session dir with an unreadable events.jsonl
+    # Create a session dir with malformed (non-JSON) content
     failing_dir = tmp_path / "failing-"
     failing_dir.mkdir()
     events_path = failing_dir / "events.jsonl"
@@ -536,6 +536,9 @@ def test_session_command_logs_warning_on_unreadable_session(
     try:
         result = runner.invoke(main, ["session", "valid000", "--path", str(tmp_path)])
         assert result.exit_code == 0
+        warning_output = sink.getvalue()
+        assert warning_output
+        assert "bad-sess" in warning_output
     finally:
         logging_config.setup_logging = original_setup
         if handler_id is not None:

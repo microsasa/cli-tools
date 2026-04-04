@@ -502,7 +502,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
         click.echo(f"Error reading session: {exc}", err=True)
         sys.exit(1)
 
-    render_session_detail(list(events), matched)
+    render_session_detail(events, matched)
 
 
 # ---------------------------------------------------------------------------
