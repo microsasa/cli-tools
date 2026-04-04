@@ -691,13 +691,14 @@ def render_cost_view(
                 name = ""
                 model_calls_display = ""
         else:
+            session_output = total_output_tokens(s)
             table.add_row(
                 name,
                 s.model or "—",
                 "—",
                 "—",
                 str(s.model_calls),
-                "—",
+                format_tokens(session_output) if session_output else "—",
             )
 
         grand_output += total_output_tokens(s)

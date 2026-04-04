@@ -5355,18 +5355,83 @@ class TestRenderCostViewNoModelMetricsGrandTotal:
         )
         output = _capture_cost_view([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        # The per-session Output Tokens cell should be "—" (no model breakdown)
+        expected = format_tokens(total_output_tokens(session))
         lines = clean.splitlines()
+        # Per-session row must show actual token count (issue #734 fix)
         session_row = next(line for line in lines if "No Metrics Active" in line)
         session_cols = [c.strip() for c in session_row.split("│")]
-        assert session_cols[6] == "—"
+        assert session_cols[6] == expected, (
+            f"Per-session output tokens should be {expected}, got '{session_cols[6]}'"
+        )
         assert "Grand Total" in clean
         grand_row = next(line for line in lines if "Grand Total" in line)
         grand_cols = [c.strip() for c in grand_row.split("│")]
-        expected = format_tokens(total_output_tokens(session))
         assert grand_cols[6] == expected, (
             f"Grand Total output tokens should be {expected}, got '{grand_cols[6]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #734 — render_cost_view per-session row must show output tokens for
+# no-model sessions with active_output_tokens > 0
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewNoModelOutputTokensRow:
+    """Per-session row must show actual tokens, not '—', for no-model sessions."""
+
+    def test_no_model_active_output_tokens_shown_in_row(self) -> None:
+        """Active session with model_metrics={} and active_output_tokens=1500
+        must display the formatted token count in its row and match the
+        Grand Total (issue #734)."""
+        session = SessionSummary(
+            session_id="no-model-active-734",
+            name="No Model Active 734",
+            model=None,
+            is_active=True,
+            model_calls=5,
+            active_model_calls=5,
+            active_output_tokens=1500,
+            model_metrics={},
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        expected = format_tokens(total_output_tokens(session))
+
+        # 1. Per-session row shows the formatted token count (not "—")
+        session_row = next(line for line in lines if "No Model Active 734" in line)
+        session_cols = [c.strip() for c in session_row.split("│")]
+        assert session_cols[6] == expected, (
+            f"Per-session output tokens should be {expected}, got '{session_cols[6]}'"
+        )
+
+        # 2. Grand Total row output-token value equals the per-session value
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[6] == expected, (
+            f"Grand Total output tokens should be {expected}, got '{grand_cols[6]}'"
+        )
+
+    def test_no_model_zero_output_tokens_shows_dash(self) -> None:
+        """No-model session with zero active_output_tokens still shows '—'."""
+        session = SessionSummary(
+            session_id="no-model-zero-734",
+            name="No Model Zero",
+            model=None,
+            is_active=True,
+            model_calls=2,
+            active_model_calls=2,
+            active_output_tokens=0,
+            model_metrics={},
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        session_row = next(line for line in lines if "No Model Zero" in line)
+        session_cols = [c.strip() for c in session_row.split("│")]
+        assert session_cols[6] == "—"
 
 
 class TestRenderSessionTablePreSorted:
