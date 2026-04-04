@@ -253,7 +253,14 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
                 events_path, cached.end_offset
             )
             merged = cached.events + tuple(new_events)
-            _insert_events_entry(events_path, file_id, merged, safe_end)
+            # Never claim the cache covers more bytes than actually
+            # consumed — clamp size to safe_end when they diverge so
+            # the next call takes the incremental path for any
+            # trailing unconsumed bytes.
+            inc_id: tuple[int, int] | None = file_id
+            if file_id[1] != safe_end:
+                inc_id = (file_id[0], safe_end)
+            _insert_events_entry(events_path, inc_id, merged, safe_end)
             return _EVENTS_CACHE[events_path].events
 
     # Full reparse: cold start, truncation, or unknown file.
