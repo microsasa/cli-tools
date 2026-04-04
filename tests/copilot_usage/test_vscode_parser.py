@@ -234,13 +234,25 @@ class TestBuildVscodeSummary:
 
         requests = [
             VSCodeRequest(
-                datetime(2026, 3, 14, 14, 0), "a", "gpt-4o", 100, "cat"
+                timestamp=datetime(2026, 3, 14, 14, 0),
+                request_id="a",
+                model="gpt-4o",
+                duration_ms=100,
+                category="cat",
             ),  # middle
             VSCodeRequest(
-                datetime(2026, 3, 14, 10, 0), "b", "gpt-4o", 200, "cat"
+                timestamp=datetime(2026, 3, 14, 10, 0),
+                request_id="b",
+                model="gpt-4o",
+                duration_ms=200,
+                category="cat",
             ),  # earliest
             VSCodeRequest(
-                datetime(2026, 3, 14, 18, 0), "c", "gpt-4o", 150, "cat"
+                timestamp=datetime(2026, 3, 14, 18, 0),
+                request_id="c",
+                model="gpt-4o",
+                duration_ms=150,
+                category="cat",
             ),  # latest
         ]
         summary = build_vscode_summary(requests)
@@ -932,7 +944,7 @@ class TestNonChronologicalRequests:
 # ---------------------------------------------------------------------------
 
 
-class TestTimestampBoundsOptimisation:
+class TestTimestampBoundsCorrectness:
     """Timestamp bounds are derived from per-request min/max scan."""
 
     def test_single_batch_chronological(self) -> None:
