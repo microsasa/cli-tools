@@ -3066,16 +3066,12 @@ class TestVscodeCommand:
         assert result.exit_code == 1
         assert "No VS Code Copilot Chat requests found" in result.output
 
-    def test_vscode_command_nonexistent_logs_exits_1(self, tmp_path: Path) -> None:
-        """Nonexistent ``--vscode-logs`` path → Click rejects with non-zero exit."""
+    def test_vscode_command_nonexistent_logs_exits_2(self, tmp_path: Path) -> None:
+        """Nonexistent ``--vscode-logs`` path → Click usage error with exit code 2."""
         bad_path = tmp_path / "does-not-exist"
         runner = CliRunner()
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(bad_path)])
-        assert result.exit_code != 0
-        assert (
-            "does not exist" in result.output.lower()
-            or "does-not-exist" in result.output
-        )
+        assert result.exit_code == 2
 
     def test_vscode_command_multi_file_aggregation(self, tmp_path: Path) -> None:
         """Two log files discovered → request counts are summed correctly."""
@@ -3092,25 +3088,32 @@ class TestVscodeCommand:
 
     def test_vscode_command_one_file_oserror_skipped(self, tmp_path: Path) -> None:
         """One unreadable file in a multi-file directory → only the readable file counts."""
-        good_file = _make_vscode_log(tmp_path, "session_1", _VSCODE_LOG_LINE * 2)
+        _make_vscode_log(tmp_path, "session_1", _VSCODE_LOG_LINE * 2)
         bad_file = _make_vscode_log(tmp_path, "session_2", _VSCODE_LOG_LINE_2 * 3)
 
-        # Remove read permission so open() raises PermissionError (subclass of OSError).
-        bad_file.chmod(0o000)
-        try:
-            runner = CliRunner()
+        original_open = Path.open
+
+        def _open_with_oserror_for_bad_file(
+            self: Path, *args: Any, **kwargs: Any
+        ) -> Any:
+            if self == bad_file:
+                raise OSError("simulated read failure")
+            return original_open(self, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
+
+        runner = CliRunner()
+        with patch.object(
+            Path,
+            "open",
+            autospec=True,
+            side_effect=_open_with_oserror_for_bad_file,
+        ):
             result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
-            assert result.exit_code == 0
-            clean = _strip_ansi(result.output)
-            # Only the 2 requests from the good file should count.
-            assert re.search(r"Requests:\s*2\b", clean), (
-                f"Expected 2 requests in: {clean}"
-            )
-            assert "claude-sonnet-4" in result.output
-        finally:
-            # Restore permissions so pytest can clean up tmp_path.
-            bad_file.chmod(0o644)
-        _ = good_file  # silence unused-variable linters
+
+        assert result.exit_code == 0
+        clean = _strip_ansi(result.output)
+        # Only the 2 requests from the good file should count.
+        assert re.search(r"Requests:\s*2\b", clean), f"Expected 2 requests in: {clean}"
+        assert "claude-sonnet-4" in result.output
 
 
 # ---------------------------------------------------------------------------
