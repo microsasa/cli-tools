@@ -5786,21 +5786,31 @@ class TestIncrementalEventsParsing:
         ) as spy:
             second = get_cached_events(p)
             assert spy.call_count == 1  # full reparse
+            spy.assert_called_once_with(p, 0)
         assert len(second) == 1
 
     def test_incremental_does_not_call_parse_events(self, tmp_path: Path) -> None:
-        """The incremental path bypasses parse_events entirely."""
+        """The incremental path reparses only from the cached non-zero offset."""
         p = tmp_path / "s1" / "events.jsonl"
         _write_large_events_file(p, 100)
 
         get_cached_events(p)  # prime
+        initial_size = p.stat().st_size
 
         with p.open("a", encoding="utf-8") as fh:
             fh.write(_make_user_event(999) + "\n")
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result = get_cached_events(p)
-            assert spy.call_count == 0
+
+        assert spy.call_count == 1
+        assert spy.call_args is not None
+        assert spy.call_args.args[0] == p
+        assert spy.call_args.args[1] == initial_size
+        assert spy.call_args.args[1] > 0
         assert len(result) == 102  # 1 start + 100 + 1 appended
 
     def test_cache_entry_stores_end_offset(self, tmp_path: Path) -> None:
@@ -5839,7 +5849,7 @@ class TestIncrementalEventsParsing:
             wraps=_parse_events_from_offset,
         ) as spy:
             result = get_cached_events(p)
-            assert spy.call_count == 1
+            spy.assert_called_once_with(p, 0)
         assert len(result) == 3
 
     def test_incomplete_event_retried_on_next_refresh(self, tmp_path: Path) -> None:
