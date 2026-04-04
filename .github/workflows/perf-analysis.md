@@ -24,6 +24,10 @@ safe-outputs:
     max: 2
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
+
+sandbox:
+  mcp:
+    keepalive-interval: 120
 ---
 
 # Performance Analysis
