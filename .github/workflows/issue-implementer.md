@@ -37,6 +37,10 @@ safe-outputs:
   push-to-pull-request-branch:
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
+
+sandbox:
+  mcp:
+    keepalive-interval: 120
 ---
 
 # Issue Implementer
