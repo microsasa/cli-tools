@@ -216,11 +216,12 @@ def _parse_events_from_offset(
 def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     """Return parsed events, using cache when file identity is unchanged.
 
-    Delegates to :func:`parse_events` on a cache miss and stores the
-    result keyed by *events_path* with file-identity validation on
-    lookup.  The cache is bounded to :data:`_MAX_CACHED_EVENTS`
-    entries; the **least-recently used** entry is evicted when the
-    limit is reached.
+    On a cache miss (cold start, truncation, or unknown file) the entire
+    file is re-read via :func:`_parse_events_from_offset` at offset 0
+    and the result is stored keyed by *events_path* with file-identity
+    validation on lookup.  The cache is bounded to
+    :data:`_MAX_CACHED_EVENTS` entries; the **least-recently used** entry
+    is evicted when the limit is reached.
 
     When the file has grown since the last read (append-only pattern),
     only the newly appended bytes are parsed via
@@ -235,8 +236,8 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     ``list(get_cached_events(...))``.
 
     Raises:
-        OSError: Propagated from :func:`parse_events` when the file
-            cannot be opened or read.
+        OSError: Propagated from :func:`_parse_events_from_offset`
+            when the file cannot be opened or read.
     """
     file_id = _safe_file_identity(events_path)
     cached = _EVENTS_CACHE.get(events_path)
@@ -262,10 +263,16 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     # parsing completed, overstating the consumed boundary and causing
     # later incremental refreshes to skip unparsed data.
     events, safe_end = _parse_events_from_offset(events_path, 0)
-    # Re-stat so the cached file_id reflects the current mtime/size for
-    # exact-match lookups; end_offset is derived from safe_end, not size.
+    # Re-stat so the cached file_id reflects the current mtime for
+    # exact-match lookups, but never claim the cache covers more bytes
+    # than were actually consumed up to safe_end.
     post_id = _safe_file_identity(events_path)
-    stored_id = post_id if post_id is not None else file_id
+    if post_id is None:
+        stored_id = file_id
+    elif post_id[1] == safe_end:
+        stored_id = post_id
+    else:
+        stored_id = (post_id[0], safe_end)
     _insert_events_entry(events_path, stored_id, events, safe_end)
     return _EVENTS_CACHE[events_path].events
 
