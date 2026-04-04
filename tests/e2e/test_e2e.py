@@ -93,6 +93,19 @@ class TestSessionE2E:
         assert "Session Detail" in result.output
         assert "Aggregate Stats" in result.output
 
+    def test_session_detail_shows_code_changes(self) -> None:
+        """b5df fixture has codeChanges: 1877 added, 71 removed."""
+        result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        assert "Code Changes" in result.output
+        assert "1,877" in result.output or "1877" in result.output
+        assert "71" in result.output
+
+    def test_session_detail_shows_modified_files(self) -> None:
+        result = CliRunner().invoke(main, ["session", "b5df", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        assert "files" in result.output.lower()
+
 
 # ---------------------------------------------------------------------------
 # cost
@@ -409,6 +422,15 @@ class TestMultiShutdownCompletedE2E:
         assert "multi-shutdown-completed" in result.output
         assert "Shutdown Cycles" in result.output
 
+    def test_code_changes_aggregated_across_shutdowns(self) -> None:
+        """Two shutdown events with 40+120=160 added lines; should appear summed."""
+        result = CliRunner().invoke(
+            main, ["session", "multi-shutdown-c", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "Code Changes" in result.output
+        assert "160" in result.output  # 40 + 120 linesAdded
+
 
 # ---------------------------------------------------------------------------
 # multi-shutdown resumed session (2 shutdowns, still active)
@@ -447,6 +469,15 @@ class TestMultiShutdownResumedE2E:
         assert "multi-shutdown-resumed" in result.output
         assert "Active" in result.output
         assert "Shutdown Cycles" in result.output
+
+    def test_code_changes_present_in_active_resumed_session(self) -> None:
+        """Resumed session with 2 shutdowns shows accumulated code changes."""
+        result = CliRunner().invoke(
+            main, ["session", "multi-shutdown-r", "--path", str(FIXTURES)]
+        )
+        assert result.exit_code == 0
+        assert "Code Changes" in result.output
+        assert "75" in result.output  # 20 + 55 linesAdded
 
 
 # ---------------------------------------------------------------------------
