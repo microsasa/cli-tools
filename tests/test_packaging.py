@@ -10,7 +10,6 @@ import pytest
 
 # Modules that declare __all__ and the expected public names.
 _PUBLIC_MODULES: list[str] = [
-    "copilot_usage._formatting",
     "copilot_usage.logging_config",
     "copilot_usage.models",
     "copilot_usage.parser",
@@ -69,3 +68,15 @@ def test_parse_data_and_event_data_removed_from_public_api() -> None:
     assert not hasattr(models_mod.SessionEvent, "parse_data"), (  # noqa: B009
         "SessionEvent.parse_data() must not exist — use as_*() accessors"
     )
+
+
+def test_ccreq_re_not_in_vscode_parser_all() -> None:
+    """``CCREQ_RE`` must not appear in ``vscode_parser.__all__``.
+
+    Regression guard for issue #725: the compiled regex is an
+    implementation detail and should not be part of the public API.
+    """
+    import copilot_usage.vscode_parser as vscode_mod
+
+    dunder_all = vscode_mod.__all__
+    assert "CCREQ_RE" not in dunder_all, "CCREQ_RE must not be in vscode_parser.__all__"

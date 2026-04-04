@@ -6349,6 +6349,30 @@ class TestSessionCacheLRUEviction:
         assert paths[3] not in _SESSION_CACHE
         assert len(_SESSION_CACHE) == total - 2
 
+    def test_stale_events_cache_pruned_on_session_delete(self, tmp_path: Path) -> None:
+        """_EVENTS_CACHE entries for deleted sessions are pruned alongside _SESSION_CACHE."""
+        import shutil
+
+        total = 3
+        paths: list[Path] = []
+        for i in range(total):
+            ep = _make_completed_session(tmp_path, f"sess-{i}", f"sid-{i}")
+            paths.append(ep)
+
+        get_all_sessions(tmp_path)
+        assert len(_SESSION_CACHE) == total
+        # _EVENTS_CACHE is populated for at least the newest sessions.
+        cached_events_before = [p for p in paths if p in _EVENTS_CACHE]
+        assert len(cached_events_before) > 0
+
+        # Delete the middle session from disk.
+        shutil.rmtree(paths[1].parent)
+
+        summaries = get_all_sessions(tmp_path)
+        assert len(summaries) == total - 1
+        assert paths[1] not in _SESSION_CACHE
+        assert paths[1] not in _EVENTS_CACHE
+
 
 # ---------------------------------------------------------------------------
 # Issue #723 — _first_pass frozenset pre-filter performance

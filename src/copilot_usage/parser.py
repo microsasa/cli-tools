@@ -870,5 +870,9 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     for p in stale:
         del _SESSION_CACHE[p]
 
+    stale_events = [p for p in _EVENTS_CACHE if p not in discovered_paths]
+    for p in stale_events:
+        del _EVENTS_CACHE[p]
+
     summaries.sort(key=session_sort_key, reverse=True)
     return summaries

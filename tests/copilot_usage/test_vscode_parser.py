@@ -11,7 +11,7 @@ from loguru import logger
 
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
-    CCREQ_RE,
+    _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
@@ -47,13 +47,13 @@ _LOG_NOISE = (
 
 
 # ---------------------------------------------------------------------------
-# CCREQ_RE regex
+# _CCREQ_RE regex
 # ---------------------------------------------------------------------------
 
 
 class TestCcreqRegex:
     def test_normal_line(self) -> None:
-        m = CCREQ_RE.match(_LOG_OPUS)
+        m = _CCREQ_RE.match(_LOG_OPUS)
         assert m is not None
         ts, req_id, model, dur, cat = m.groups()
         assert ts == "2026-03-13 22:10:24.523"
@@ -63,7 +63,7 @@ class TestCcreqRegex:
         assert cat == "panel/editAgent"
 
     def test_redirect_line(self) -> None:
-        m = CCREQ_RE.match(_LOG_REDIRECT)
+        m = _CCREQ_RE.match(_LOG_REDIRECT)
         assert m is not None
         _, _, model, dur, cat = m.groups()
         assert model == "gpt-4o-mini"
@@ -71,7 +71,7 @@ class TestCcreqRegex:
         assert cat == "copilotLanguageModelWrapper"
 
     def test_plain_model_line(self) -> None:
-        m = CCREQ_RE.match(_LOG_GPT4O)
+        m = _CCREQ_RE.match(_LOG_GPT4O)
         assert m is not None
         _, _, model, dur, cat = m.groups()
         assert model == "gpt-4o-mini-2024-07-18"
@@ -79,10 +79,10 @@ class TestCcreqRegex:
         assert cat == "title"
 
     def test_noise_line_does_not_match(self) -> None:
-        assert CCREQ_RE.match(_LOG_NOISE) is None
+        assert _CCREQ_RE.match(_LOG_NOISE) is None
 
     def test_empty_line_does_not_match(self) -> None:
-        assert CCREQ_RE.match("") is None
+        assert _CCREQ_RE.match("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +121,9 @@ class TestParseVscodeLog:
             f"{bad_ts} [info] ccreq:abc123.copilotmd"
             " | success | claude-sonnet-4 | 100ms | [panel]"
         )
-        # Ensure the constructed line still matches the CCREQ_RE regex; otherwise
+        # Ensure the constructed line still matches the _CCREQ_RE regex; otherwise
         # this test would no longer exercise the ValueError timestamp branch.
-        assert CCREQ_RE.match(bad_line) is not None
+        assert _CCREQ_RE.match(bad_line) is not None
         good_line = _LOG_OPUS  # a valid known-good line
         log_file = tmp_path / "test.log"
         log_file.write_text(f"{bad_line}\n{good_line}", encoding="utf-8")
@@ -134,13 +134,13 @@ class TestParseVscodeLog:
     def test_all_lines_invalid_timestamp_returns_empty_list(
         self, tmp_path: Path
     ) -> None:
-        """All lines match CCREQ_RE but have invalid timestamps → returns [], not None."""
+        """All lines match _CCREQ_RE but have invalid timestamps → returns [], not None."""
         bad_ts = "9999-99-99 99:99:99.000"
         bad_line = (
             f"{bad_ts} [info] ccreq:abc123.copilotmd"
             " | success | claude-sonnet-4 | 100ms | [panel]"
         )
-        assert CCREQ_RE.match(bad_line) is not None  # regex matches
+        assert _CCREQ_RE.match(bad_line) is not None  # regex matches
         log_file = tmp_path / "all_bad.log"
         log_file.write_text(f"{bad_line}\n{bad_line}\n", encoding="utf-8")
         result = parse_vscode_log(log_file)
@@ -1105,10 +1105,10 @@ class TestParseVscodeLogPreFilter:
     def test_synthetic_log_prefilter_uses_regex_only_for_matching_lines(
         self, tmp_path: Path
     ) -> None:
-        """parse_vscode_log only applies CCREQ_RE to lines containing 'ccreq:'."""
+        """parse_vscode_log only applies _CCREQ_RE to lines containing 'ccreq:'."""
 
         class _SpyRegex:
-            """Spy wrapper around the real CCREQ_RE to verify pre-filtering."""
+            """Spy wrapper around the real _CCREQ_RE to verify pre-filtering."""
 
             def __init__(self, real_re: re.Pattern[str]) -> None:
                 self._real_re = real_re
@@ -1126,8 +1126,8 @@ class TestParseVscodeLogPreFilter:
             tmp_path, total_lines=total, matching_lines=expected_matches
         )
 
-        spy = _SpyRegex(CCREQ_RE)
-        with patch("copilot_usage.vscode_parser.CCREQ_RE", spy):
+        spy = _SpyRegex(_CCREQ_RE)
+        with patch("copilot_usage.vscode_parser._CCREQ_RE", spy):
             requests = parse_vscode_log(log_file)
 
         # We still parse the expected number of requests.
