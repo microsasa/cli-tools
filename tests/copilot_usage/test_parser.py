@@ -5094,7 +5094,7 @@ class TestSessionCacheMtime:
         assert cached_summary.name == "Renamed Session"
 
     def test_single_stat_per_file(self, tmp_path: Path) -> None:
-        """events.jsonl stat'd once (discovery), plan.md stat'd once (cache store)."""
+        """events.jsonl stat'd twice (discovery + post-parse), plan.md stat'd once."""
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
@@ -5102,8 +5102,9 @@ class TestSessionCacheMtime:
         ) as spy:
             get_all_sessions(tmp_path)
             # _safe_file_identity called once by _discover_with_identity for
-            # events.jsonl, and once for plan.md when storing the cache entry.
-            assert spy.call_count == 2
+            # events.jsonl, once for plan.md when storing the cache entry,
+            # and once after parsing to capture a consistent end_offset.
+            assert spy.call_count == 3
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
@@ -5803,6 +5804,30 @@ class TestIncrementalEventsParsing:
             assert spy.call_count == 1
         assert len(result) == 3
 
+    def test_incomplete_event_retried_on_next_refresh(self, tmp_path: Path) -> None:
+        """When a line is incomplete at EOF, the next refresh retries it."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+
+        get_cached_events(p)  # prime cache
+
+        # Write first part of assistant message (incomplete — no newline)
+        partial = _ASSISTANT_MSG.encode("utf-8")[:20]
+        with p.open("ab") as fh:
+            fh.write(partial)
+
+        mid = get_cached_events(p)
+        assert len(mid) == 2  # incomplete event not parsed
+
+        # Writer completes the line
+        rest = _ASSISTANT_MSG.encode("utf-8")[20:] + b"\n"
+        with p.open("ab") as fh:
+            fh.write(rest)
+
+        final = get_cached_events(p)
+        assert len(final) == 3
+        assert final[2].type == "assistant.message"
+
 
 class TestParseEventsFromOffset:
     """Exercise error-handling paths in _parse_events_from_offset."""
@@ -5819,12 +5844,13 @@ class TestParseEventsFromOffset:
             fh.write("   \n")
             fh.write(_ASSISTANT_MSG + "\n")
 
-        result = _parse_events_from_offset(p, offset)
+        result, end_off = _parse_events_from_offset(p, offset)
         assert len(result) == 1
         assert result[0].type == "assistant.message"
+        assert end_off == p.stat().st_size
 
     def test_malformed_json_skipped(self, tmp_path: Path) -> None:
-        """Lines that are not valid JSON are skipped with a warning."""
+        """Complete lines that are not valid JSON are skipped with a warning."""
         p = tmp_path / "s1" / "events.jsonl"
         _write_events(p, _START_EVENT)
         offset = p.stat().st_size
@@ -5833,9 +5859,10 @@ class TestParseEventsFromOffset:
             fh.write("{not valid json\n")
             fh.write(_USER_MSG + "\n")
 
-        result = _parse_events_from_offset(p, offset)
+        result, end_off = _parse_events_from_offset(p, offset)
         assert len(result) == 1
         assert result[0].type == "user.message"
+        assert end_off == p.stat().st_size
 
     def test_validation_error_skipped(self, tmp_path: Path) -> None:
         """JSON that is valid but fails Pydantic validation is skipped."""
@@ -5848,10 +5875,11 @@ class TestParseEventsFromOffset:
             fh.write(json.dumps({"type": 123}) + "\n")
             fh.write(_USER_MSG + "\n")
 
-        result = _parse_events_from_offset(p, offset)
+        result, end_off = _parse_events_from_offset(p, offset)
         # The valid user message should be parsed; the invalid one skipped
         assert len(result) == 1
         assert result[0].type == "user.message"
+        assert end_off == p.stat().st_size
 
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
         """A mid-stream UTF-8 decode error returns events parsed so far."""
@@ -5864,9 +5892,23 @@ class TestParseEventsFromOffset:
             fh.write((_USER_MSG + "\n").encode("utf-8"))
             fh.write(b"\xff\xfe invalid utf8\n")
 
-        result = _parse_events_from_offset(p, offset)
+        result, _end_off = _parse_events_from_offset(p, offset)
         assert len(result) == 1
         assert result[0].type == "user.message"
+
+    def test_incomplete_line_stops_parsing(self, tmp_path: Path) -> None:
+        """An unterminated line with invalid JSON stops incremental parsing."""
+        p = tmp_path / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT)
+        offset = p.stat().st_size
+
+        # Append a partial JSON line (no trailing newline — simulates mid-write)
+        with p.open("ab") as fh:
+            fh.write(b'{"type": "assistant')
+
+        result, end_off = _parse_events_from_offset(p, offset)
+        assert len(result) == 0
+        assert end_off == offset  # did not advance past incomplete line
 
 
 # ---------------------------------------------------------------------------

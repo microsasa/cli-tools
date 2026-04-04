@@ -143,32 +143,54 @@ def _insert_events_entry(
     )
 
 
-def _parse_events_from_offset(events_path: Path, offset: int) -> list[SessionEvent]:
+def _parse_events_from_offset(
+    events_path: Path, offset: int
+) -> tuple[list[SessionEvent], int]:
     """Parse events from *events_path* starting at byte *offset*.
 
     Only lines beginning at or after *offset* are JSON-decoded and
-    Pydantic-validated.  Malformed or invalid lines are skipped with a
-    warning, matching the behaviour of :func:`parse_events`.
+    Pydantic-validated.  Complete malformed or invalid lines are skipped
+    with a warning, matching the behaviour of :func:`parse_events`.
+
+    Lines without a trailing newline (possible incomplete write) that
+    fail JSON decoding are treated as still-in-progress and stop
+    parsing — the returned *safe_end* does not advance past them so
+    the caller can retry on the next refresh.
+
+    Returns:
+        ``(new_events, safe_end)`` where *safe_end* is the byte
+        position after the last fully consumed line.  Callers should
+        store this as ``end_offset`` so incomplete trailing lines are
+        retried on the next refresh.
 
     Raises:
         OSError: If the file cannot be opened or read.
     """
     new_events: list[SessionEvent] = []
+    safe_offset = offset
     try:
         with events_path.open("rb") as fh:
             fh.seek(offset)
+            current_offset = offset
             for raw_line in fh:
+                line_start = current_offset
+                current_offset += len(raw_line)
                 stripped = raw_line.strip()
                 if not stripped:
+                    safe_offset = current_offset
                     continue
                 try:
                     raw = json.loads(stripped)
                 except json.JSONDecodeError:
+                    if not raw_line.endswith(b"\n"):
+                        # Possibly incomplete write — stop and retry later
+                        break
                     logger.warning(
                         "{}:offset {} — malformed JSON, skipping",
                         events_path,
-                        offset,
+                        line_start,
                     )
+                    safe_offset = current_offset
                     continue
                 try:
                     new_events.append(SessionEvent.model_validate(raw))
@@ -176,18 +198,19 @@ def _parse_events_from_offset(events_path: Path, offset: int) -> list[SessionEve
                     logger.warning(
                         "{}:offset {} — validation error ({}), skipping",
                         events_path,
-                        offset,
+                        line_start,
                         exc.error_count(),
                     )
+                safe_offset = current_offset
     except UnicodeDecodeError as exc:
         logger.warning(
             "{} — UTF-8 decode error at offset {}; returning {} new events (partial): {}",
             events_path,
-            offset,
+            safe_offset,
             len(new_events),
             exc,
         )
-    return new_events
+    return new_events, safe_offset
 
 
 def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
@@ -225,15 +248,21 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
             return cached.events
         # Append-only growth: new size ≥ cached end_offset → incremental
         if new_size >= cached.end_offset and cached.end_offset > 0:
-            new_events = _parse_events_from_offset(events_path, cached.end_offset)
+            new_events, safe_end = _parse_events_from_offset(
+                events_path, cached.end_offset
+            )
             merged = cached.events + tuple(new_events)
-            _insert_events_entry(events_path, file_id, merged, new_size)
+            _insert_events_entry(events_path, file_id, merged, safe_end)
             return _EVENTS_CACHE[events_path].events
 
     # Full reparse: cold start, truncation, or unknown file
     events = parse_events(events_path)
-    end_offset = file_id[1] if file_id is not None else 0
-    _insert_events_entry(events_path, file_id, events, end_offset)
+    # Re-stat after parsing to capture the file size at EOF, avoiding
+    # duplication if the file grew between the pre-parse stat and the read.
+    post_id = _safe_file_identity(events_path)
+    stored_id = post_id if post_id is not None else file_id
+    end_offset = stored_id[1] if stored_id is not None else 0
+    _insert_events_entry(events_path, stored_id, events, end_offset)
     return _EVENTS_CACHE[events_path].events
 
 
@@ -937,8 +966,12 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Populate _EVENTS_CACHE in oldest→newest order so that the newest
     # sessions sit at the back (MRU) and eviction drops the oldest.
     for ep, fid, evts in reversed(deferred_events):
-        end_off = fid[1] if fid is not None else 0
-        _insert_events_entry(ep, fid, evts, end_off)
+        # Re-stat after parsing so end_offset reflects bytes actually
+        # consumed, not the discovery-time snapshot that may be stale.
+        post_id = _safe_file_identity(ep)
+        stored_id = post_id if post_id is not None else fid
+        end_off = stored_id[1] if stored_id is not None else 0
+        _insert_events_entry(ep, stored_id, evts, end_off)
 
     # Prune stale cache entries for sessions no longer on disk.
     discovered_paths = {p for p, _, _ in discovered}
