@@ -6199,29 +6199,29 @@ class TestDetectResumeNonIndicatorEvents:
 
 
 # ---------------------------------------------------------------------------
-# Issue #685 — _build_completed_summary: defensive shutdown-index guard
+# Issue #671 — shutdown_cycles timestamps are always non-None for valid sessions
 # ---------------------------------------------------------------------------
 
 
-class TestBuildCompletedSummaryShutdownIndexGuard:
-    """Verify the defensive idx < len(events) guard in _build_completed_summary."""
+class TestShutdownCyclesTimestampsNonNone:
+    """shutdown_cycles entries have non-None timestamps when shutdown events do."""
 
-    def test_shutdown_idx_out_of_bounds_yields_none_timestamp(self) -> None:
-        """When shutdown event index equals len(events), timestamp is None."""
+    def test_single_shutdown_has_non_none_timestamp(self) -> None:
+        """A session with one shutdown yields a non-empty shutdown_cycles
+        where every timestamp is non-None."""
+        shutdown_ts = datetime(2026, 3, 7, 10, 30, tzinfo=UTC)
         sd = SessionShutdownData(
             shutdownType="routine",
             totalPremiumRequests=3,
             totalApiDurationMs=5000,
         )
-        # Hand-craft a _FirstPassResult with shutdown index == 2, but we will
-        # only supply 2 events (indices 0 and 1), so idx 2 is out of bounds.
         fp = _FirstPassResult(
-            session_id="oob-session",
+            session_id="ts-session",
             start_time=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
-            end_time=datetime(2026, 3, 7, 11, 0, tzinfo=UTC),
+            end_time=shutdown_ts,
             cwd="/home/user/project",
             model="claude-sonnet-4",
-            all_shutdowns=((2, sd),),
+            all_shutdowns=((1, sd),),
             user_message_count=1,
             total_output_tokens=0,
             total_turn_starts=0,
@@ -6234,12 +6234,11 @@ class TestBuildCompletedSummaryShutdownIndexGuard:
             post_shutdown_user_messages=0,
             last_resume_time=None,
         )
-        # Only 2 events → index 2 is out of bounds
         events: list[SessionEvent] = [
             SessionEvent(
                 type=EventType.SESSION_START,
                 data={
-                    "sessionId": "oob-session",
+                    "sessionId": "ts-session",
                     "version": 1,
                     "startTime": "2026-03-07T10:00:00.000Z",
                     "context": {"cwd": "/home/user/project"},
@@ -6248,19 +6247,105 @@ class TestBuildCompletedSummaryShutdownIndexGuard:
                 timestamp=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
             ),
             SessionEvent(
-                type=EventType.USER_MESSAGE,
-                data={"content": "hello"},
-                id="ev-user",
-                timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+                type=EventType.SESSION_SHUTDOWN,
+                data={
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 5000,
+                },
+                id="ev-sd",
+                timestamp=shutdown_ts,
             ),
         ]
 
         summary = _build_completed_summary(fp, name=None, resume=resume, events=events)
 
-        # The guard should produce None instead of raising IndexError
         assert len(summary.shutdown_cycles) == 1
-        assert summary.shutdown_cycles[0][0] is None
+        assert summary.shutdown_cycles[0][0] is not None
+        assert summary.shutdown_cycles[0][0] == shutdown_ts
         assert summary.shutdown_cycles[0][1] is sd
+
+    def test_multiple_shutdowns_all_have_non_none_timestamps(self) -> None:
+        """All shutdown_cycles entries carry non-None timestamps when the
+        underlying shutdown events have timestamps."""
+        ts1 = datetime(2026, 3, 7, 10, 30, tzinfo=UTC)
+        ts2 = datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+        sd1 = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=5,
+            totalApiDurationMs=3000,
+        )
+        sd2 = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=8,
+            totalApiDurationMs=7000,
+        )
+        fp = _FirstPassResult(
+            session_id="multi-ts",
+            start_time=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            end_time=ts2,
+            cwd="/home/user/project",
+            model="claude-sonnet-4",
+            all_shutdowns=((1, sd1), (3, sd2)),
+            user_message_count=1,
+            total_output_tokens=0,
+            total_turn_starts=0,
+            tool_model=None,
+        )
+        resume = _ResumeInfo(
+            session_resumed=False,
+            post_shutdown_output_tokens=0,
+            post_shutdown_turn_starts=0,
+            post_shutdown_user_messages=0,
+            last_resume_time=None,
+        )
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.SESSION_START,
+                data={
+                    "sessionId": "multi-ts",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/project"},
+                },
+                id="ev-start",
+                timestamp=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.SESSION_SHUTDOWN,
+                data={
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 5,
+                    "totalApiDurationMs": 3000,
+                },
+                id="ev-sd1",
+                timestamp=ts1,
+            ),
+            SessionEvent(
+                type=EventType.SESSION_RESUME,
+                data={},
+                id="ev-resume",
+                timestamp=datetime(2026, 3, 7, 11, 0, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.SESSION_SHUTDOWN,
+                data={
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 8,
+                    "totalApiDurationMs": 7000,
+                },
+                id="ev-sd2",
+                timestamp=ts2,
+            ),
+        ]
+
+        summary = _build_completed_summary(fp, name=None, resume=resume, events=events)
+
+        assert len(summary.shutdown_cycles) == 2
+        for ts, _sd in summary.shutdown_cycles:
+            assert ts is not None
+        assert summary.shutdown_cycles[0] == (ts1, sd1)
+        assert summary.shutdown_cycles[1] == (ts2, sd2)
 
 
 # -------------------------------------------------------------------

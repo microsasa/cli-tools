@@ -583,9 +583,9 @@ def _build_completed_summary(
                 add_to_model_metrics(merged_metrics[model_name], mm)
             else:
                 merged_metrics[model_name] = copy_model_metrics(mm)
-        shutdown_cycles.append(
-            (events[idx].timestamp if idx < len(events) else None, sd)
-        )
+        # idx comes from enumerate(events) in _first_pass, so it is
+        # always a valid index into the same events list.
+        shutdown_cycles.append((events[idx].timestamp, sd))
 
     return SessionSummary(
         session_id=fp.session_id,
