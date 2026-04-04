@@ -469,7 +469,8 @@ def test_session_command_skips_malformed_events(
     tmp_path: Path,
 ) -> None:
     """When get_all_sessions encounters a session with unparseable JSON,
-    it silently skips it and the command still finds a valid match."""
+    it emits a warning, skips that session from the results, and the
+    command still finds a valid match."""
     _write_session(tmp_path, "target-session-aaa", name="Target")
     # Create a session dir with malformed (non-JSON) content
     failing_dir = tmp_path / "failing-"
