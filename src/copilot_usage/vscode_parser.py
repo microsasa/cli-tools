@@ -132,9 +132,29 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     Raises:
         OSError: If the file cannot be opened or read.
     """
+    requests, _ = _parse_vscode_log_from_offset(log_path, 0)
+    return requests
+
+
+def _parse_vscode_log_from_offset(
+    log_path: Path, offset: int
+) -> tuple[list[VSCodeRequest], int]:
+    """Parse VS Code Copilot Chat log starting at *offset* bytes.
+
+    Returns ``(requests, end_offset)`` where *end_offset* is the byte
+    position at the end of the last complete line read.  This allows
+    callers to resume parsing from that point on a subsequent call.
+
+    Raises:
+        OSError: If the file cannot be opened or read.
+    """
     requests: list[VSCodeRequest] = []
-    with log_path.open(encoding="utf-8", errors="replace") as f:
-        for line in f:
+    with log_path.open("rb") as fb:
+        if offset > 0:
+            fb.seek(offset)
+        for raw_line in fb:
+            # Decode with replacement to mirror parse_vscode_log behaviour.
+            line = raw_line.decode("utf-8", errors="replace")
             # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
             if "ccreq:" not in line:
                 continue
@@ -155,53 +175,93 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
                     category=category,
                 )
             )
-    logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
-    return requests
+        end_offset: int = fb.tell()
+    logger.debug(
+        "Parsed {} request(s) from {} (offset {}→{})",
+        len(requests),
+        log_path,
+        offset,
+        end_offset,
+    )
+    return requests, end_offset
 
 
 # ---------------------------------------------------------------------------
 # Module-level parsed-requests cache (mirrors parser._EVENTS_CACHE).
 # Uses OrderedDict for LRU eviction: most-recently-used entries are at
 # the back, least-recently-used at the front.
+#
+# Cache value layout: (file_id, end_offset, requests_tuple)
+#   file_id    – (st_mtime_ns, st_size) or None when stat() fails
+#   end_offset – byte position of the last parsed line
+#   requests   – immutable tuple of parsed VSCodeRequest objects
 # ---------------------------------------------------------------------------
 
 _MAX_CACHED_VSCODE_LOGS: Final[int] = 64
 _VSCODE_LOG_CACHE: OrderedDict[
-    Path, tuple[tuple[int, int] | None, tuple[VSCodeRequest, ...]]
+    Path, tuple[tuple[int, int] | None, int, tuple[VSCodeRequest, ...]]
 ] = OrderedDict()
 
 
-def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
-    """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
-
-    On the first call for a given *log_path*, delegates to
-    :func:`parse_vscode_log` and stores the result.  Subsequent calls
-    return the cached tuple as long as the file identity is unchanged.
-    The cache is bounded to :data:`_MAX_CACHED_VSCODE_LOGS` entries;
-    the **least-recently used** entry is evicted when the limit is
-    reached.
-
-    The parsed list is converted to a ``tuple`` before storage so that
-    callers cannot accidentally append, pop, or reorder entries in the
-    cache — matching the container-level immutability pattern used by
-    :func:`copilot_usage.parser.get_cached_events`.
-
-    Raises:
-        OSError: Propagated from :func:`parse_vscode_log` when the file
-            cannot be opened or read.
-    """
-    file_id = _safe_file_identity(log_path)
-    cached = _VSCODE_LOG_CACHE.get(log_path)
-    if cached is not None and cached[0] == file_id:
-        _VSCODE_LOG_CACHE.move_to_end(log_path)
-        return cached[1]
-    requests = tuple(parse_vscode_log(log_path))
+def _update_vscode_cache(
+    log_path: Path,
+    file_id: tuple[int, int] | None,
+    end_offset: int,
+    requests: tuple[VSCodeRequest, ...],
+) -> None:
+    """Insert or replace a cache entry with LRU eviction."""
     if log_path in _VSCODE_LOG_CACHE:
         del _VSCODE_LOG_CACHE[log_path]
     elif len(_VSCODE_LOG_CACHE) >= _MAX_CACHED_VSCODE_LOGS:
         _VSCODE_LOG_CACHE.popitem(last=False)  # evict LRU (front)
-    _VSCODE_LOG_CACHE[log_path] = (file_id, requests)
-    return requests
+    _VSCODE_LOG_CACHE[log_path] = (file_id, end_offset, requests)
+
+
+def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
+    """Return parsed requests, incrementally parsing only new content.
+
+    On the first call for a given *log_path*, delegates to
+    :func:`_parse_vscode_log_from_offset` (offset 0) and stores the
+    result together with the byte offset reached.  Subsequent calls
+    detect whether the file has **grown** (append-only) by comparing
+    the new ``st_size`` against the cached size — if so, only the
+    bytes after the stored offset are parsed and appended to the
+    existing result.
+
+    When the file is **replaced** (new size < cached size) or
+    ``st_size`` cannot be determined, a full re-parse is performed.
+
+    The cache is bounded to :data:`_MAX_CACHED_VSCODE_LOGS` entries;
+    the **least-recently used** entry is evicted when the limit is
+    reached.
+
+    Raises:
+        OSError: Propagated from :func:`_parse_vscode_log_from_offset`
+            when the file cannot be opened or read.
+    """
+    new_id = _safe_file_identity(log_path)
+    cached = _VSCODE_LOG_CACHE.get(log_path)
+
+    if cached is not None:
+        old_id, end_offset, old_requests = cached
+
+        # Exact match: file unchanged — return cached result.
+        if old_id == new_id:
+            _VSCODE_LOG_CACHE.move_to_end(log_path)
+            return old_requests
+
+        # Incremental path: file grew (append-only).
+        if new_id is not None and old_id is not None and new_id[1] >= old_id[1]:
+            new_reqs, new_end = _parse_vscode_log_from_offset(log_path, end_offset)
+            combined = old_requests + tuple(new_reqs)
+            _update_vscode_cache(log_path, new_id, new_end, combined)
+            return combined
+
+    # Full parse: first call or file was truncated/replaced.
+    requests, end_offset = _parse_vscode_log_from_offset(log_path, 0)
+    result = tuple(requests)
+    _update_vscode_cache(log_path, new_id, end_offset, result)
+    return result
 
 
 @dataclass(slots=True)

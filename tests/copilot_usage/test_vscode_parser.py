@@ -18,6 +18,7 @@ from copilot_usage.vscode_parser import (
     VSCodeRequest,
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
+    _parse_vscode_log_from_offset,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
@@ -617,10 +618,10 @@ class TestGetVscodeSummary:
             ),
         ]
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(path: Path, offset: int) -> tuple[list[VSCodeRequest], int]:
             if path == file_a:
-                return list(requests_a)
-            return list(requests_b)
+                return list(requests_a), 100
+            return list(requests_b), 50
 
         with (
             patch(
@@ -628,7 +629,7 @@ class TestGetVscodeSummary:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ) as mock_parse,
             patch(
@@ -640,7 +641,7 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 3
         assert summary.log_files_parsed == 2
         assert mock_parse.call_count == 2
-        mock_parse.assert_has_calls([call(file_a), call(file_b)])
+        mock_parse.assert_has_calls([call(file_a, 0), call(file_b, 0)])
         # Verify the incremental path is used: build_vscode_summary must NOT
         # be called because get_vscode_summary now aggregates per-file via
         # _update_vscode_summary instead of collecting all requests first.
@@ -665,10 +666,10 @@ class TestGetVscodeSummary:
             ),
         ]
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(path: Path, offset: int) -> tuple[list[VSCodeRequest], int]:
             if path == file_a:
                 raise OSError("Permission denied")
-            return list(requests_b)
+            return list(requests_b), 50
 
         with (
             patch(
@@ -676,7 +677,7 @@ class TestGetVscodeSummary:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ),
         ):
@@ -699,14 +700,17 @@ class TestGetVscodeSummary:
             category="panel",
         )
 
+        def _fake_parse(path: Path, offset: int) -> tuple[list[VSCodeRequest], int]:
+            return [req], 50
+
         with (
             patch(
                 "copilot_usage.vscode_parser.discover_vscode_logs",
                 return_value=paths,
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
-                return_value=[req],
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+                side_effect=_fake_parse,
             ),
         ):
             summary = get_vscode_summary()
@@ -728,10 +732,10 @@ class TestGetVscodeSummary:
             category="inline",
         )
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(path: Path, offset: int) -> tuple[list[VSCodeRequest], int]:
             if path == path1:
                 raise OSError("Permission denied")
-            return [req]
+            return [req], 50
 
         with (
             patch(
@@ -739,7 +743,7 @@ class TestGetVscodeSummary:
                 return_value=[path1, path2],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ),
         ):
@@ -776,20 +780,21 @@ class TestVscodeCliCommand:
                 _LOG_OPUS + "\n", encoding="utf-8"
             )
 
-        # Make parse_vscode_log raise OSError only on the first call.
+        # Make _parse_vscode_log_from_offset raise OSError only on the first call.
         call_count = 0
-        _real_parse = parse_vscode_log
+        _real_parse = _parse_vscode_log_from_offset
 
-        def _failing_once(path: Path) -> list[VSCodeRequest]:
+        def _failing_once(path: Path, offset: int) -> tuple[list[VSCodeRequest], int]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 msg = "Permission denied"
                 raise OSError(msg)
-            return _real_parse(path)
+            return _real_parse(path, offset)
 
         monkeypatch.setattr(
-            "copilot_usage.vscode_parser.parse_vscode_log", _failing_once
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            _failing_once,
         )
 
         warnings: list[str] = []
@@ -822,7 +827,8 @@ class TestVscodeCliCommand:
             raise OSError(msg)
 
         monkeypatch.setattr(
-            "copilot_usage.vscode_parser.parse_vscode_log", _always_raise
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            _always_raise,
         )
         runner = CliRunner()
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
@@ -1267,20 +1273,20 @@ class TestVscodeLogCache:
         assert log_file in _VSCODE_LOG_CACHE
 
     def test_second_call_returns_cached_without_reparse(self, tmp_path: Path) -> None:
-        """parse_vscode_log is only called once when file is unchanged."""
+        """_parse_vscode_log_from_offset is only called once when file is unchanged."""
         log_file = tmp_path / "chat.log"
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             first = _get_cached_vscode_requests(log_file)
             second = _get_cached_vscode_requests(log_file)
             assert spy.call_count == 1
         assert first == second
         assert log_file in _VSCODE_LOG_CACHE
-        assert _VSCODE_LOG_CACHE[log_file][1] == second
+        assert _VSCODE_LOG_CACHE[log_file][2] == second
 
     def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
         """Changing the file causes a re-parse on the next call."""
@@ -1340,11 +1346,125 @@ class TestVscodeLogCache:
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             s1 = get_vscode_summary(tmp_path)
             s2 = get_vscode_summary(tmp_path)
             assert spy.call_count == 1
         assert s1.total_requests == 1
         assert s2.total_requests == 1
+
+
+# ---------------------------------------------------------------------------
+# Incremental append-only parsing tests
+# ---------------------------------------------------------------------------
+
+
+class TestIncrementalParsing:
+    """Tests for incremental (append-only) parsing in _get_cached_vscode_requests."""
+
+    def test_append_returns_combined_requests(self, tmp_path: Path) -> None:
+        """Appending lines to a cached log returns N + M requests."""
+        log_file = tmp_path / "chat.log"
+        initial_lines = "\n".join(_make_log_line(req_idx=i) for i in range(3))
+        log_file.write_text(initial_lines + "\n")
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 3
+
+        # Append 2 more request lines.
+        with log_file.open("a") as f:
+            for i in range(3, 5):
+                f.write(_make_log_line(req_idx=i) + "\n")
+
+        second = _get_cached_vscode_requests(log_file)
+        assert len(second) == 5
+        # Original requests are preserved at the start.
+        assert second[:3] == first
+
+    def test_append_only_reads_from_previous_offset(self, tmp_path: Path) -> None:
+        """Incremental path starts reading at the previous end offset."""
+        log_file = tmp_path / "chat.log"
+        initial_lines = "\n".join(_make_log_line(req_idx=i) for i in range(4))
+        log_file.write_text(initial_lines + "\n")
+
+        _get_cached_vscode_requests(log_file)
+        cached_entry = _VSCODE_LOG_CACHE[log_file]
+        old_end_offset = cached_entry[1]
+        assert old_end_offset > 0
+
+        # Append new lines.
+        with log_file.open("a") as f:
+            for i in range(4, 7):
+                f.write(_make_log_line(req_idx=i) + "\n")
+
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
+        ) as spy:
+            result = _get_cached_vscode_requests(log_file)
+
+        assert len(result) == 7
+        # The incremental call should have used the old end offset.
+        spy.assert_called_once_with(log_file, old_end_offset)
+
+    def test_file_replaced_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """Replacing (truncating) a file triggers a full re-parse from offset 0."""
+        log_file = tmp_path / "chat.log"
+        # Write a large initial file.
+        initial_lines = "\n".join(_make_log_line(req_idx=i) for i in range(10))
+        log_file.write_text(initial_lines + "\n")
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 10
+
+        # Replace the file with fewer lines (smaller size).
+        log_file.write_text(_make_log_line(req_idx=99) + "\n")
+
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
+        ) as spy:
+            second = _get_cached_vscode_requests(log_file)
+
+        assert len(second) == 1
+        assert second[0].request_id == "req00099"
+        # Full re-parse: offset should be 0.
+        spy.assert_called_once_with(log_file, 0)
+
+    def test_append_with_noise_lines(self, tmp_path: Path) -> None:
+        """Appended noise (non-ccreq) lines don't produce phantom requests."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # Append noise + one real request.
+        with log_file.open("a") as f:
+            f.write("2026-03-13 22:11:00.000 [info] Some noise line\n")
+            f.write("2026-03-13 22:11:01.000 [info] More noise\n")
+            f.write(_make_log_line(req_idx=1) + "\n")
+
+        second = _get_cached_vscode_requests(log_file)
+        assert len(second) == 2
+
+    def test_append_empty_content(self, tmp_path: Path) -> None:
+        """Appending empty content (touch) still returns all original requests."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # "Touch" the file to change mtime without changing size.
+        # We need to actually grow it slightly for the incremental path.
+        import time
+
+        time.sleep(0.01)
+        log_file.write_bytes(log_file.read_bytes())  # rewrite same content
+
+        second = _get_cached_vscode_requests(log_file)
+        assert len(second) == 1
+        assert second == first
