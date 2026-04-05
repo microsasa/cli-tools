@@ -3,7 +3,8 @@
 import os
 import re
 import sys
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -27,6 +28,20 @@ _CCREQ_RE: Final[re.Pattern[str]] = re.compile(
     r"(\d+)ms \| "
     r"\[([^\]]+)\]"
 )
+
+
+def _safe_file_identity(path: Path) -> tuple[int, int] | None:
+    """Return ``(st_mtime_ns, st_size)`` for *path*, or ``None`` on any OS error.
+
+    Uses nanosecond-precision mtime paired with file size for robust
+    change detection — avoids the float-rounding and coarse-resolution
+    issues of ``st_mtime``.
+    """
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +169,51 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     return requests
 
 
+# ---------------------------------------------------------------------------
+# Module-level parsed-requests cache (mirrors parser._EVENTS_CACHE).
+# Uses OrderedDict for LRU eviction: most-recently-used entries are at
+# the back, least-recently-used at the front.
+# ---------------------------------------------------------------------------
+
+_MAX_CACHED_VSCODE_LOGS: Final[int] = 64
+_VSCODE_LOG_CACHE: OrderedDict[
+    Path, tuple[tuple[int, int] | None, tuple[VSCodeRequest, ...]]
+] = OrderedDict()
+
+
+def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
+    """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
+
+    On the first call for a given *log_path*, delegates to
+    :func:`parse_vscode_log` and stores the result.  Subsequent calls
+    return the cached tuple as long as the file identity is unchanged.
+    The cache is bounded to :data:`_MAX_CACHED_VSCODE_LOGS` entries;
+    the **least-recently used** entry is evicted when the limit is
+    reached.
+
+    The parsed list is converted to a ``tuple`` before storage so that
+    callers cannot accidentally append, pop, or reorder entries in the
+    cache — matching the container-level immutability pattern used by
+    :func:`copilot_usage.parser.get_cached_events`.
+
+    Raises:
+        OSError: Propagated from :func:`parse_vscode_log` when the file
+            cannot be opened or read.
+    """
+    file_id = _safe_file_identity(log_path)
+    cached = _VSCODE_LOG_CACHE.get(log_path)
+    if cached is not None and cached[0] == file_id:
+        _VSCODE_LOG_CACHE.move_to_end(log_path)
+        return cached[1]
+    requests = tuple(parse_vscode_log(log_path))
+    if log_path in _VSCODE_LOG_CACHE:
+        del _VSCODE_LOG_CACHE[log_path]
+    elif len(_VSCODE_LOG_CACHE) >= _MAX_CACHED_VSCODE_LOGS:
+        _VSCODE_LOG_CACHE.popitem(last=False)  # evict LRU (front)
+    _VSCODE_LOG_CACHE[log_path] = (file_id, requests)
+    return requests
+
+
 @dataclass(slots=True)
 class _SummaryAccumulator:
     """Mutable accumulator for incremental VSCodeLogSummary construction."""
@@ -179,7 +239,7 @@ class _SummaryAccumulator:
 
 
 def _update_vscode_summary(
-    acc: _SummaryAccumulator, requests: list[VSCodeRequest]
+    acc: _SummaryAccumulator, requests: Sequence[VSCodeRequest]
 ) -> None:
     """Merge *requests* into *acc* in-place, then discard."""
     last_date_key: str = ""
@@ -243,12 +303,16 @@ def build_vscode_summary(
 
 
 def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
-    """Discover, parse, and aggregate all VS Code Copilot Chat logs."""
+    """Discover, parse, and aggregate all VS Code Copilot Chat logs.
+
+    Uses :func:`_get_cached_vscode_requests` so that unchanged log files
+    are not re-parsed on repeated invocations.
+    """
     logs = discover_vscode_logs(base_path)
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path in logs:
         try:
-            result = parse_vscode_log(log_path)
+            result = _get_cached_vscode_requests(log_path)
         except OSError as exc:
             logger.warning("Could not read log file {}: {}", log_path, exc)
             continue
