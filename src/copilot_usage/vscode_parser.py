@@ -128,16 +128,22 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     """Parse a single VS Code Copilot Chat log file into request objects.
 
     Returns a list of parsed requests (possibly empty when no lines match).
+    Unlike incremental parsing via :func:`_parse_vscode_log_from_offset`,
+    this performs a complete one-shot read and includes the final line even
+    when it is not newline-terminated.
 
     Raises:
         OSError: If the file cannot be opened or read.
     """
-    requests, _ = _parse_vscode_log_from_offset(log_path, 0)
+    requests, _ = _parse_vscode_log_from_offset(log_path, 0, include_partial_tail=True)
     return requests
 
 
 def _parse_vscode_log_from_offset(
-    log_path: Path, offset: int
+    log_path: Path,
+    offset: int,
+    *,
+    include_partial_tail: bool = False,
 ) -> tuple[list[VSCodeRequest], int]:
     """Parse VS Code Copilot Chat log starting at *offset* bytes.
 
@@ -146,6 +152,11 @@ def _parse_vscode_log_from_offset(
     line read.  Partial lines at EOF are intentionally excluded so that
     the next incremental call can re-read them once the writer finishes
     the line.
+
+    When *include_partial_tail* is ``True`` (used by :func:`parse_vscode_log`
+    for one-shot full parsing), a final non-newline-terminated line is
+    **included** in the results to preserve text-mode semantics where
+    every line — including the last — is processed.
 
     Raises:
         OSError: If the file cannot be opened or read.
@@ -156,7 +167,8 @@ def _parse_vscode_log_from_offset(
         if offset > 0:
             fb.seek(offset)
         for raw_line in fb:
-            if not raw_line.endswith(b"\n"):
+            is_complete = raw_line.endswith(b"\n")
+            if not is_complete and not include_partial_tail:
                 # Partial line at EOF — stop advancing so the next
                 # incremental call re-reads this line once complete.
                 break

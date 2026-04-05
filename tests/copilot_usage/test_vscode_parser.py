@@ -191,6 +191,15 @@ class TestParseVscodeLog:
         result = parse_vscode_log(log_path)
         assert result == []
 
+    def test_partial_tail_included_for_one_shot_parse(self, tmp_path: Path) -> None:
+        """parse_vscode_log includes a final line even without a trailing newline."""
+        log_file = tmp_path / "test.log"
+        # Write a valid ccreq line without a trailing newline.
+        log_file.write_text(_make_log_line(req_idx=0), encoding="utf-8")
+        result = parse_vscode_log(log_file)
+        assert len(result) == 1
+        assert result[0].request_id == "req00000"
+
 
 # ---------------------------------------------------------------------------
 # build_vscode_summary
