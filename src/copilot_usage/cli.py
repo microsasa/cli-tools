@@ -163,10 +163,17 @@ def _write_prompt(prompt: str) -> None:
 
 
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
-    """Return a line from stdin if available within *timeout*, else None."""
+    """Return a line from stdin if available within *timeout*, else None.
+
+    Raises :class:`EOFError` when stdin is closed (``readline()`` returns
+    an empty string), preventing an infinite polling loop.
+    """
     ready, _, _ = select.select([sys.stdin], [], [], timeout)
     if ready:
-        return sys.stdin.readline().strip()
+        line = sys.stdin.readline()
+        if not line:  # empty string means EOF
+            raise EOFError("stdin closed")
+        return line.strip()
     return None
 
 
@@ -320,6 +327,8 @@ def _interactive_loop(path: Path | None) -> None:
             # Non-blocking stdin read
             try:
                 line = _read_line_nonblocking(timeout=0.5)
+            except EOFError:
+                break
             except (ValueError, OSError):
                 # stdin not selectable (e.g. testing) — fall back to blocking
                 try:

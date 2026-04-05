@@ -3379,3 +3379,54 @@ def test_session_index_lookup_performance() -> None:
     assert elapsed_ns < 50_000_000, (
         f"Lookup took {elapsed_ns / 1_000_000:.3f} ms (> 50 ms)"
     )
+
+
+# ---------------------------------------------------------------------------
+# EOF handling in _read_line_nonblocking (issue #746)
+# ---------------------------------------------------------------------------
+
+
+def test_read_line_nonblocking_raises_eoferror_on_closed_pipe(
+    monkeypatch: Any,
+) -> None:
+    """_read_line_nonblocking raises EOFError when stdin is a closed pipe."""
+    r_fd, w_fd = os.pipe()
+    os.close(w_fd)  # close write end → read end reaches EOF immediately
+    read_file = os.fdopen(r_fd, "r")
+    try:
+        monkeypatch.setattr("sys.stdin", read_file)
+        with pytest.raises(EOFError):
+            _read_line_nonblocking(timeout=1.0)
+    finally:
+        read_file.close()
+
+
+def test_interactive_loop_exits_on_selectable_eof_stdin(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """_interactive_loop exits cleanly (exit code 0) when _read_line_nonblocking raises EOFError."""
+    import copilot_usage.cli as cli_mod
+
+    _write_session(tmp_path, "eof70000-0000-0000-0000-000000000000", name="EOF-select")
+
+    call_count = 0
+
+    def _fake_read(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise EOFError("stdin closed")
+        return "q"  # safety fallback — should never be reached
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _fake_read)
+
+    def _noop_start(session_path: Path, change_event: threading.Event) -> None:  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _noop_start)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    assert call_count == 1, "Loop should have exited on the first EOFError"
