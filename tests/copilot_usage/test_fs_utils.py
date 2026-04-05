@@ -103,3 +103,9 @@ class TestLruInsert:
         lru_insert(cache, "x", 1, max_size=1)
         lru_insert(cache, "y", 2, max_size=1)
         assert dict(cache) == {"y": 2}
+
+    @pytest.mark.parametrize("bad_size", [0, -1, -100])
+    def test_raises_on_invalid_max_size(self, bad_size: int) -> None:
+        cache: OrderedDict[str, int] = OrderedDict()
+        with pytest.raises(ValueError, match="max_size must be >= 1"):
+            lru_insert(cache, "k", 1, max_size=bad_size)

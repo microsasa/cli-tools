@@ -13,7 +13,13 @@ def lru_insert[K, V](
     value: V,
     max_size: int,
 ) -> None:
-    """Insert *key*→*value* into *cache* with LRU eviction at *max_size*."""
+    """Insert *key*→*value* into *cache* with LRU eviction at *max_size*.
+
+    Raises :class:`ValueError` if *max_size* is less than 1.
+    """
+    if max_size < 1:
+        msg = f"max_size must be >= 1, got {max_size}"
+        raise ValueError(msg)
     if key in cache:
         del cache[key]
     elif len(cache) >= max_size:
