@@ -148,15 +148,16 @@ def _parse_vscode_log_from_offset(
     """Parse VS Code Copilot Chat log starting at *offset* bytes.
 
     Returns ``(requests, end_offset)`` where *end_offset* is the byte
-    position at the end of the last **complete** (newline-terminated)
-    line read.  Partial lines at EOF are intentionally excluded so that
-    the next incremental call can re-read them once the writer finishes
-    the line.
+    position immediately after the last line consumed by this call.
+    With the default ``include_partial_tail=False``, this is the end of
+    the last **complete** (newline-terminated) line read; a partial line
+    at EOF is intentionally excluded so that the next incremental call
+    can re-read it once the writer finishes the line.
 
     When *include_partial_tail* is ``True`` (used by :func:`parse_vscode_log`
     for one-shot full parsing), a final non-newline-terminated line is
-    **included** in the results to preserve text-mode semantics where
-    every line — including the last — is processed.
+    **included** in the results, and ``end_offset`` advances past that
+    consumed partial tail as well to preserve full-file text semantics.
 
     Raises:
         OSError: If the file cannot be opened or read.
@@ -165,6 +166,13 @@ def _parse_vscode_log_from_offset(
     safe_end: int = offset
     with log_path.open("rb") as fb:
         if offset > 0:
+            # Guard against TOCTOU race: the file may have been
+            # truncated/replaced between the caller's stat() and this
+            # open().  Re-validate with fstat on the open descriptor.
+            actual_size = os.fstat(fb.fileno()).st_size
+            if actual_size < offset:
+                offset = 0
+                safe_end = 0
             fb.seek(offset)
         for raw_line in fb:
             is_complete = raw_line.endswith(b"\n")
@@ -274,6 +282,12 @@ def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
         # position we will seek to when resuming parsing.
         if new_id is not None and old_id is not None and new_id[1] >= end_offset:
             new_reqs, new_end = _parse_vscode_log_from_offset(log_path, end_offset)
+            if new_end < end_offset:
+                # fstat inside the parser detected truncation — the
+                # returned results are a full reparse, not a delta.
+                result = tuple(new_reqs)
+                _update_vscode_cache(log_path, new_id, new_end, result)
+                return result
             combined = old_requests + tuple(new_reqs)
             _update_vscode_cache(log_path, new_id, new_end, combined)
             return combined
