@@ -406,7 +406,7 @@ The gh-aw agent orchestrator was removed (PR #137, see `docs/auto_pr_orchestrato
 - **v1 — Thread resolution**: Triggered by `workflow_run` after Review Responder completes. Queries review threads via GraphQL, resolves threads where the last commenter is not `copilot-pull-request-reviewer` (meaning someone addressed it). Tested on PR #113 — resolved 2 threads in 3 seconds.
 - **v2 — Auto-rebase**: Triggered by `push: branches: [main]`. Detects PRs behind main via `mergeStateStatus: BEHIND`, rebases onto `origin/main`, force-pushes with lease. On conflict: adds `aw-needs-rebase` label. Tested on PR #113 — rebased and auto-merge fired in 7 seconds.
 
-- **v3 — Full orchestration** (PR #163): Issue dispatch (finds `aw-backlog` issues, dispatches implementer), 30-minute cron safety net, review loop management (tracks responder rounds via `aw-review-response-N` labels, marks stuck after 3 retries), CI fixer dispatch. Initially merged in PR #144 then reverted due to untested loops — reworked and re-merged in PR #163 after sandbox testing.
+- **v3 — Full orchestration** (PR #163): Issue dispatch (finds issues labeled `aw`, excluding `aw-dispatched`, `agentic-workflows`, and `aw-protected-files`, then dispatches implementer), 30-minute cron safety net, review loop management (tracks responder rounds via `aw-review-response-N` labels, marks stuck after 3 retries), CI fixer dispatch. Initially merged in PR #144 then reverted due to untested loops — reworked and re-merged in PR #163 after sandbox testing.
 
 See issue #135 for the full roadmap.
 
