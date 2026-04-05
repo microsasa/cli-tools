@@ -1,8 +1,6 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
-import os
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -1294,12 +1292,12 @@ class TestVscodeLogCache:
         first = _get_cached_vscode_requests(log_file)
         assert len(first) == 1
 
-        # Mutate the file: add a second request line.
+        # Mutate the file by adding a second request line. The rewritten file
+        # has different contents and size, so its identity changes and the
+        # next cache lookup should re-parse it.
         log_file.write_text(
             _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
         )
-        # Ensure mtime_ns changes on filesystems with coarse resolution.
-        os.utime(log_file, (time.time() + 2, time.time() + 2))
 
         second = _get_cached_vscode_requests(log_file)
         assert len(second) == 2
