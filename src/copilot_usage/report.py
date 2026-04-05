@@ -299,21 +299,16 @@ def _render_summary_header(
     # If no session has a start_time, skip the reverse scan entirely.
     if latest is not None and first_idx is not None:
         # Find the last non-None start_time (earliest session, scanning from end).
-        last_idx: int | None = None
         for rev_idx, session in enumerate(reversed(sessions)):
             if session.start_time is not None:
                 last_idx = len(sessions) - 1 - rev_idx
+                if last_idx == first_idx:
+                    # Single-session range: reuse the already-converted datetime.
+                    earliest = latest
+                else:
+                    # start_time proven non-None by the guard above.
+                    earliest = ensure_aware(session.start_time)
                 break
-
-        if last_idx is not None:
-            if last_idx == first_idx:
-                # Single-session range: reuse the already-converted datetime.
-                earliest = latest
-            else:
-                earliest_session = sessions[last_idx]
-                # last_idx was found by scanning for start_time is not None,
-                # so this is guaranteed.
-                earliest = ensure_aware(earliest_session.start_time)  # type: ignore[arg-type]
 
     if earliest is not None and latest is not None:
         subtitle = f"{earliest.strftime('%Y-%m-%d')}  →  {latest.strftime('%Y-%m-%d')}"
