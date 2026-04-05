@@ -13,11 +13,6 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
       - run: uv sync
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
-      - run: uv run bandit -r src/
-      - run: uv run pytest --ignore=tests/e2e --cov --cov-report=xml
-      - run: uv run pytest tests/e2e
+      - run: make ci
       - name: Check diff coverage (new/changed lines ≥ 90%)
         run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90

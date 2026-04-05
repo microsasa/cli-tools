@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck security test test-unit test-e2e diff-cover
+.PHONY: help check ci fix lint typecheck security test test-unit test-e2e diff-cover
 .DEFAULT_GOAL := help
 
 # Colors and symbols
@@ -10,6 +10,8 @@ RESET  := \033[0m
 
 # Verbose flag: make check V=1 for full output
 V ?= 0
+# Coverage XML flag: make test COV_XML=1 to produce coverage.xml (for diff-cover)
+COV_XML ?= 0
 ifeq ($(V),1)
   QUIET :=
   TEST_FLAGS := --cov --cov-fail-under=80 -v
@@ -17,13 +19,17 @@ else
   QUIET := > /dev/null 2>&1
   TEST_FLAGS := --cov --cov-fail-under=80 -q --no-header
 endif
+ifeq ($(COV_XML),1)
+  TEST_FLAGS += --cov-report=xml
+endif
 
 help: ## Show available targets
 	@printf "\n$(BOLD)$(CYAN)Available targets:$(RESET)\n\n"
 	@grep -h -E '^[a-zA-Z0-9_-]+:.* ## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.* ## "}; {printf "  $(GREEN)%-14s$(RESET) %s\n", $$1, $$2}'
-	@printf "\n  Use $(BOLD)V=1$(RESET) for verbose output (e.g. $(CYAN)make check V=1$(RESET))\n\n"
+	@printf "\n  Use $(BOLD)V=1$(RESET) for verbose output (e.g. $(CYAN)make check V=1$(RESET))\n"
+	@printf "  Use $(BOLD)COV_XML=1$(RESET) to produce coverage.xml (e.g. $(CYAN)make test COV_XML=1$(RESET))\n\n"
 
-# All checks (mirrors CI — run before pushing a PR)
+# All checks (run before pushing a PR)
 check: ## Run all checks (lint + typecheck + security + test)
 	@printf "\n$(BOLD)$(CYAN)🔍 Running all checks...$(RESET)\n"
 	@$(MAKE) --no-print-directory lint
@@ -31,6 +37,15 @@ check: ## Run all checks (lint + typecheck + security + test)
 	@$(MAKE) --no-print-directory security
 	@$(MAKE) --no-print-directory test
 	@printf "\n$(BOLD)$(CYAN)🎉 All checks passed!$(RESET)\n\n"
+
+# CI checks (verbose + coverage XML for diff-cover)
+ci: ## Run all checks for CI (verbose + coverage XML)
+	@printf "\n$(BOLD)$(CYAN)🔍 Running CI checks...$(RESET)\n"
+	@$(MAKE) --no-print-directory lint V=1
+	@$(MAKE) --no-print-directory typecheck V=1
+	@$(MAKE) --no-print-directory security V=1
+	@$(MAKE) --no-print-directory test V=1 COV_XML=1
+	@printf "\n$(BOLD)$(CYAN)🎉 All CI checks passed!$(RESET)\n\n"
 
 # Lint (includes format check)
 lint: ## Lint and format check (ruff)
