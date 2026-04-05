@@ -161,11 +161,11 @@ def _parse_vscode_log_from_offset(
                 # incremental call re-reads this line once complete.
                 break
             safe_end += len(raw_line)
+            # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
+            if b"ccreq:" not in raw_line:
+                continue
             # Decode with replacement to mirror parse_vscode_log behaviour.
             line = raw_line.decode("utf-8", errors="replace")
-            # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
-            if "ccreq:" not in line:
-                continue
             m = _CCREQ_RE.match(line)
             if m is None:
                 continue

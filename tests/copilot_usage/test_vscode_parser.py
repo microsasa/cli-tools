@@ -1,5 +1,6 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -1451,23 +1452,31 @@ class TestIncrementalParsing:
         assert len(second) == 2
 
     def test_append_empty_content(self, tmp_path: Path) -> None:
-        """Appending empty content (touch) still returns all original requests."""
+        """Rewriting identical content triggers the incremental path at end_offset."""
         log_file = tmp_path / "chat.log"
         log_file.write_text(_make_log_line(req_idx=0) + "\n")
 
         first = _get_cached_vscode_requests(log_file)
         assert len(first) == 1
 
-        # Rewrite the file with identical content to change mtime while
-        # keeping size unchanged.  The cache detects the mtime change and
-        # takes the incremental path which seeks to end_offset, finds
-        # nothing new, and returns the original cached requests.
-        import time
-
-        time.sleep(0.01)
+        # Rewrite the file with identical content and force a distinct mtime
+        # via os.utime so the cache reliably detects a change regardless of
+        # filesystem mtime resolution.
         log_file.write_bytes(log_file.read_bytes())  # rewrite same content
+        stat = log_file.stat()
+        os.utime(log_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
 
-        second = _get_cached_vscode_requests(log_file)
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
+        ) as spy:
+            second = _get_cached_vscode_requests(log_file)
+            # The incremental path must be called with the cached end_offset
+            # (i.e. the byte length of the original content), not 0.
+            spy.assert_called_once()
+            call_offset = spy.call_args[0][1]
+            assert call_offset > 0, "Expected incremental call with non-zero offset"
+
         assert len(second) == 1
         assert second == first
 
