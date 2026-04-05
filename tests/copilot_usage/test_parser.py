@@ -628,10 +628,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
 
 class TestDiscoverWithIdentityLinearScan:
-    """Verify linear scan returns correct tuples for 100+ session dirs."""
+    """Verify linear scan returns correct tuples for many session dirs."""
 
-    def test_100_sessions_correct_tuples(self, tmp_path: Path) -> None:
-        """100+ session dirs return correct (events_path, events_id, plan_id).
+    def test_120_sessions_correct_tuples(self, tmp_path: Path) -> None:
+        """120 session dirs return correct (events_path, events_id, plan_id).
 
         Creates 120 session directories: 40 with plan.md (plus extra files),
         80 without. Asserts that every session is returned with the correct

@@ -261,9 +261,9 @@ def _discover_with_identity(
                             name = e.name
                             if name == "events.jsonl":
                                 events_entry = e
-                                if plan_entry is not None:
+                                if not include_plan or plan_entry is not None:
                                     break
-                            elif name == "plan.md":
+                            elif include_plan and name == "plan.md":
                                 plan_entry = e
                                 if events_entry is not None:
                                     break
