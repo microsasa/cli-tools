@@ -25,9 +25,7 @@ __all__: Final[list[str]] = [
     "parse_events",
 ]
 
-from copilot_usage._fs_utils import (
-    _safe_file_identity,  # pyright: ignore[reportPrivateUsage]
-)
+from copilot_usage._fs_utils import safe_file_identity
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -160,7 +158,7 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
         OSError: Propagated from :func:`parse_events` when the file
             cannot be opened or read.
     """
-    file_id = _safe_file_identity(events_path)
+    file_id = safe_file_identity(events_path)
     cached = _EVENTS_CACHE.get(events_path)
     if cached is not None and cached.file_id == file_id:
         _EVENTS_CACHE.move_to_end(events_path)
@@ -237,7 +235,7 @@ def _discover_with_identity(
     that never create a ``plan.md``.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
-    its file identity is computed via :func:`_safe_file_identity`.  When
+    its file identity is computed via :func:`safe_file_identity`.  When
     ``plan.md`` is absent, the ``plan_file_id`` element is ``None`` with
     zero overhead.  When *include_plan* is ``False``, the ``plan_file_id``
     element is always ``None`` — useful for callers that only need event
@@ -264,9 +262,9 @@ def _discover_with_identity(
                 if "events.jsonl" not in dir_files:
                     continue
                 events_path = Path(dir_files["events.jsonl"].path)
-                events_id = _safe_file_identity(events_path)
+                events_id = safe_file_identity(events_path)
                 if include_plan and "plan.md" in dir_files:
-                    plan_id = _safe_file_identity(Path(dir_files["plan.md"].path))
+                    plan_id = safe_file_identity(Path(dir_files["plan.md"].path))
                 else:
                     plan_id = None
                 result.append((events_path, events_id, plan_id))
@@ -781,7 +779,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     on every invocation.
     """
     global _config_file_id  # noqa: PLW0603
-    current_id = _safe_file_identity(_CONFIG_PATH)
+    current_id = safe_file_identity(_CONFIG_PATH)
     if current_id != _config_file_id:
         _config_file_id = current_id
         _read_config_model.cache_clear()

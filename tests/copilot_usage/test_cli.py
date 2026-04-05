@@ -528,10 +528,10 @@ def test_session_command_logs_warning_on_malformed_events(
         _real_setup()
         handler_id = logger.add(sink, level="WARNING", format="{message}")
 
-    from copilot_usage import logging_config
+    import copilot_usage.cli as _cli_mod
 
-    original_setup = logging_config.setup_logging
-    logging_config.setup_logging = _setup_then_add_sink
+    original_setup = _cli_mod.setup_logging
+    _cli_mod.setup_logging = _setup_then_add_sink  # type: ignore[assignment]
 
     runner = CliRunner()
     try:
@@ -541,7 +541,7 @@ def test_session_command_logs_warning_on_malformed_events(
         assert warning_output
         assert "bad-sess" in warning_output
     finally:
-        logging_config.setup_logging = original_setup
+        _cli_mod.setup_logging = original_setup
         if handler_id is not None:
             logger.remove(handler_id)
 

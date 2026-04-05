@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from copilot_usage import __version__
+from copilot_usage.logging_config import setup_logging
 from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
 from copilot_usage.parser import (
     get_all_sessions,
@@ -412,8 +413,6 @@ def _interactive_loop(path: Path | None) -> None:
 @click.pass_context
 def main(ctx: click.Context, path: Path | None) -> None:
     """Copilot CLI usage tracker — parse local session data for token metrics."""
-    from copilot_usage.logging_config import setup_logging
-
     setup_logging()
 
     ctx.ensure_object(dict)

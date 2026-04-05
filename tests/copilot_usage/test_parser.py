@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 import copilot_usage.parser as _parser_module
-from copilot_usage._fs_utils import _safe_file_identity
+from copilot_usage._fs_utils import safe_file_identity
 from copilot_usage.models import (
     AssistantMessageData,
     EventType,
@@ -528,7 +528,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         """No stat() call is made for a non-existent plan.md path.
 
         Creates 100 sessions where only 10 have plan.md.  Patches
-        ``_safe_file_identity`` to count calls and asserts that the call
+        ``safe_file_identity`` to count calls and asserts that the call
         count equals exactly 100 (events.jsonl) + 10 (existing plan.md),
         with zero calls for the 90 absent plan.md files.
         """
@@ -544,7 +544,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
                 )
 
         with patch(
-            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+            "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             result = _discover_with_identity(tmp_path)
 
@@ -575,7 +575,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         (session_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
 
         with patch(
-            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+            "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             result = _discover_with_identity(tmp_path, include_plan=False)
 
@@ -5230,10 +5230,10 @@ class TestSessionCacheMtime:
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
-            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+            "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # _safe_file_identity called once for _CONFIG_PATH and once by
+            # safe_file_identity called once for _CONFIG_PATH and once by
             # _discover_with_identity for events.jsonl.  plan.md does not
             # exist so its absence is detected via os.scandir dir listing
             # — no stat call is issued.
@@ -5366,7 +5366,7 @@ class TestSessionCacheMtime:
 
         entry = _SESSION_CACHE[p]
         assert isinstance(entry, _CachedSession)
-        assert entry.plan_id == _safe_file_identity(plan)
+        assert entry.plan_id == safe_file_identity(plan)
         assert entry.summary.name == "Test"
 
     def test_cached_sessions_no_redundant_plan_stat(self, tmp_path: Path) -> None:
@@ -5388,7 +5388,7 @@ class TestSessionCacheMtime:
 
         # Second call — all sessions are cached
         with patch(
-            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+            "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             results = get_all_sessions(tmp_path)
             assert len(results) == n
@@ -5837,7 +5837,7 @@ class TestGetCachedEvents:
         assert p in _EVENTS_CACHE
         entry = _EVENTS_CACHE[p]
         assert isinstance(entry, _CachedEvents)
-        assert entry.file_id == _safe_file_identity(p)
+        assert entry.file_id == safe_file_identity(p)
         assert len(entry.events) == 2
 
     def test_cached_reads_skip_parsing(self, tmp_path: Path) -> None:

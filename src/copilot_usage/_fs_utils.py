@@ -1,9 +1,12 @@
 """Filesystem helpers shared across the package."""
 
 from pathlib import Path
+from typing import Final
+
+__all__: Final[list[str]] = ["safe_file_identity"]
 
 
-def _safe_file_identity(path: Path) -> tuple[int, int] | None:
+def safe_file_identity(path: Path) -> tuple[int, int] | None:
     """Return ``(st_mtime_ns, st_size)`` for *path*, or ``None`` on any OS error.
 
     Uses nanosecond-precision mtime paired with file size for robust
