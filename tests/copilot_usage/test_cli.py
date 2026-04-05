@@ -2175,8 +2175,8 @@ def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     """When _read_line_nonblocking raises ValueError and the fallback input()
-    raises an unexpected exception (e.g. UnicodeDecodeError), the loop logs a
-    warning and terminates without propagating the exception."""
+    raises an unexpected exception (e.g. UnicodeDecodeError), the loop
+    terminates without propagating the exception."""
     _write_session(tmp_path, "fb_uni00-0000-0000-0000-000000000000", name="UniErr")
 
     import copilot_usage.cli as cli_mod
