@@ -38,8 +38,6 @@ from copilot_usage.pricing import lookup_model_pricing
 from copilot_usage.render_detail import render_session_detail
 
 __all__: Final[list[str]] = [
-    "format_duration",
-    "format_tokens",
     "render_cost_view",
     "render_full_summary",
     "render_live_sessions",
