@@ -6027,8 +6027,9 @@ class TestCostViewActiveNoActivePeriodStats:
     def test_grand_total_not_double_counted_when_no_active_stats(self) -> None:
         """Grand total must not double-count when has_active_period_stats=False.
 
-        Companion to the suppression test: the grand-total row must show the
-        same values as _compute_session_totals(shutdown_only=True) would.
+        Companion to the suppression test: for this fixture, the grand-total
+        row should show the session's expected totals without adding any
+        fallback active-period values a second time.
         """
         session = SessionSummary(
             session_id="resume-no-activity-grand",

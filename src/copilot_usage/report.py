@@ -638,9 +638,13 @@ def render_cost_view(
     """Render per-session, per-model cost breakdown.
 
     Filters sessions by date range when *since* and/or *until* are given.
-    For active sessions with shutdown metrics, appends a
+    For active sessions with shutdown metrics **and** meaningful
+    active-period stats (``has_active_period_stats``), appends a
     "↳ Since last shutdown" row with an estimated premium cost and the
-    active model calls / output tokens.
+    active model calls / output tokens.  When ``has_active_period_stats``
+    is ``False`` (all active counters are 0 and ``last_resume_time`` is
+    ``None``), the row is suppressed to avoid misleadingly attributing
+    session totals to the post-shutdown period.
 
     *sessions* must be in descending ``start_time`` order — the contract
     guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
