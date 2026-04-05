@@ -584,6 +584,43 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         # Only 1 call for events.jsonl, zero for plan.md
         assert spy.call_count == 1
 
+    def test_scandir_root_oserror_returns_empty(self, tmp_path: Path) -> None:
+        """Return [] when os.scandir on the root directory raises OSError."""
+        session_dir = tmp_path / "sess-x"
+        _write_events(session_dir / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+
+        def _bomb(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+            if str(path) == str(tmp_path):
+                raise OSError("permission denied")
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
+            result = _discover_with_identity(tmp_path)
+
+        assert result == []
+
+    def test_scandir_session_dir_oserror_skips_entry(self, tmp_path: Path) -> None:
+        """Skip a session directory when os.scandir on it raises OSError."""
+        good = tmp_path / "sess-good"
+        _write_events(good / "events.jsonl", _START_EVENT)
+        bad = tmp_path / "sess-bad"
+        _write_events(bad / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+
+        def _bomb(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+            if str(path) == str(bad):
+                raise OSError("permission denied")
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
+            result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 1
+        assert result[0][0].parent.name == "sess-good"
+
 
 # ---------------------------------------------------------------------------
 # parse_events
