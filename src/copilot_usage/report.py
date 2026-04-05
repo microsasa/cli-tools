@@ -707,6 +707,8 @@ def render_cost_view(
         grand_output += total_output_tokens(s)
         grand_model_calls += s.model_calls
 
+        # For active sessions, append a shutdown-relative summary row only
+        # when shutdown metrics are available and active-period stats exist.
         if s.is_active and s.has_shutdown_metrics and has_active_period_stats(s):
             cost_stats = _effective_stats(s)
             cost_calls = cost_stats.model_calls

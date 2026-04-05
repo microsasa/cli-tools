@@ -2573,7 +2573,7 @@ class TestRenderCostView:
             f"Grand Total output tokens should be 8.0K, got '{grand_cols[6]}'"
         )
 
-    def test_resumed_session_active_zero_cost_falls_back(self) -> None:
+    def test_resumed_session_active_zero_cost_suppresses_active_row(self) -> None:
         """Cost view: resumed session with active_*=0 suppresses the active row.
 
         Updated for issue #775: when has_active_period_stats is False
@@ -6062,6 +6062,11 @@ class TestCostViewActiveNoActivePeriodStats:
         assert "1.0K" in grand_cols[6], (
             f"Grand Total output tokens should be 1.0K, got '{grand_cols[6]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #703 — historical session table shows total model_calls/user_messages
+# ---------------------------------------------------------------------------
 
 
 class TestHistoricalSessionTableShutdownOnlyCounts:
