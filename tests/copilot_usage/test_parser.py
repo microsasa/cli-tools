@@ -44,6 +44,7 @@ from copilot_usage.parser import (
     _CachedEvents,
     _CachedSession,
     _detect_resume,
+    _discover_with_identity,
     _extract_session_name,
     _first_pass,
     _FirstPassResult,
@@ -513,6 +514,112 @@ class TestDiscoverSessionsDepth:
         # Also verify via discover_sessions directly
         paths = discover_sessions(tmp_path)
         assert paths == [valid]
+
+
+# ---------------------------------------------------------------------------
+# _discover_with_identity — no stat for absent plan.md (issue #763)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverWithIdentityNoAbsentPlanStat:
+    """os.scandir-based discovery must not stat absent plan.md files."""
+
+    def test_no_stat_for_absent_plan_md(self, tmp_path: Path) -> None:
+        """No stat() call is made for a non-existent plan.md path.
+
+        Creates 100 sessions where only 10 have plan.md.  Patches
+        ``_safe_file_identity`` to count calls and asserts that the call
+        count equals exactly 100 (events.jsonl) + 10 (existing plan.md),
+        with zero calls for the 90 absent plan.md files.
+        """
+        n_total = 100
+        n_with_plan = 10
+        for i in range(n_total):
+            session_dir = tmp_path / f"sess-{i:04d}"
+            events = session_dir / "events.jsonl"
+            _write_events(events, _START_EVENT)
+            if i < n_with_plan:
+                (session_dir / "plan.md").write_text(
+                    f"# Session {i}\n", encoding="utf-8"
+                )
+
+        with patch(
+            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+        ) as spy:
+            result = _discover_with_identity(tmp_path)
+
+        assert len(result) == n_total
+        # Exactly n_total calls for events.jsonl + n_with_plan for existing
+        # plan.md.  No calls for the 90 absent plan.md files.
+        assert spy.call_count == n_total + n_with_plan
+
+    def test_plan_id_populated_when_present(self, tmp_path: Path) -> None:
+        """plan_id is non-None only for sessions that have plan.md on disk."""
+        for i in range(5):
+            session_dir = tmp_path / f"sess-{i}"
+            _write_events(session_dir / "events.jsonl", _START_EVENT)
+        # Add plan.md to only the first session
+        (tmp_path / "sess-0" / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        result = _discover_with_identity(tmp_path)
+        plans = {p.parent.name: pid for p, _eid, pid in result}
+
+        assert plans["sess-0"] is not None
+        for i in range(1, 5):
+            assert plans[f"sess-{i}"] is None
+
+    def test_include_plan_false_skips_all_plan_stat(self, tmp_path: Path) -> None:
+        """When include_plan=False, plan.md stat is skipped even if file exists."""
+        session_dir = tmp_path / "sess-a"
+        _write_events(session_dir / "events.jsonl", _START_EVENT)
+        (session_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        with patch(
+            "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
+        ) as spy:
+            result = _discover_with_identity(tmp_path, include_plan=False)
+
+        assert len(result) == 1
+        assert result[0][2] is None  # plan_id is None
+        # Only 1 call for events.jsonl, zero for plan.md
+        assert spy.call_count == 1
+
+    def test_scandir_root_oserror_returns_empty(self, tmp_path: Path) -> None:
+        """Return [] when os.scandir on the root directory raises OSError."""
+        session_dir = tmp_path / "sess-x"
+        _write_events(session_dir / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+
+        def _bomb(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+            if str(path) == str(tmp_path):
+                raise OSError("permission denied")
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
+            result = _discover_with_identity(tmp_path)
+
+        assert result == []
+
+    def test_scandir_session_dir_oserror_skips_entry(self, tmp_path: Path) -> None:
+        """Skip a session directory when os.scandir on it raises OSError."""
+        good = tmp_path / "sess-good"
+        _write_events(good / "events.jsonl", _START_EVENT)
+        bad = tmp_path / "sess-bad"
+        _write_events(bad / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+
+        def _bomb(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+            if str(path) == str(bad):
+                raise OSError("permission denied")
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
+            result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 1
+        assert result[0][0].parent.name == "sess-good"
 
 
 # ---------------------------------------------------------------------------
@@ -5119,17 +5226,18 @@ class TestSessionCacheMtime:
         assert cached_summary.name == "Renamed Session"
 
     def test_single_stat_per_file(self, tmp_path: Path) -> None:
-        """events.jsonl stat'd once (discovery), plan.md stat'd once (cache store)."""
+        """events.jsonl stat'd once (discovery); absent plan.md incurs no stat."""
         self._make_session(tmp_path, "sess-a", "a")
 
         with patch(
             "copilot_usage.parser._safe_file_identity", wraps=_safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # _safe_file_identity called once for _CONFIG_PATH, once by
-            # _discover_with_identity for events.jsonl, and once for plan.md
-            # when storing the cache entry.
-            assert spy.call_count == 3
+            # _safe_file_identity called once for _CONFIG_PATH and once by
+            # _discover_with_identity for events.jsonl.  plan.md does not
+            # exist so its absence is detected via os.scandir dir listing
+            # — no stat call is issued.
+            assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
@@ -5262,12 +5370,13 @@ class TestSessionCacheMtime:
         assert entry.summary.name == "Test"
 
     def test_cached_sessions_no_redundant_plan_stat(self, tmp_path: Path) -> None:
-        """Cached refresh uses at most 2N stat calls for N sessions (no extra plan.md stat).
+        """Cached refresh uses at most N+1 stat calls for N sessions (no plan.md stat).
 
         After the initial call populates the cache, a second call must
-        not issue separate stat calls for plan.md — those are folded
-        into ``_discover_with_identity``.  Total stat calls for the
-        cached path are 2 per session (events.jsonl + plan.md in discovery),
+        not issue separate stat calls for plan.md — absent ``plan.md``
+        files are detected via ``os.scandir`` directory listing with zero
+        ``stat()`` overhead.  Total stat calls for the cached path are
+        1 per session (events.jsonl in discovery) plus 1 for config,
         with zero additional calls during the cached refresh.
         """
         n = 5
@@ -5283,9 +5392,9 @@ class TestSessionCacheMtime:
         ) as spy:
             results = get_all_sessions(tmp_path)
             assert len(results) == n
-            # 1 for _CONFIG_PATH + 2 per session from _discover_with_identity
-            # (events + plan), no additional stat calls in the main loop.
-            assert spy.call_count == 1 + 2 * n
+            # 1 for _CONFIG_PATH + 1 per session from _discover_with_identity
+            # (events.jsonl only — plan.md absent, detected by scandir).
+            assert spy.call_count == 1 + n
 
     def test_stale_cache_entries_evicted_on_session_delete(
         self, tmp_path: Path

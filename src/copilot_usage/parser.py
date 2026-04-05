@@ -7,6 +7,7 @@ aggregates.
 
 import dataclasses
 import json
+import os
 from collections import OrderedDict
 from datetime import datetime
 from functools import lru_cache
@@ -229,20 +230,48 @@ def _discover_with_identity(
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
     by *events_file_id* (mtime descending, then size as tie-breaker).
 
-    When *include_plan* is ``True`` (default) both identities are computed
-    in a single directory scan, so callers pay zero extra stat calls for
-    ``plan.md``.  When ``False``, the ``plan_file_id`` element is always
-    ``None`` and the ``plan.md`` stat is skipped entirely — useful for
-    callers that only need event ordering.
+    Uses :func:`os.scandir` to enumerate session directories in a single
+    pass.  Existence of ``plan.md`` is determined by a dict-lookup on the
+    directory listing — no ``stat()`` syscall is issued for absent files,
+    eliminating O(N) failed stats and ``OSError`` instances for sessions
+    that never create a ``plan.md``.
+
+    When *include_plan* is ``True`` (default) and ``plan.md`` is present,
+    its file identity is computed via :func:`_safe_file_identity`.  When
+    ``plan.md`` is absent, the ``plan_file_id`` element is ``None`` with
+    zero overhead.  When *include_plan* is ``False``, the ``plan_file_id``
+    element is always ``None`` — useful for callers that only need event
+    ordering.
     """
     root = base_path or _DEFAULT_BASE
     if not root.is_dir():
         return []
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
-    for p in root.glob("*/events.jsonl"):
-        events_id = _safe_file_identity(p)
-        plan_id = _safe_file_identity(p.parent / "plan.md") if include_plan else None
-        result.append((p, events_id, plan_id))
+    try:
+        with os.scandir(root) as session_entries:
+            for session_entry in session_entries:
+                try:
+                    is_session_dir = session_entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    is_session_dir = False
+                if not is_session_dir:
+                    continue
+                try:
+                    with os.scandir(session_entry.path) as dir_entries:
+                        dir_files = {e.name: e for e in dir_entries}
+                except OSError:
+                    continue
+                if "events.jsonl" not in dir_files:
+                    continue
+                events_path = Path(dir_files["events.jsonl"].path)
+                events_id = _safe_file_identity(events_path)
+                if include_plan and "plan.md" in dir_files:
+                    plan_id = _safe_file_identity(Path(dir_files["plan.md"].path))
+                else:
+                    plan_id = None
+                result.append((events_path, events_id, plan_id))
+    except OSError:
+        return []
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
