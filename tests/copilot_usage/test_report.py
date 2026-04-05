@@ -2612,7 +2612,7 @@ class TestRenderCostView:
             if "claude-sonnet-4" in line and "Cost No Shutdown" in line
         )
         model_cols = [c.strip() for c in model_row.split("│")]
-        assert "10" in model_cols[5], (
+        assert model_cols[5] == "10", (
             f"Model Calls in per-model row should be 10, got '{model_cols[5]}'"
         )
         # Grand Total output tokens: 50.0K (no double-counting)
@@ -6016,8 +6016,13 @@ class TestCostViewActiveNoActivePeriodStats:
         assert "Since last shutdown" not in clean
         # Per-model row should still render with full session totals
         lines = clean.splitlines()
+        expected_session_label = session_display_name(session)
         model_row = next(
-            (ln for ln in lines if "claude-sonnet-4" in ln and "resume-no-ac" in ln),
+            (
+                ln
+                for ln in lines
+                if "claude-sonnet-4" in ln and expected_session_label in ln
+            ),
             None,
         )
         assert model_row is not None, "Expected a per-model row"
