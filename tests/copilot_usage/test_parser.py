@@ -6677,11 +6677,13 @@ class TestFirstPassPreFilter:
     def test_first_pass_10k_events_prefilter_consulted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The frozenset pre-filter is consulted exactly once per event.
+        """The frozenset pre-filter is consulted exactly once per non-tool event.
 
         Instead of a wall-clock ``timeit`` assertion (which is flaky on
         shared/loaded CI runners), we monkeypatch the module-level frozenset
-        with a counting wrapper and verify it is checked once per event.
+        with a counting wrapper and verify it is checked once per non-tool
+        event.  TOOL_EXECUTION_COMPLETE events are short-circuited before the
+        frozenset filter and therefore never consult it.
         """
         ts = "2026-03-07T10:00:00.000Z"
         start_line = json.dumps(
@@ -6790,8 +6792,8 @@ class TestToolCompleteShortCircuit:
     def test_1000_tool_events_resolves_model_at_index_3(self, tmp_path: Path) -> None:
         """1 000 tool.execution_complete events; only index 3 carries a model.
 
-        Asserts ``_first_pass().tool_model == 'gpt-4o'`` and verifies the
-        frozenset pre-filter is never consulted for tool events.
+        Asserts ``_first_pass().tool_model == 'gpt-4o'`` when the first model
+        appears on the fourth tool event.
         """
         ts = "2026-03-07T10:00:00.000Z"
         start = json.dumps(
