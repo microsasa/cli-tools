@@ -15,6 +15,11 @@ def lru_insert[K, V](
 ) -> None:
     """Insert *key*→*value* into *cache* with LRU eviction at *max_size*.
 
+    *cache* must be an :class:`collections.OrderedDict` and is mutated
+    in place. Existing entries for *key* are refreshed to most-recently
+    used status, and when *max_size* would be exceeded, the least-recently
+    used entry is evicted via ``popitem(last=False)``.
+
     Raises :class:`ValueError` if *max_size* is less than 1.
     """
     if max_size < 1:
