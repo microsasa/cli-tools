@@ -1,9 +1,35 @@
 """Filesystem helpers shared across the package."""
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Final
 
-__all__: Final[list[str]] = ["safe_file_identity"]
+__all__: Final[list[str]] = ["lru_insert", "safe_file_identity"]
+
+
+def lru_insert[K, V](
+    cache: OrderedDict[K, V],
+    key: K,
+    value: V,
+    max_size: int,
+) -> None:
+    """Insert *key*→*value* into *cache* with LRU eviction at *max_size*.
+
+    *cache* must be an :class:`collections.OrderedDict` and is mutated
+    in place. Existing entries for *key* are refreshed to most-recently
+    used status, and when *max_size* would be exceeded, the least-recently
+    used entry is evicted via ``popitem(last=False)``.
+
+    Raises :class:`ValueError` if *max_size* is less than 1.
+    """
+    if max_size < 1:
+        msg = f"max_size must be >= 1, got {max_size}"
+        raise ValueError(msg)
+    if key in cache:
+        del cache[key]
+    elif len(cache) >= max_size:
+        cache.popitem(last=False)
+    cache[key] = value
 
 
 def safe_file_identity(path: Path) -> tuple[int, int] | None:

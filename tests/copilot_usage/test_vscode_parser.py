@@ -1280,7 +1280,7 @@ class TestVscodeLogCache:
             assert spy.call_count == 1
         assert first == second
         assert log_file in _VSCODE_LOG_CACHE
-        assert _VSCODE_LOG_CACHE[log_file][1] == second
+        assert _VSCODE_LOG_CACHE[log_file].requests == second
 
     def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
         """Changing the file causes a re-parse on the next call."""
