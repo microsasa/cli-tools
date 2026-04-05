@@ -1512,3 +1512,46 @@ class TestIncrementalParsing:
         third = _get_cached_vscode_requests(log_file)
         # Now both requests are returned.
         assert len(third) == 2
+
+    def test_toctou_truncation_resets_offset(self, tmp_path: Path) -> None:
+        """_parse_vscode_log_from_offset resets to 0 when fstat shows file shrunk."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
+
+        # Call with an offset beyond the file's actual size to trigger the
+        # TOCTOU guard (actual_size < offset → reset offset and safe_end to 0).
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 999_999)
+        assert len(reqs) == 1
+        # end_offset should equal the full file size (parsed from byte 0).
+        assert end_offset == log_file.stat().st_size
+
+    def test_incremental_fstat_truncation_returns_full_reparse(
+        self, tmp_path: Path
+    ) -> None:
+        """Incremental path falls back when parser detects TOCTOU truncation."""
+        log_file = tmp_path / "chat.log"
+        initial = "\n".join(_make_log_line(req_idx=i) for i in range(5))
+        log_file.write_text(initial + "\n")
+
+        # Populate cache.
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 5
+        cached_entry = _VSCODE_LOG_CACHE[log_file]
+        old_end = cached_entry[1]
+
+        # Grow the file so the incremental path is taken (new_id[1] >= end_offset).
+        with log_file.open("a") as f:
+            f.write(_make_log_line(req_idx=99) + "\n")
+
+        # Mock _parse_vscode_log_from_offset to simulate the fstat-inside-open
+        # truncation: return new_end < end_offset so the cache treats it as a
+        # full reparse rather than a delta.
+        single_req = _parse_vscode_log_from_offset(log_file, 0)[0][:1]
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            return_value=(single_req, old_end - 1),
+        ):
+            result = _get_cached_vscode_requests(log_file)
+
+        # Result should be only the mocked full-reparse output, not combined.
+        assert len(result) == 1
