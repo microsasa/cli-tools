@@ -6602,7 +6602,11 @@ class TestFirstPassPreFilter:
     """Verify the _FIRST_PASS_EVENT_TYPES frozenset guard works correctly."""
 
     def test_frozenset_contains_all_handled_types(self) -> None:
-        """_FIRST_PASS_EVENT_TYPES covers exactly the six handled event types."""
+        """_FIRST_PASS_EVENT_TYPES covers exactly the five elif-chain types.
+
+        TOOL_EXECUTION_COMPLETE is handled separately before the frozenset
+        filter (issue #772) and is intentionally excluded.
+        """
         expected = frozenset(
             {
                 EventType.SESSION_START,
@@ -6610,7 +6614,6 @@ class TestFirstPassPreFilter:
                 EventType.USER_MESSAGE,
                 EventType.ASSISTANT_TURN_START,
                 EventType.ASSISTANT_MESSAGE,
-                EventType.TOOL_EXECUTION_COMPLETE,
             }
         )
         assert expected == _FIRST_PASS_EVENT_TYPES
@@ -6740,6 +6743,14 @@ class TestFirstPassPreFilter:
         events = parse_events(p)
         assert len(events) == 10000
 
+        # TOOL_EXECUTION_COMPLETE events are handled *before* the frozenset
+        # filter, so they never consult _FIRST_PASS_EVENT_TYPES.  Count only
+        # the non-tool events that reach the frozenset.
+        tool_event_count = sum(
+            1 for e in events if e.type == EventType.TOOL_EXECUTION_COMPLETE
+        )
+        expected_checks = len(events) - tool_event_count
+
         check_count = 0
         original = _FIRST_PASS_EVENT_TYPES
 
@@ -6756,11 +6767,154 @@ class TestFirstPassPreFilter:
 
         fp = _first_pass(events)
 
-        # Guard consulted exactly once per event
-        assert check_count == 10_000, (
-            f"Expected 10 000 frozenset membership checks, got {check_count}"
+        # Guard consulted exactly once per non-tool event
+        assert check_count == expected_checks, (
+            f"Expected {expected_checks} frozenset membership checks, got {check_count}"
         )
         assert fp.session_id == "bench"
+
+
+# ---------------------------------------------------------------------------
+# Issue #772 — TOOL_EXECUTION_COMPLETE short-circuits after tool_model found
+# ---------------------------------------------------------------------------
+
+
+class TestToolCompleteShortCircuit:
+    """TOOL_EXECUTION_COMPLETE events bypass the frozenset filter entirely.
+
+    Once ``tool_model`` is resolved, each subsequent TOOL_EXECUTION_COMPLETE
+    event should cost only one string comparison + one None-check + continue,
+    instead of traversing the full elif chain.
+    """
+
+    def test_1000_tool_events_resolves_model_at_index_3(self, tmp_path: Path) -> None:
+        """1 000 tool.execution_complete events; only index 3 carries a model.
+
+        Asserts ``_first_pass().tool_model == 'gpt-4o'`` and verifies the
+        frozenset pre-filter is never consulted for tool events.
+        """
+        ts = "2026-03-07T10:00:00.000Z"
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "tool-sc",
+                    "startTime": ts,
+                    "context": {"cwd": "/t"},
+                },
+                "id": "ev-start",
+                "timestamp": ts,
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {},
+                "id": "ev-user",
+                "timestamp": ts,
+            }
+        )
+        tool_events: list[str] = []
+        for i in range(1_000):
+            data: dict[str, str | bool] = {
+                "toolCallId": f"tc-{i}",
+                "success": True,
+            }
+            if i == 3:
+                data["model"] = "gpt-4o"
+            tool_events.append(
+                json.dumps(
+                    {
+                        "type": "tool.execution_complete",
+                        "data": data,
+                        "id": f"ev-tool-{i}",
+                        "timestamp": ts,
+                    }
+                )
+            )
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, start, user_msg, *tool_events)
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        assert fp.tool_model == "gpt-4o"
+        assert fp.session_id == "tool-sc"
+        assert fp.user_message_count == 1
+
+    def test_1000_tool_events_bypass_frozenset(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Frozenset pre-filter is never consulted for TOOL_EXECUTION_COMPLETE.
+
+        Uses a counting wrapper around the module-level frozenset to verify
+        that tool events are handled before the frozenset membership check.
+        """
+        ts = "2026-03-07T10:00:00.000Z"
+        start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "tool-bypass",
+                    "startTime": ts,
+                    "context": {"cwd": "/t"},
+                },
+                "id": "ev-start",
+                "timestamp": ts,
+            }
+        )
+        user_msg = json.dumps(
+            {
+                "type": "user.message",
+                "data": {},
+                "id": "ev-user",
+                "timestamp": ts,
+            }
+        )
+        tool_events = [
+            json.dumps(
+                {
+                    "type": "tool.execution_complete",
+                    "data": {
+                        "toolCallId": f"tc-{i}",
+                        "success": True,
+                        **({"model": "gpt-4o"} if i == 3 else {}),
+                    },
+                    "id": f"ev-tool-{i}",
+                    "timestamp": ts,
+                }
+            )
+            for i in range(1_000)
+        ]
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, start, user_msg, *tool_events)
+        events = parse_events(p)
+
+        check_count = 0
+        original = _FIRST_PASS_EVENT_TYPES
+
+        class _CountingFrozenset(frozenset):  # type: ignore[type-arg]
+            def __contains__(self, item: object) -> bool:
+                nonlocal check_count
+                check_count += 1
+                return item in original
+
+        monkeypatch.setattr(
+            "copilot_usage.parser._FIRST_PASS_EVENT_TYPES",
+            _CountingFrozenset(original),
+        )
+
+        fp = _first_pass(events)
+
+        # Only start + user_msg should consult the frozenset (2 events)
+        assert check_count == 2, (
+            f"Expected 2 frozenset checks (start + user_msg), got {check_count}"
+        )
+        assert fp.tool_model == "gpt-4o"
+        assert fp.session_id == "tool-bypass"
 
 
 # ---------------------------------------------------------------------------
