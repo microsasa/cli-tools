@@ -70,7 +70,7 @@ This workflow addresses unresolved review comments on a pull request.
    c. Make the requested fix in the code
    d. Reply to the comment thread using `reply_to_pull_request_review_comment` with the comment's `databaseId` as the `comment_id`
 
-5. After addressing all comments, run the CI checks locally to make sure your fixes don't break anything: `uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
+5. After addressing all comments, run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass: `make fix && make check`
 
 6. If CI checks fail, fix the issues and re-run until they pass. Do not push broken code.
 

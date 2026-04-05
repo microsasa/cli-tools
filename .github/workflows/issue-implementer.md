@@ -49,12 +49,12 @@ Read `.github/copilot-instructions.md` and follow all referenced guidelines for 
 
 Read all files in the repository. Read issue #${{ github.event.inputs.issue_number }} to understand what needs to be fixed. Implement the fix following the spec in the issue, including any testing requirements.
 
-Before committing, run the full CI check suite locally:
+Before committing, run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass (lint, type check, security, tests):
 
 ```
-uv sync && uv run ruff check --fix . && uv run ruff format . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v
+make fix && make check
 ```
 
-Fix any lint or type errors found by ruff/pyright before committing. Iterate until all checks pass cleanly.
+Fix any remaining errors and iterate until `make check` passes cleanly.
 
 Open a pull request with the fix. The PR title should reference the issue number. The PR body MUST include `Closes #${{ github.event.inputs.issue_number }}` so GitHub auto-closes the issue when the PR merges. Include tests as specified in the issue. The PR must NOT be a draft — open it as a regular PR ready for review.

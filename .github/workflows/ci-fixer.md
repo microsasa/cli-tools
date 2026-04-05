@@ -69,7 +69,7 @@ Read `.github/copilot-instructions.md` and follow all referenced guidelines for 
    - pytest failures (assertion errors, missing fixtures, import errors)
    - bandit security warnings
 
-7. After making fixes, run the checks locally to verify: `uv sync && uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run pytest --cov --cov-fail-under=80 -v`
+7. After making fixes, run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass: `make fix && make check`
 
 8. Push the fix commit to the PR branch with a clear commit message like "fix: resolve CI failures (ruff/pyright/pytest)".
 
