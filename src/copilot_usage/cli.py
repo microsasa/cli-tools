@@ -326,6 +326,11 @@ def _interactive_loop(path: Path | None) -> None:
                     line = input().strip()
                 except (EOFError, KeyboardInterrupt):
                     break
+                except Exception as exc:
+                    logger.warning(
+                        "Unexpected stdin error; exiting interactive mode: {}", exc
+                    )
+                    break
 
             if line is None:
                 continue
