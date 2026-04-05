@@ -406,12 +406,7 @@ The gh-aw agent orchestrator was removed (PR #137, see `docs/auto_pr_orchestrato
 - **v1 — Thread resolution**: Triggered by `workflow_run` after Review Responder completes. Queries review threads via GraphQL, resolves threads where the last commenter is not `copilot-pull-request-reviewer` (meaning someone addressed it). Tested on PR #113 — resolved 2 threads in 3 seconds.
 - **v2 — Auto-rebase**: Triggered by `push: branches: [main]`. Detects PRs behind main via `mergeStateStatus: BEHIND`, rebases onto `origin/main`, force-pushes with lease. On conflict: adds `aw-needs-rebase` label. Tested on PR #113 — rebased and auto-merge fired in 7 seconds.
 
-**Reverted (was v3)**: Issue dispatch, cron trigger, and review loop management were merged (PR #144) then reverted — untested code caused loops. Being reworked on `fix/responder-v2` branch.
-
-**Planned**:
-- v3: Issue dispatch + cron + review loop (in progress on branch)
-- v4: CI fixer dispatch
-- v5: Stale PR cleanup
+- **v3 — Full orchestration** (PR #163): Issue dispatch (finds `aw-backlog` issues, dispatches implementer), 30-minute cron safety net, review loop management (tracks responder rounds via `aw-review-response-N` labels, marks stuck after 3 retries), CI fixer dispatch. Initially merged in PR #144 then reverted due to untested loops — reworked and re-merged in PR #163 after sandbox testing.
 
 See issue #135 for the full roadmap.
 
@@ -423,7 +418,7 @@ The review-responder agent can read threads, fix code, and reply. However, the s
 - `target: "*"` works with `workflow_dispatch` — the agent includes the PR number in its messages
 - The `pull_request_review` trigger caused infinite loops because it fires on ANY review submission (Copilot, quality gate, humans), not just Copilot reviews
 
-**Fix in progress** (`fix/responder-v2` branch): Switch to `workflow_dispatch` trigger with `target: "*"` on safe outputs. Orchestrator dispatches the responder when needed. Successfully tested on PR #152.
+**Fixed** (PR #163): Switched to `workflow_dispatch` trigger with `target: "*"` on safe outputs. Orchestrator dispatches the responder when needed. Successfully tested on PR #152, merged in PR #163.
 
 </details>
 
@@ -534,7 +529,7 @@ Copilot code review does not reliably auto-trigger on every push — observed on
 Before dispatching any agent workflow (implementer, quality gate, responder), check if one is already running. Use `gh run list --workflow=NAME --json databaseId,status | jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length'`. Without this check, multiple orchestrator runs from rapid-fire `workflow_run` triggers will dispatch duplicates, wasting compute and inference tokens. This bug occurred for both the implementer (#164) and quality gate (#213).
 
 ### 35. MCP gateway SSE connections die after 5 minutes of idle (#707)
-The MCP gateway's HTTP transport drops connections after exactly 5 minutes of no MCP traffic. Confirmed via gateway logs showing `duration=5m0.8s (empty body)` on **every single run**. Successful runs happen to call safe-output tools before the 5-minute mark. Runs where the agent spends >5 minutes on local work (reading, editing, running tests) before calling safe-outputs fail silently — no PR created. Gateway config says `idleTimeout=30m0s` but the timeout is in the SSE transport layer, not the gateway pool. gh-aw v0.65.7 added a `keepalive-interval` frontmatter option to send periodic pings, but as of v0.66.1 the gateway binary (v0.2.12) rejects the field during schema validation. No fix available yet — affects ~15-25% of implementer and responder runs.
+The MCP gateway's HTTP transport drops connections after exactly 5 minutes of no MCP traffic. Confirmed via gateway logs showing `duration=5m0.8s (empty body)` on **every single run**. Successful runs happen to call safe-output tools before the 5-minute mark. Runs where the agent spends >5 minutes on local work (reading, editing, running tests) before calling safe-outputs fail silently — no PR created. Gateway config says `idleTimeout=30m0s` but the timeout is in the SSE transport layer, not the gateway pool. gh-aw v0.65.7 added a `sandbox.mcp.keepalive-interval` frontmatter option to send periodic pings, but as of v0.66.1 the gateway binary (v0.2.12) rejects the field during schema validation. No fix available yet — affects ~15-25% of implementer and responder runs.
 
 ### 36. Copilot code review reads copilot-instructions.md from the PR branch, not main
 Empirically verified on PRs #478 and #479. The instructions file existed only in the PR branch — Copilot flagged violations citing the guidelines file by name. GitHub docs say "Copilot uses the custom instructions in the base branch" — this is wrong. PR branch is the source. This means new instructions take effect immediately on the PR that adds them.
@@ -896,13 +891,13 @@ The enhanced PR rescue (#116) went through three complete rewrites:
 ### 2026-04-03/04 — MCP timeout investigation and gh-aw upgrade
 
 - **Issue #707**: Discovered MCP gateway SSE connections die after exactly 5 minutes of idle on every run. Gateway logs: `duration=5m0.8s (empty body)`. Successful runs call safe-outputs before the 5-minute mark; failures spend >5 minutes on local work. Upstream issue gh-aw#20885 was closed March 14 but fix was incomplete.
-- **PR #709**: Upgraded gh-aw to v0.66.1. Added `keepalive-interval: 120` to all workflow frontmatters.
+- **PR #709**: Upgraded gh-aw to v0.66.1. Added `sandbox.mcp.keepalive-interval: 120` to all workflow frontmatters.
 - **PR #717 (hotfix)**: Immediately reverted keepalive config — MCP Gateway v0.2.12 rejects `keepaliveInterval` during schema validation. All agent workflows broken at startup. The gh-aw compiler emits the field but the gateway binary doesn't support it yet. The 5-minute timeout remains unfixed (#707).
 - **Issue #114 investigation**: PRRT_ thread ID bug still present upstream. MCP server PR #2245 (2-line fix) is open but unmerged. gh-aw smoke tests still skip "Resolve Review Thread." Our pre-fetch workaround remains necessary.
 - **Key lessons**:
   - Always download and read agent artifacts (agent-stdio.log, mcp-gateway.log) — never guess from workflow conclusion alone.
   - The gateway config `idleTimeout=30m0s` is the pool timeout; the 5-minute kill is in the SSE transport layer.
-  - `keepalive-interval` in frontmatter is a heartbeat interval (pings every N seconds), not a timeout duration.
+  - `sandbox.mcp.keepalive-interval` in frontmatter is a heartbeat interval (pings every N seconds), not a timeout duration.
   - Test workflow changes with `workflow_dispatch` before merging — the keepalive schema rejection broke every agent workflow.
   - gh-aw releases are frequent (~2/day) — always check the latest version before upgrading.
 

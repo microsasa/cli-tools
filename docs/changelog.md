@@ -40,15 +40,15 @@ Fixes #707 (partially — keepalive blocked by schema). Closes #708.
 
 ---
 
-## chore: upgrade gh-aw from v0.62.5 to v0.64.3 — 2026-03-30
-
-**Changes (PR #525)**: Upgraded gh-aw CLI, updated `copilot-setup-steps.yml` SHA and version pin, recompiled all lock files. Supersedes dependabot PRs #515 and #516. Dependabot PRs should not be merged directly for gh-aw — use `gh aw compile` to regenerate lock files.
-
----
-
 ## pipeline: add feature planner agent workflow — 2026-04-01
 
 **Changes (PR #600)**: New scheduled workflow (every 3 hours) that reads `.github/PRODUCT_VISION.md`, compares against current codebase, and files one implementable feature issue. Organic progression — no step tracking, code is ground truth. One feature in flight at a time (`auto-feature` label gate). Vision doc is empty until filled by the user. Closes #599.
+
+---
+
+## chore: upgrade gh-aw from v0.62.5 to v0.64.3 — 2026-03-30
+
+**Changes (PR #525)**: Upgraded gh-aw CLI, updated `copilot-setup-steps.yml` SHA and version pin, recompiled all lock files. Supersedes dependabot PRs #515 and #516. Dependabot PRs should not be merged directly for gh-aw — use `gh aw compile` to regenerate lock files.
 
 ---
 
@@ -98,11 +98,11 @@ Closes #63.
 ## chore: adjust cron schedules for all workflows — 2026-03-21
 
 **Changes**:
-- Code-health: daily → every 6 hours (`:29` past the hour)
-- Test-analysis: weekly → every 6 hours (`:24` past the hour)
+- Code-health: daily → every 6 hours (`:29` past the hour, authored)
+- Test-analysis: weekly → every 6 hours (`:24` past the hour, authored)
 - Pipeline orchestrator: every 5 min → every 30 min (`:00` and `:30`). The orchestrator is mostly event-driven (`workflow_run` triggers); cron is just a safety net.
 
-All schedules are offset to avoid collisions.
+All schedules are offset to avoid collisions. Note: `gh aw compile` scatters the authored cron minutes — compiled `.lock.yml` files will show different minute values.
 
 Closes #217.
 

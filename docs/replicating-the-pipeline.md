@@ -67,6 +67,9 @@ EOF
 Set branch protection (adjust to your needs):
 
 ```bash
+# Note: PUT replaces the ENTIRE protection config. This is fine for initial
+# setup but dangerous for later modifications — use PATCH or sub-resource
+# endpoints to avoid accidentally wiping existing rules.
 gh api repos/OWNER/REPO/branches/main/protection -X PUT --input - <<'EOF'
 {
   "required_status_checks": { "strict": true, "contexts": ["YOUR_CI_JOB_NAME"] },
@@ -83,7 +86,7 @@ EOF
 
 > **Critical:** The `contexts` value must be the **job name** in your CI
 > workflow, not the workflow name. Getting this wrong permanently blocks PRs.
-> See [commit 56bcc72](../../commit/56bcc72) for when we got this wrong.
+> See [commit 56bcc72](https://github.com/microsasa/cli-tools/commit/56bcc72) for when we got this wrong.
 
 ### 1.4 Create coding guidelines
 
@@ -378,7 +381,7 @@ minimization. Agents can reply to threads but can't resolve them via MCP.
 
 **Workaround:** Pre-fetch threads via `gh api graphql` in a shared import
 step that runs before the agent. Write to `/tmp/gh-aw/review-data/`.
-See [shared/fetch-review-comments.md](../../.github/workflows/shared/fetch-review-comments.md).
+See [shared/fetch-review-comments.md](../.github/workflows/shared/fetch-review-comments.md).
 
 **Upstream:** [github/github-mcp-server#2245](https://github.com/github/github-mcp-server/pull/2245) (open, unmerged).
 
@@ -387,7 +390,7 @@ See [shared/fetch-review-comments.md](../../.github/workflows/shared/fetch-revie
 SSE connections die after exactly 5 minutes of no MCP traffic. Agents that
 spend >5 minutes on local work before calling safe-outputs fail silently.
 
-**Status:** gh-aw v0.65.7 added `keepalive-interval` frontmatter option but
+**Status:** gh-aw v0.65.7 added `sandbox.mcp.keepalive-interval` frontmatter option but
 the gateway binary (v0.2.12) rejects it during schema validation. No fix
 available as of v0.66.1.
 
@@ -435,16 +438,16 @@ This guide is based on the pipeline built at
 
 | File | Purpose |
 |------|---------|
-| [pipeline-orchestrator.yml](../../.github/workflows/pipeline-orchestrator.yml) | Bash orchestrator |
-| [issue-implementer.md](../../.github/workflows/issue-implementer.md) | Implementer agent |
-| [review-responder.md](../../.github/workflows/review-responder.md) | Review responder |
-| [ci-fixer.md](../../.github/workflows/ci-fixer.md) | CI fixer |
-| [quality-gate.md](../../.github/workflows/quality-gate.md) | Quality gate |
-| [code-health.md](../../.github/workflows/code-health.md) | Code health scanner |
-| [test-analysis.md](../../.github/workflows/test-analysis.md) | Test gap finder |
-| [perf-analysis.md](../../.github/workflows/perf-analysis.md) | Performance analyzer |
-| [feature-planner.md](../../.github/workflows/feature-planner.md) | Feature planner |
-| [shared/fetch-review-comments.md](../../.github/workflows/shared/fetch-review-comments.md) | Pre-fetch workaround |
-| [CODING_GUIDELINES.md](../../.github/CODING_GUIDELINES.md) | Coding standards |
-| [copilot-instructions.md](../../.github/copilot-instructions.md) | Copilot instruction hub |
+| [pipeline-orchestrator.yml](../.github/workflows/pipeline-orchestrator.yml) | Bash orchestrator |
+| [issue-implementer.md](../.github/workflows/issue-implementer.md) | Implementer agent |
+| [review-responder.md](../.github/workflows/review-responder.md) | Review responder |
+| [ci-fixer.md](../.github/workflows/ci-fixer.md) | CI fixer |
+| [quality-gate.md](../.github/workflows/quality-gate.md) | Quality gate |
+| [code-health.md](../.github/workflows/code-health.md) | Code health scanner |
+| [test-analysis.md](../.github/workflows/test-analysis.md) | Test gap finder |
+| [perf-analysis.md](../.github/workflows/perf-analysis.md) | Performance analyzer |
+| [feature-planner.md](../.github/workflows/feature-planner.md) | Feature planner |
+| [shared/fetch-review-comments.md](../.github/workflows/shared/fetch-review-comments.md) | Pre-fetch workaround |
+| [CODING_GUIDELINES.md](../.github/CODING_GUIDELINES.md) | Coding standards |
+| [copilot-instructions.md](../.github/copilot-instructions.md) | Copilot instruction hub |
 | [agentic-workflows.md](agentic-workflows.md) | Lessons learned (42 pitfalls) |
