@@ -2,7 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
-import time
+import os
 from pathlib import Path
 
 import pytest
@@ -56,9 +56,10 @@ class TestSafeFileIdentity:
         id_before = _safe_file_identity(f)
         assert id_before is not None
 
-        # Ensure filesystem timestamp actually advances
-        time.sleep(0.05)
-        f.write_text("v2-longer")
+        # Keep file size constant; force an mtime_ns change via os.utime
+        # so the test verifies mtime_ns detection, not just size.
+        original_mtime_ns = id_before[0]
+        os.utime(f, ns=(original_mtime_ns + 1_000_000, original_mtime_ns + 1_000_000))
 
         id_after = _safe_file_identity(f)
         assert id_after is not None
