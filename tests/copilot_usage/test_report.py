@@ -3245,6 +3245,21 @@ class TestFilterSessionsNoneStartTime:
         result = _filter_sessions([session], since=None, until=None)
         assert [s.session_id for s in result] == ["s"]
 
+    def test_none_start_time_excluded_with_until_only(self) -> None:
+        """until-only filter still excludes sessions with start_time=None."""
+        no_time = SessionSummary(session_id="no-time")
+        in_range = SessionSummary(
+            session_id="in-range",
+            start_time=datetime(2025, 3, 1, tzinfo=UTC),
+        )
+        until = datetime(2025, 6, 1, tzinfo=UTC)
+        result = _filter_sessions([no_time, in_range], since=None, until=until)
+        ids = [s.session_id for s in result]
+        assert "no-time" not in ids, (
+            "start_time=None session must be excluded by until-filter"
+        )
+        assert "in-range" in ids
+
 
 # ---------------------------------------------------------------------------
 # Issue #19 — _render_totals singular grammar
@@ -3843,6 +3858,42 @@ class TestComputeSessionTotals:
         totals = _compute_session_totals([session])
         assert totals.output_tokens == 1000
         assert totals.session_count == 1
+
+    def test_shutdown_only_subtracts_active_counts_for_resumed_session(self) -> None:
+        """shutdown_only=True: resumed session contributes only shutdown-period calls."""
+        session = SessionSummary(
+            session_id="resumed-so",
+            total_premium_requests=10,
+            model_calls=500,
+            active_model_calls=200,
+            user_messages=100,
+            active_user_messages=40,
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=1_000_000),
+                ),
+            },
+        )
+        totals = _compute_session_totals([session], shutdown_only=True)
+        assert totals.model_calls == 300  # 500 - 200
+        assert totals.user_messages == 60  # 100 - 40
+
+    def test_shutdown_only_no_effect_for_completed_session(self) -> None:
+        """shutdown_only=True: completed session (no active stats) counts unchanged."""
+        session = SessionSummary(
+            session_id="completed-so",
+            total_premium_requests=5,
+            model_calls=80,
+            user_messages=30,
+            is_active=False,
+            has_shutdown_metrics=True,
+        )
+        totals = _compute_session_totals([session], shutdown_only=True)
+        assert totals.model_calls == 80
+        assert totals.user_messages == 30
 
     def test_frozen_dataclass(self) -> None:
         """_SessionTotals instances are immutable."""
