@@ -1136,7 +1136,7 @@ class TestRenderSummary:
             start_time=datetime(2026, 6, 1, tzinfo=UTC),
         )
         output = _capture_summary(
-            [old, new],
+            [new, old],
             since=datetime(2026, 3, 1, tzinfo=UTC),
         )
         assert "New Session" in output
@@ -2830,7 +2830,7 @@ class TestRenderFullSummaryHelperReuse:
         late = _make_session(start_time=datetime(2025, 1, 20, tzinfo=UTC), name="Late")
         since = datetime(2025, 1, 15, tzinfo=UTC)
         until = datetime(2025, 1, 25, tzinfo=UTC)
-        output = _capture_cost_view([early, late], since=since, until=until)
+        output = _capture_cost_view([late, early], since=since, until=until)
         assert "Late" in output
         assert "Early" not in output
 
@@ -5195,6 +5195,73 @@ class TestFilterSessionsUntilBoundary:
         )
         result = _filter_sessions([session], since=None, until=until)
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #755 — _filter_sessions early termination with sorted input
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSessionsEarlyTermination:
+    """Verify that _filter_sessions breaks early on sorted newest-first input."""
+
+    def test_ensure_aware_called_at_most_k_plus_one_times(self) -> None:
+        """Given 1000 sessions sorted newest-first with since=yesterday,
+        ensure_aware must be called at most k+1 times (k matching + 1 that
+        triggers the break), not 1000 times."""
+        now = datetime(2026, 4, 5, tzinfo=UTC)
+        since = now - timedelta(days=1)
+        k = 10
+        # k recent sessions that pass the filter
+        recent = [
+            SessionSummary(
+                session_id=f"recent-{i}",
+                start_time=now - timedelta(hours=i),
+            )
+            for i in range(k)
+        ]
+        # 990 old sessions that should be skipped via early break
+        old = [
+            SessionSummary(
+                session_id=f"old-{i}",
+                start_time=now - timedelta(days=30 + i),
+            )
+            for i in range(990)
+        ]
+        sessions = recent + old
+
+        with patch(
+            "copilot_usage.report.ensure_aware",
+            wraps=ensure_aware,
+        ) as spy:
+            result = _filter_sessions(sessions, since=since, until=None)
+
+        assert len(result) == k
+        # k calls for matching sessions + 1 call that triggered the break
+        assert spy.call_count <= k + 1, (
+            f"ensure_aware called {spy.call_count} times; expected <= {k + 1}"
+        )
+
+    def test_none_start_time_at_end_excluded_with_break(self) -> None:
+        """Sessions with start_time=None must not be included even when
+        early termination on ``since`` breaks the loop before reaching them."""
+        now = datetime(2026, 4, 5, tzinfo=UTC)
+        since = now - timedelta(days=1)
+        recent = SessionSummary(
+            session_id="recent",
+            start_time=now - timedelta(hours=1),
+        )
+        old = SessionSummary(
+            session_id="old",
+            start_time=now - timedelta(days=30),
+        )
+        none_session = SessionSummary(session_id="no-time", start_time=None)
+        # newest-first ordering; None-start entry at the very end
+        sessions = [recent, old, none_session]
+        result = _filter_sessions(sessions, since=since, until=None)
+        ids = [s.session_id for s in result]
+        assert "recent" in ids
+        assert "no-time" not in ids, "start_time=None session must not be included"
 
 
 # ---------------------------------------------------------------------------
