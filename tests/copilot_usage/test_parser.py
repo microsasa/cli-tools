@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 import copilot_usage.parser as _parser_module
+from copilot_usage._fs_utils import _safe_file_identity
 from copilot_usage.models import (
     AssistantMessageData,
     EventType,
@@ -50,7 +51,6 @@ from copilot_usage.parser import (
     _insert_session_entry,
     _read_config_model,
     _ResumeInfo,
-    _safe_file_identity,
     _safe_int_tokens,
     build_session_summary,
     discover_sessions,
@@ -389,49 +389,6 @@ def _active_events(
         _TOOL_EXEC,
     )
     return parse_events(p), p.parent
-
-
-# ---------------------------------------------------------------------------
-# _safe_file_identity
-# ---------------------------------------------------------------------------
-
-
-class TestSafeFileIdentity:
-    def test_returns_mtime_ns_size_for_existing_file(self, tmp_path: Path) -> None:
-        f = tmp_path / "events.jsonl"
-        f.write_text("content")
-        result = _safe_file_identity(f)
-        assert result is not None
-        mtime_ns, size = result
-        assert mtime_ns > 0
-        assert size == len(b"content")
-
-    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        assert _safe_file_identity(tmp_path / "ghost.jsonl") is None
-
-    def test_returns_none_for_permission_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        f = tmp_path / "events.jsonl"
-        f.write_text("")
-
-        def _raise_perm(self: Path, **kwargs: object) -> object:
-            raise PermissionError("denied")
-
-        monkeypatch.setattr(Path, "stat", _raise_perm)
-        assert _safe_file_identity(f) is None
-
-    def test_returns_none_for_generic_oserror(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        f = tmp_path / "events.jsonl"
-        f.write_text("")
-
-        def _raise_os(self: Path, **kwargs: object) -> object:
-            raise OSError("I/O error")
-
-        monkeypatch.setattr(Path, "stat", _raise_os)
-        assert _safe_file_identity(f) is None
 
 
 # ---------------------------------------------------------------------------

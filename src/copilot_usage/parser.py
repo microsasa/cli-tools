@@ -24,6 +24,9 @@ __all__: Final[list[str]] = [
     "parse_events",
 ]
 
+from copilot_usage._fs_utils import (
+    _safe_file_identity,  # pyright: ignore[reportPrivateUsage]
+)
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -214,22 +217,6 @@ def _safe_int_tokens(raw: object) -> int | None:
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
         return raw
     return None
-
-
-def _safe_file_identity(path: Path) -> tuple[int, int] | None:
-    """Return ``(st_mtime_ns, st_size)`` for *path*, or ``None`` on any OS error.
-
-    Uses nanosecond-precision mtime paired with file size for robust
-    change detection — avoids the float-rounding and coarse-resolution
-    issues of ``st_mtime``.  Returning ``None`` (rather than a sentinel
-    tuple like ``(0, 0)``) makes it impossible for an absent-file marker
-    to collide with a legitimate file identity.
-    """
-    try:
-        st = path.stat()
-        return (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return None
 
 
 def _discover_with_identity(

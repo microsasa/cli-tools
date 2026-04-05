@@ -18,7 +18,6 @@ from copilot_usage.vscode_parser import (
     VSCodeRequest,
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
-    _safe_file_identity,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
@@ -1242,24 +1241,6 @@ class TestParseVscodeLogFromisoformat:
         for i, req in enumerate(requests):
             assert req.request_id == f"req{i:05d}"
             assert req.duration_ms == 50 + i
-
-
-# ---------------------------------------------------------------------------
-# _safe_file_identity
-# ---------------------------------------------------------------------------
-
-
-class TestSafeFileIdentity:
-    def test_returns_mtime_ns_and_size(self, tmp_path: Path) -> None:
-        p = tmp_path / "f.txt"
-        p.write_text("hello")
-        result = _safe_file_identity(p)
-        assert result is not None
-        st = p.stat()
-        assert result == (st.st_mtime_ns, st.st_size)
-
-    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        assert _safe_file_identity(tmp_path / "nonexistent") is None
 
 
 # ---------------------------------------------------------------------------
