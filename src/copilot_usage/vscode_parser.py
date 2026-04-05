@@ -194,7 +194,7 @@ def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
     The parsed list is converted to a ``tuple`` before storage so that
     callers cannot accidentally append, pop, or reorder entries in the
     cache — matching the container-level immutability pattern used by
-    :func:`parser.get_cached_events`.
+    :func:`copilot_usage.parser.get_cached_events`.
 
     Raises:
         OSError: Propagated from :func:`parse_vscode_log` when the file
