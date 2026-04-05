@@ -56,11 +56,16 @@ class TestSafeFileIdentity:
         id_before = _safe_file_identity(f)
         assert id_before is not None
 
-        # Keep file size constant; force an mtime_ns change via os.utime
-        # so the test verifies mtime_ns detection, not just size.
+        # Keep file size constant; force an mtime_ns change via os.utime.
+        # Bump by ≥1s and loop until stat() confirms the change, because some
+        # filesystems truncate mtimes to 1-second (or coarser) resolution.
         original_mtime_ns = id_before[0]
-        os.utime(f, ns=(original_mtime_ns + 1_000_000, original_mtime_ns + 1_000_000))
+        for delta_ns in (1_000_000_000, 2_000_000_000, 5_000_000_000):
+            new_mtime_ns = original_mtime_ns + delta_ns
+            os.utime(f, ns=(new_mtime_ns, new_mtime_ns))
+            if f.stat().st_mtime_ns != original_mtime_ns:
+                break
 
         id_after = _safe_file_identity(f)
         assert id_after is not None
-        assert id_before != id_after
+        assert id_after[0] != original_mtime_ns
