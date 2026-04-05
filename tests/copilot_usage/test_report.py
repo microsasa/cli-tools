@@ -2573,10 +2573,13 @@ class TestRenderCostView:
             f"Grand Total output tokens should be 8.0K, got '{grand_cols[6]}'"
         )
 
-    def test_resumed_session_active_zero_cost_falls_back(self) -> None:
-        """Cost view: resumed session with active_*=0 uses totals for the active row.
+    def test_resumed_session_active_zero_cost_suppresses_active_row(self) -> None:
+        """Cost view: resumed session with active_*=0 suppresses the active row.
 
-        Regression test for issue #132.
+        Updated for issue #775: when has_active_period_stats is False
+        (all active counters are 0 and last_resume_time is None), the
+        '↳ Since last shutdown' row must not appear — previously it
+        fell back to session totals which was misleading.
         """
         session = SessionSummary(
             session_id="cost-never-shut",
@@ -2598,19 +2601,21 @@ class TestRenderCostView:
             },
         )
         output = _capture_cost_view([session])
-        assert "Since last shutdown" in output
+        # Row must not appear when there is no active-period data
+        assert "Since last shutdown" not in output
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
         lines = clean.splitlines()
-        shutdown_row = next(line for line in lines if "Since last shutdown" in line)
-        cols = [c.strip() for c in shutdown_row.split("│")]
-        # Should show model_calls (10) and model_metrics tokens (50.0K), not 0
-        assert "10" in cols[5], (
-            f"Model Calls in active row should be 10, got '{cols[5]}'"
+        # Per-model row shows the full model_calls (10)
+        model_row = next(
+            line
+            for line in lines
+            if "claude-sonnet-4" in line and "Cost No Shutdown" in line
         )
-        assert "50.0K" in cols[6], (
-            f"Output Tokens in active row should be 50.0K, got '{cols[6]}'"
+        model_cols = [c.strip() for c in model_row.split("│")]
+        assert model_cols[5] == "10", (
+            f"Model Calls in per-model row should be 10, got '{model_cols[5]}'"
         )
-        # Grand Total output tokens must NOT double-count: should be 50.0K, not 100.0K
+        # Grand Total output tokens: 50.0K (no double-counting)
         grand_row = next(line for line in lines if "Grand Total" in line)
         grand_cols = [c.strip() for c in grand_row.split("│")]
         assert "50.0K" in grand_cols[6], (
@@ -5969,6 +5974,100 @@ class TestCostViewEmptyMetricsWithActivePeriod:
         output = _capture_cost_view([session])
         assert session_display_name(session) in output
         assert "↳ Since last shutdown" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #775 — render_cost_view "Since last shutdown" row must not appear
+# when has_active_period_stats is False
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewActiveNoActivePeriodStats:
+    """Fix #775: when is_active=True, has_shutdown_metrics=True but
+    has_active_period_stats=False, the '↳ Since last shutdown' row must
+    not appear (it previously fell back to session totals)."""
+
+    def test_since_last_shutdown_row_suppressed_when_no_active_stats(self) -> None:
+        """When is_active=True and has_shutdown_metrics=True but
+        has_active_period_stats=False, the '↳ Since last shutdown' row
+        must not appear — showing session totals is misleading."""
+        session = SessionSummary(
+            session_id="resume-no-activity",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 3, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=5),
+                    usage=TokenUsage(outputTokens=1000),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # The ↳ row must NOT appear
+        assert "Since last shutdown" not in clean
+        # Per-model row should still render with full session totals
+        lines = clean.splitlines()
+        expected_session_label = session_display_name(session)
+        model_row = next(
+            (
+                ln
+                for ln in lines
+                if "claude-sonnet-4" in ln and expected_session_label in ln
+            ),
+            None,
+        )
+        assert model_row is not None, "Expected a per-model row"
+        cols = [c.strip() for c in model_row.split("│")]
+        assert cols[5] == "5", f"Model Calls should be 5, got '{cols[5]}'"
+
+    def test_grand_total_not_double_counted_when_no_active_stats(self) -> None:
+        """Grand total must not double-count when has_active_period_stats=False.
+
+        Companion to the suppression test: for this fixture, the grand-total
+        row should show the session's expected totals without adding any
+        fallback active-period values a second time.
+        """
+        session = SessionSummary(
+            session_id="resume-no-activity-grand",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 3, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=5),
+                    usage=TokenUsage(outputTokens=1000),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        # model_calls = 5 (no deduction since has_active_period_stats is False)
+        assert grand_cols[5] == "5", (
+            f"Grand Total model calls should be 5, got '{grand_cols[5]}'"
+        )
+        # output tokens = 1.0K (shutdown baseline only, no active tokens to add)
+        assert grand_cols[6] == "1.0K", (
+            f"Grand Total output tokens should be 1.0K, got '{grand_cols[6]}'"
+        )
 
 
 # ---------------------------------------------------------------------------
