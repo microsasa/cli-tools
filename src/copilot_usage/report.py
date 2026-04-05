@@ -707,7 +707,7 @@ def render_cost_view(
         grand_output += total_output_tokens(s)
         grand_model_calls += s.model_calls
 
-        if s.is_active and s.has_shutdown_metrics:
+        if s.is_active and s.has_shutdown_metrics and has_active_period_stats(s):
             cost_stats = _effective_stats(s)
             cost_calls = cost_stats.model_calls
             cost_tokens = cost_stats.output_tokens
