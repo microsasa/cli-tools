@@ -3905,6 +3905,134 @@ class TestSafeIntTokens:
 
 
 # ---------------------------------------------------------------------------
+# Integration tests: non-integer outputTokens through full pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestSafeIntTokensIntegration:
+    """Integration tests exercising _safe_int_tokens through parse → build_session_summary."""
+
+    def test_float_output_tokens_ignored_active_session(self, tmp_path: Path) -> None:
+        """An assistant.message with outputTokens=1.5 must not add to active_output_tokens."""
+        float_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "outputTokens": 1.5,
+                },
+                "id": "ev-float",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, float_msg, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
+
+    def test_null_output_tokens_ignored_active_session(self, tmp_path: Path) -> None:
+        """An assistant.message with outputTokens=null must not add to active_output_tokens."""
+        null_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "outputTokens": None,
+                },
+                "id": "ev-null",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, null_msg, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
+
+    def test_float_output_tokens_ignored_post_shutdown(self, tmp_path: Path) -> None:
+        """A post-shutdown assistant.message with outputTokens=2.9 must not add to active_output_tokens."""
+        post_resume_float_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-float-post",
+                    "content": "resuming with float",
+                    "toolRequests": [],
+                    "interactionId": "int-2",
+                    "outputTokens": 2.9,
+                },
+                "id": "ev-asst-float-post",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-user2",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            post_resume_float_msg,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 0
+        assert summary.is_active is True
+
+    def test_mixed_valid_float_null_tokens(self, tmp_path: Path) -> None:
+        """valid=150, float=1.5, null → active_output_tokens == 150."""
+        float_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-float",
+                    "content": "float tokens",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 1.5,
+                },
+                "id": "ev-float-mix",
+                "timestamp": "2026-03-07T10:01:06.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        null_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-null",
+                    "content": "null tokens",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": None,
+                },
+                "id": "ev-null-mix",
+                "timestamp": "2026-03-07T10:01:07.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            float_msg,
+            null_msg,
+            _TOOL_EXEC,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 150
+
+
+# ---------------------------------------------------------------------------
 # Three shutdown cycles with mixed models
 # ---------------------------------------------------------------------------
 
