@@ -229,10 +229,9 @@ def _discover_with_identity(
     by *events_file_id* (mtime descending, then size as tie-breaker).
 
     Uses :func:`os.scandir` to enumerate session directories in a single
-    pass.  Existence of ``plan.md`` is determined by a dict-lookup on the
-    directory listing — no ``stat()`` syscall is issued for absent files,
-    eliminating O(N) failed stats and ``OSError`` instances for sessions
-    that never create a ``plan.md``.
+    pass.  A two-variable linear scan checks for ``events.jsonl`` and
+    ``plan.md`` with early exit once both are found — no intermediate
+    ``dict`` is allocated per directory.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
     its file identity is computed via :func:`safe_file_identity`.  When
@@ -254,17 +253,28 @@ def _discover_with_identity(
                     is_session_dir = False
                 if not is_session_dir:
                     continue
+                events_entry: os.DirEntry[str] | None = None
+                plan_entry: os.DirEntry[str] | None = None
                 try:
                     with os.scandir(session_entry.path) as dir_entries:
-                        dir_files = {e.name: e for e in dir_entries}
+                        for e in dir_entries:
+                            name = e.name
+                            if name == "events.jsonl":
+                                events_entry = e
+                                if not include_plan or plan_entry is not None:
+                                    break
+                            elif include_plan and name == "plan.md":
+                                plan_entry = e
+                                if events_entry is not None:
+                                    break
                 except OSError:
                     continue
-                if "events.jsonl" not in dir_files:
+                if events_entry is None:
                     continue
-                events_path = Path(dir_files["events.jsonl"].path)
+                events_path = Path(events_entry.path)
                 events_id = safe_file_identity(events_path)
-                if include_plan and "plan.md" in dir_files:
-                    plan_id = safe_file_identity(Path(dir_files["plan.md"].path))
+                if include_plan and plan_entry is not None:
+                    plan_id = safe_file_identity(Path(plan_entry.path))
                 else:
                     plan_id = None
                 result.append((events_path, events_id, plan_id))

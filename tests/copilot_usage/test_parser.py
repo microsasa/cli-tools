@@ -623,6 +623,76 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
 
 # ---------------------------------------------------------------------------
+# _discover_with_identity — linear scan (issue #773)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverWithIdentityLinearScan:
+    """Verify linear scan returns correct tuples for many session dirs."""
+
+    def test_120_sessions_correct_tuples(self, tmp_path: Path) -> None:
+        """120 session dirs return correct (events_path, events_id, plan_id).
+
+        Creates 120 session directories: 40 with plan.md (plus extra files),
+        80 without. Asserts that every session is returned with the correct
+        events_path and plan_id (non-None only when plan.md exists).
+        """
+        n_total = 120
+        n_with_plan = 40
+
+        for i in range(n_total):
+            session_dir = tmp_path / f"sess-{i:04d}"
+            _write_events(session_dir / "events.jsonl", _START_EVENT)
+            # Add unrelated files to exercise the linear scan skip logic
+            (session_dir / "debug.log").write_text("log\n", encoding="utf-8")
+            (session_dir / "notes.txt").write_text("notes\n", encoding="utf-8")
+            if i < n_with_plan:
+                (session_dir / "plan.md").write_text(
+                    f"# Session {i}\n", encoding="utf-8"
+                )
+
+        result = _discover_with_identity(tmp_path)
+
+        assert len(result) == n_total
+
+        lookup = {p.parent.name: (p, eid, pid) for p, eid, pid in result}
+        for i in range(n_total):
+            name = f"sess-{i:04d}"
+            assert name in lookup
+            events_path, events_id, plan_id = lookup[name]
+            assert events_path == tmp_path / name / "events.jsonl"
+            assert events_id is not None
+            if i < n_with_plan:
+                assert plan_id is not None
+            else:
+                assert plan_id is None
+
+    def test_plan_id_none_without_plan_md(self, tmp_path: Path) -> None:
+        """Sessions without plan.md get plan_id=None."""
+        for i in range(5):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 5
+        for _path, _eid, plan_id in result:
+            assert plan_id is None
+
+    def test_sessions_without_events_jsonl_skipped(self, tmp_path: Path) -> None:
+        """Directories lacking events.jsonl are excluded from results."""
+        good = tmp_path / "sess-good"
+        _write_events(good / "events.jsonl", _START_EVENT)
+        empty = tmp_path / "sess-empty"
+        empty.mkdir()
+        (empty / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 1
+        assert result[0][0].parent.name == "sess-good"
+
+
+# ---------------------------------------------------------------------------
 # parse_events
 # ---------------------------------------------------------------------------
 
