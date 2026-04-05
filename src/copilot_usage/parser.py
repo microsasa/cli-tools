@@ -411,9 +411,9 @@ class _ResumeInfo:
 # ---------------------------------------------------------------------------
 
 # O(1) pre-filter for _first_pass: skip events whose type is not checked.
-# Some of these types are only conditionally acted upon (e.g.
-# TOOL_EXECUTION_COMPLETE is used only until tool_model is set), but they
-# all appear in the ``if/elif`` chain inside _first_pass.
+# TOOL_EXECUTION_COMPLETE is handled separately *before* this filter so that,
+# once tool_model is resolved, each remaining tool event costs only one string
+# comparison + one None-check instead of traversing the full elif chain.
 _FIRST_PASS_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
         EventType.SESSION_START,
@@ -421,7 +421,6 @@ _FIRST_PASS_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         EventType.USER_MESSAGE,
         EventType.ASSISTANT_TURN_START,
         EventType.ASSISTANT_MESSAGE,
-        EventType.TOOL_EXECUTION_COMPLETE,
     }
 )
 
@@ -441,9 +440,18 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     tool_model: str | None = None
 
     for idx, ev in enumerate(events):
-        if ev.type not in _FIRST_PASS_EVENT_TYPES:
+        etype = ev.type
+        # Fast path: once tool_model is found, skip all tool-complete events
+        # with a single None-check instead of traversing the full elif chain.
+        if etype == EventType.TOOL_EXECUTION_COMPLETE:
+            if tool_model is None:
+                m = ev.data.get("model")
+                if isinstance(m, str) and m:
+                    tool_model = m
             continue
-        if ev.type == EventType.SESSION_START:
+        if etype not in _FIRST_PASS_EVENT_TYPES:
+            continue
+        if etype == EventType.SESSION_START:
             try:
                 data = ev.as_session_start()
             except ValidationError as exc:
@@ -460,7 +468,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 start_time = data.startTime
                 cwd = data.context.cwd
 
-        elif ev.type == EventType.SESSION_SHUTDOWN:
+        elif etype == EventType.SESSION_SHUTDOWN:
             try:
                 data = ev.as_session_shutdown()
             except ValidationError as exc:
@@ -478,20 +486,15 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             end_time = ev.timestamp
             model = current_model
 
-        elif ev.type == EventType.USER_MESSAGE:
+        elif etype == EventType.USER_MESSAGE:
             user_message_count += 1
 
-        elif ev.type == EventType.ASSISTANT_TURN_START:
+        elif etype == EventType.ASSISTANT_TURN_START:
             total_turn_starts += 1
 
-        elif ev.type == EventType.ASSISTANT_MESSAGE:
+        elif etype == EventType.ASSISTANT_MESSAGE:
             if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
                 total_output_tokens += tokens
-
-        elif ev.type == EventType.TOOL_EXECUTION_COMPLETE and tool_model is None:
-            m = ev.data.get("model")
-            if isinstance(m, str) and m:
-                tool_model = m
 
     return _FirstPassResult(
         session_id=session_id,
