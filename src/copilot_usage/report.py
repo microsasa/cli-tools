@@ -244,8 +244,10 @@ def _filter_sessions(
         if s.start_time is None:
             continue
         aware_start = ensure_aware(s.start_time)
+        # Sessions are sorted newest-first; once aware_start < since, all
+        # remaining sessions are even older and can never match.
         if since is not None and aware_start < since:
-            continue
+            break
         if until is not None and aware_start > until:
             continue
         filtered.append(s)
