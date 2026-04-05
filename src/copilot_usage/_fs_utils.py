@@ -1,9 +1,24 @@
 """Filesystem helpers shared across the package."""
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Final
 
-__all__: Final[list[str]] = ["safe_file_identity"]
+__all__: Final[list[str]] = ["lru_insert", "safe_file_identity"]
+
+
+def lru_insert[K, V](
+    cache: OrderedDict[K, V],
+    key: K,
+    value: V,
+    max_size: int,
+) -> None:
+    """Insert *key*→*value* into *cache* with LRU eviction at *max_size*."""
+    if key in cache:
+        del cache[key]
+    elif len(cache) >= max_size:
+        cache.popitem(last=False)
+    cache[key] = value
 
 
 def safe_file_identity(path: Path) -> tuple[int, int] | None:

@@ -25,7 +25,7 @@ __all__: Final[list[str]] = [
     "parse_events",
 ]
 
-from copilot_usage._fs_utils import safe_file_identity
+from copilot_usage._fs_utils import lru_insert, safe_file_identity
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -132,11 +132,12 @@ def _insert_events_entry(
     individual ``SessionEvent`` objects remain mutable and must not
     be modified by callers.
     """
-    if events_path in _EVENTS_CACHE:
-        del _EVENTS_CACHE[events_path]
-    elif len(_EVENTS_CACHE) >= _MAX_CACHED_EVENTS:
-        _EVENTS_CACHE.popitem(last=False)  # evict LRU (front)
-    _EVENTS_CACHE[events_path] = _CachedEvents(file_id=file_id, events=tuple(events))
+    lru_insert(
+        _EVENTS_CACHE,
+        events_path,
+        _CachedEvents(file_id=file_id, events=tuple(events)),
+        _MAX_CACHED_EVENTS,
+    )
 
 
 def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:

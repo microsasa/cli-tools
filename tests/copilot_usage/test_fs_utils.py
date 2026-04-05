@@ -1,11 +1,12 @@
 """Tests for copilot_usage._fs_utils — shared filesystem helpers."""
 
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 import pytest
 
-from copilot_usage._fs_utils import safe_file_identity
+from copilot_usage._fs_utils import lru_insert, safe_file_identity
 
 
 class TestSafeFileIdentity:
@@ -67,3 +68,38 @@ class TestSafeFileIdentity:
         id_after = safe_file_identity(f)
         assert id_after is not None
         assert id_after[0] != original_mtime_ns
+
+
+class TestLruInsert:
+    """Covers insert into empty cache, eviction when full, and stale replacement."""
+
+    def test_insert_into_empty_cache(self) -> None:
+        cache: OrderedDict[str, int] = OrderedDict()
+        lru_insert(cache, "a", 1, max_size=3)
+        assert dict(cache) == {"a": 1}
+
+    def test_eviction_when_full(self) -> None:
+        cache: OrderedDict[str, int] = OrderedDict()
+        lru_insert(cache, "a", 1, max_size=2)
+        lru_insert(cache, "b", 2, max_size=2)
+        lru_insert(cache, "c", 3, max_size=2)
+        # "a" (LRU) should have been evicted
+        assert "a" not in cache
+        assert list(cache.keys()) == ["b", "c"]
+
+    def test_replacement_of_stale_entry(self) -> None:
+        cache: OrderedDict[str, int] = OrderedDict()
+        lru_insert(cache, "a", 1, max_size=2)
+        lru_insert(cache, "b", 2, max_size=2)
+        # Replace "a" with updated value — should NOT evict "b"
+        lru_insert(cache, "a", 10, max_size=2)
+        assert cache["a"] == 10
+        assert "b" in cache
+        # "a" should now be at the end (most recently used)
+        assert list(cache.keys()) == ["b", "a"]
+
+    def test_max_size_one(self) -> None:
+        cache: OrderedDict[str, int] = OrderedDict()
+        lru_insert(cache, "x", 1, max_size=1)
+        lru_insert(cache, "y", 2, max_size=1)
+        assert dict(cache) == {"y": 2}
