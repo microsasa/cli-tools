@@ -166,15 +166,6 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     return _EVENTS_CACHE[events_path].events
 
 
-_RESUME_INDICATOR_TYPES: Final[frozenset[EventType]] = frozenset(
-    {
-        EventType.SESSION_RESUME,
-        EventType.USER_MESSAGE,
-        EventType.ASSISTANT_MESSAGE,
-    }
-)
-
-
 def _infer_model_from_metrics(metrics: dict[str, ModelMetrics]) -> str | None:
     """Pick a model name from *metrics* when ``currentModel`` is absent.
 
@@ -525,19 +516,20 @@ def _detect_resume(
 
     for i in range(last_shutdown_idx + 1, len(events)):
         ev = events[i]
-        if ev.type in _RESUME_INDICATOR_TYPES:
+        etype = ev.type
+        if etype == EventType.ASSISTANT_MESSAGE:
             session_resumed = True
-        if ev.type == EventType.SESSION_RESUME and ev.timestamp is not None:
-            last_resume_time = ev.timestamp
-        if (
-            ev.type == EventType.ASSISTANT_MESSAGE
-            and (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None
-        ):
-            post_shutdown_output_tokens += tokens
-        if ev.type == EventType.ASSISTANT_TURN_START:
-            post_shutdown_turn_starts += 1
-        if ev.type == EventType.USER_MESSAGE:
+            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
+                post_shutdown_output_tokens += tokens
+        elif etype == EventType.USER_MESSAGE:
+            session_resumed = True
             post_shutdown_user_messages += 1
+        elif etype == EventType.ASSISTANT_TURN_START:
+            post_shutdown_turn_starts += 1
+        elif etype == EventType.SESSION_RESUME:
+            session_resumed = True
+            if ev.timestamp is not None:
+                last_resume_time = ev.timestamp
 
     return _ResumeInfo(
         session_resumed=session_resumed,

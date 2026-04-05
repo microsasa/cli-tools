@@ -155,13 +155,23 @@ def _detect_resume(events, all_shutdowns):
     # ...
     last_shutdown_idx = all_shutdowns[-1][0]
 
-    for ev in events[last_shutdown_idx + 1:]:
-        if ev.type in _RESUME_INDICATOR_TYPES:
+    for i in range(last_shutdown_idx + 1, len(events)):
+        ev = events[i]
+        etype = ev.type
+        if etype == EventType.ASSISTANT_MESSAGE:
             session_resumed = True
-        # ... count post-shutdown tokens, messages, model calls ...
+            # ... accumulate output tokens ...
+        elif etype == EventType.USER_MESSAGE:
+            session_resumed = True
+            # ... count user messages ...
+        elif etype == EventType.ASSISTANT_TURN_START:
+            # ... count turn starts ...
+        elif etype == EventType.SESSION_RESUME:
+            session_resumed = True
+            # ... capture resume timestamp ...
 ```
 
-The helper includes a defensive guard for empty `all_shutdowns` (returns empty `_ResumeInfo`), making it safe to call independently.
+The helper includes a defensive guard for empty `all_shutdowns` (returns empty `_ResumeInfo`), making it safe to call independently. The `if/elif` chain short-circuits after the first match, reducing comparisons from 5 per event to 1 for the most common `ASSISTANT_MESSAGE` case.
 
 The presence of **any** `session.resume`, `user.message`, or `assistant.message` event after the last shutdown triggers `session_resumed = True`.
 
