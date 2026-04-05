@@ -70,7 +70,8 @@ Set branch protection (adjust to your needs):
 # Note: PUT replaces the ENTIRE protection config. This is fine for initial
 # setup but dangerous for later modifications — use PATCH or sub-resource
 # endpoints to avoid accidentally wiping existing rules.
-gh api repos/OWNER/REPO/branches/main/protection -X PUT --input - <<'EOF'
+# Replace DEFAULT_BRANCH with your repo's default branch (e.g., main).
+gh api repos/OWNER/REPO/branches/DEFAULT_BRANCH/protection -X PUT --input - <<'EOF'
 {
   "required_status_checks": { "strict": true, "contexts": ["YOUR_CI_JOB_NAME"] },
   "enforce_admins": true,
@@ -278,7 +279,7 @@ The job should:
    c. Check for Copilot review on current commit — request one if missing
    d. If CI green + threads resolved + Copilot reviewed + no quality gate
       in flight → dispatch quality gate
-   e. If PR is behind main → rebase
+   e. If PR is behind the default branch → rebase
    f. If stuck after multiple attempts → label aw-pr-stuck:*
 
 Use gh api graphql for all state queries. Check for in-flight workflows
