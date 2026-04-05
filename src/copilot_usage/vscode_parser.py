@@ -12,9 +12,7 @@ from typing import Final
 
 from loguru import logger
 
-from copilot_usage._fs_utils import (
-    _safe_file_identity,  # pyright: ignore[reportPrivateUsage]
-)
+from copilot_usage._fs_utils import safe_file_identity
 
 __all__: Final[list[str]] = [
     "VSCodeLogSummary",
@@ -190,7 +188,7 @@ def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
         OSError: Propagated from :func:`parse_vscode_log` when the file
             cannot be opened or read.
     """
-    file_id = _safe_file_identity(log_path)
+    file_id = safe_file_identity(log_path)
     cached = _VSCODE_LOG_CACHE.get(log_path)
     if cached is not None and cached[0] == file_id:
         _VSCODE_LOG_CACHE.move_to_end(log_path)
