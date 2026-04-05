@@ -20,7 +20,3 @@ def safe_file_identity(path: Path) -> tuple[int, int] | None:
         return (st.st_mtime_ns, st.st_size)
     except OSError:
         return None
-
-
-# Backward-compatible alias (not in __all__); will be removed in a future release.
-_safe_file_identity = safe_file_identity

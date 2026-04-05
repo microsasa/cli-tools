@@ -71,6 +71,23 @@ def test_parse_data_and_event_data_removed_from_public_api() -> None:
     )
 
 
+def test_format_helpers_not_in_report_all() -> None:
+    """``format_duration`` and ``format_tokens`` must not appear in ``report.__all__``.
+
+    Regression guard for issue #776: these formatting helpers belong to
+    ``_formatting`` and should not be re-exported from ``report``.
+    """
+    import copilot_usage.report as report_mod
+
+    dunder_all = report_mod.__all__
+    assert "format_duration" not in dunder_all, (
+        "format_duration must not be in report.__all__"
+    )
+    assert "format_tokens" not in dunder_all, (
+        "format_tokens must not be in report.__all__"
+    )
+
+
 def test_ccreq_re_not_in_vscode_parser_all() -> None:
     """``CCREQ_RE`` must not appear in ``vscode_parser.__all__``.
 
