@@ -6065,7 +6065,7 @@ class TestCostViewActiveNoActivePeriodStats:
             f"Grand Total model calls should be 5, got '{grand_cols[5]}'"
         )
         # output tokens = 1.0K (shutdown baseline only, no active tokens to add)
-        assert "1.0K" in grand_cols[6], (
+        assert grand_cols[6] == "1.0K", (
             f"Grand Total output tokens should be 1.0K, got '{grand_cols[6]}'"
         )
 
