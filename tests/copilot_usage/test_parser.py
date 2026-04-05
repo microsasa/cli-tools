@@ -5522,6 +5522,89 @@ class TestActiveSessionCaching:
                 assert result2[0].model is None  # config-sourced model gone
                 assert spy.call_count == 1  # re-parsed due to staleness
 
+    def test_config_staleness_takes_priority_over_plan_update(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """When both plan.md and config model change, config staleness triggers
+        a full re-parse — the plan-only fast path is NOT taken."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        # Active session without tool execution → depends_on_config=True
+        p = tmp_path / "sessions" / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        plan = p.parent / "plan.md"
+        plan.write_text("# Original\n", encoding="utf-8")
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            result1 = get_all_sessions(tmp_path / "sessions")
+            assert len(result1) == 1
+            assert result1[0].model == "gpt-5.1"
+
+            entry = _SESSION_CACHE[p]
+            assert entry.depends_on_config is True
+            assert entry.config_model == "gpt-5.1"
+
+            # Change BOTH plan.md and config model between calls
+            plan.write_text("# Renamed\n", encoding="utf-8")
+            config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
+
+            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+                result2 = get_all_sessions(tmp_path / "sessions")
+                assert len(result2) == 1
+                # Full re-parse must have occurred (config staleness wins)
+                assert spy.call_count == 1
+                assert result2[0].model == "claude-sonnet-4"
+
+            # Cache entry must reflect the new config model
+            entry2 = _SESSION_CACHE[p]
+            assert entry2.config_model == "claude-sonnet-4"
+            assert entry2.depends_on_config is True
+
+    def test_plan_update_when_config_unchanged_preserves_depends_on_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """When only plan.md changes (config unchanged), the plan-only fast
+        path is taken and depends_on_config / config_model are preserved."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        # Active session without tool execution → depends_on_config=True
+        p = tmp_path / "sessions" / "s1" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+
+        plan = p.parent / "plan.md"
+        plan.write_text("# Original\n", encoding="utf-8")
+
+        with patch("copilot_usage.parser._CONFIG_PATH", config):
+            result1 = get_all_sessions(tmp_path / "sessions")
+            assert len(result1) == 1
+            assert result1[0].model == "gpt-5.1"
+            assert result1[0].name == "Original"
+
+            entry = _SESSION_CACHE[p]
+            assert entry.depends_on_config is True
+            assert entry.config_model == "gpt-5.1"
+
+            # Change ONLY plan.md — config stays the same
+            plan.write_text("# Renamed\n", encoding="utf-8")
+
+            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+                result2 = get_all_sessions(tmp_path / "sessions")
+                assert len(result2) == 1
+                # Plan-only fast path — no re-parse
+                assert spy.call_count == 0
+                assert result2[0].model == "gpt-5.1"
+                assert result2[0].name == "Renamed"
+
+            # Cache entry must preserve config tracking fields
+            entry2 = _SESSION_CACHE[p]
+            assert entry2.depends_on_config is True
+            assert entry2.config_model == "gpt-5.1"
+
 
 # ---------------------------------------------------------------------------
 # get_cached_events — parsed-events cache
