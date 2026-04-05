@@ -248,25 +248,30 @@ def _discover_with_identity(
         return []
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
     try:
-        session_entries = list(os.scandir(root))
+        with os.scandir(root) as session_entries:
+            for session_entry in session_entries:
+                try:
+                    is_session_dir = session_entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    is_session_dir = False
+                if not is_session_dir:
+                    continue
+                try:
+                    with os.scandir(session_entry.path) as dir_entries:
+                        dir_files = {e.name: e for e in dir_entries}
+                except OSError:
+                    continue
+                if "events.jsonl" not in dir_files:
+                    continue
+                events_path = Path(dir_files["events.jsonl"].path)
+                events_id = _safe_file_identity(events_path)
+                if include_plan and "plan.md" in dir_files:
+                    plan_id = _safe_file_identity(Path(dir_files["plan.md"].path))
+                else:
+                    plan_id = None
+                result.append((events_path, events_id, plan_id))
     except OSError:
         return []
-    for session_entry in session_entries:
-        if not session_entry.is_dir(follow_symlinks=False):
-            continue
-        try:
-            dir_files = {e.name: e for e in os.scandir(session_entry.path)}
-        except OSError:
-            continue
-        if "events.jsonl" not in dir_files:
-            continue
-        events_path = Path(dir_files["events.jsonl"].path)
-        events_id = _safe_file_identity(events_path)
-        if include_plan and "plan.md" in dir_files:
-            plan_id = _safe_file_identity(Path(dir_files["plan.md"].path))
-        else:
-            plan_id = None
-        result.append((events_path, events_id, plan_id))
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
