@@ -104,7 +104,7 @@ class TestParseVscodeLog:
     def test_parses_real_lines(self, tmp_path: Path) -> None:
         log_file = tmp_path / "test.log"
         log_file.write_text(
-            "\n".join([_LOG_OPUS, _LOG_NOISE, _LOG_REDIRECT, _LOG_GPT4O]),
+            "\n".join([_LOG_OPUS, _LOG_NOISE, _LOG_REDIRECT, _LOG_GPT4O]) + "\n",
             encoding="utf-8",
         )
         requests = parse_vscode_log(log_file)
@@ -136,7 +136,7 @@ class TestParseVscodeLog:
         assert _CCREQ_RE.match(bad_line) is not None
         good_line = _LOG_OPUS  # a valid known-good line
         log_file = tmp_path / "test.log"
-        log_file.write_text(f"{bad_line}\n{good_line}", encoding="utf-8")
+        log_file.write_text(f"{bad_line}\n{good_line}\n", encoding="utf-8")
         result = parse_vscode_log(log_file)
         assert len(result) == 1  # bad line skipped
         assert result[0].model == "claude-opus-4.6"
@@ -547,7 +547,7 @@ class TestGetVscodeSummary:
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         (log_dir / "GitHub Copilot Chat.log").write_text(
-            "\n".join([_LOG_OPUS, _LOG_REDIRECT, _LOG_NOISE, _LOG_GPT4O]),
+            "\n".join([_LOG_OPUS, _LOG_REDIRECT, _LOG_NOISE, _LOG_GPT4O]) + "\n",
             encoding="utf-8",
         )
         summary = get_vscode_summary(tmp_path)
@@ -1218,7 +1218,7 @@ class TestParseVscodeLogPreFilter:
             for i in range(n)
         ]
         log_file = tmp_path / "all_match.log"
-        log_file.write_text("\n".join(lines), encoding="utf-8")
+        log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         requests = parse_vscode_log(log_file)
         assert len(requests) == n
         for i, req in enumerate(requests):
@@ -1241,7 +1241,7 @@ class TestParseVscodeLogFromisoformat:
             for i in range(n)
         ]
         log_file = tmp_path / "fromisoformat_1000.log"
-        log_file.write_text("\n".join(lines), encoding="utf-8")
+        log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         requests = parse_vscode_log(log_file)
         assert len(requests) == n
         for i, req in enumerate(requests):
@@ -1267,7 +1267,7 @@ class TestVscodeLogCache:
 
     def test_first_call_populates_cache(self, tmp_path: Path) -> None:
         log_file = tmp_path / "chat.log"
-        log_file.write_text(_make_log_line(req_idx=0))
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
         requests = _get_cached_vscode_requests(log_file)
         assert len(requests) == 1
         assert log_file in _VSCODE_LOG_CACHE
@@ -1275,7 +1275,7 @@ class TestVscodeLogCache:
     def test_second_call_returns_cached_without_reparse(self, tmp_path: Path) -> None:
         """_parse_vscode_log_from_offset is only called once when file is unchanged."""
         log_file = tmp_path / "chat.log"
-        log_file.write_text(_make_log_line(req_idx=0))
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
 
         with patch(
             "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
@@ -1291,7 +1291,7 @@ class TestVscodeLogCache:
     def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
         """Changing the file causes a re-parse on the next call."""
         log_file = tmp_path / "chat.log"
-        log_file.write_text(_make_log_line(req_idx=0))
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
 
         first = _get_cached_vscode_requests(log_file)
         assert len(first) == 1
@@ -1300,7 +1300,7 @@ class TestVscodeLogCache:
         # has different contents and size, so its identity changes and the
         # next cache lookup should re-parse it.
         log_file.write_text(
-            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
+            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1) + "\n"
         )
 
         second = _get_cached_vscode_requests(log_file)
@@ -1311,7 +1311,7 @@ class TestVscodeLogCache:
         paths: list[Path] = []
         for i in range(_MAX_CACHED_VSCODE_LOGS + 1):
             p = tmp_path / f"log_{i}.log"
-            p.write_text(_make_log_line(req_idx=i))
+            p.write_text(_make_log_line(req_idx=i) + "\n")
             paths.append(p)
 
         for p in paths:
@@ -1325,8 +1325,8 @@ class TestVscodeLogCache:
         """Accessing a cached entry moves it to the back (most-recently used)."""
         p1 = tmp_path / "a.log"
         p2 = tmp_path / "b.log"
-        p1.write_text(_make_log_line(req_idx=0))
-        p2.write_text(_make_log_line(req_idx=1))
+        p1.write_text(_make_log_line(req_idx=0) + "\n")
+        p2.write_text(_make_log_line(req_idx=1) + "\n")
 
         _get_cached_vscode_requests(p1)
         _get_cached_vscode_requests(p2)
@@ -1343,7 +1343,7 @@ class TestVscodeLogCache:
         )
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_make_log_line(req_idx=0))
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
 
         with patch(
             "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
@@ -1458,8 +1458,10 @@ class TestIncrementalParsing:
         first = _get_cached_vscode_requests(log_file)
         assert len(first) == 1
 
-        # "Touch" the file to change mtime without changing size.
-        # We need to actually grow it slightly for the incremental path.
+        # Rewrite the file with identical content to change mtime while
+        # keeping size unchanged.  The cache detects the mtime change and
+        # takes the incremental path which seeks to end_offset, finds
+        # nothing new, and returns the original cached requests.
         import time
 
         time.sleep(0.01)
@@ -1468,3 +1470,27 @@ class TestIncrementalParsing:
         second = _get_cached_vscode_requests(log_file)
         assert len(second) == 1
         assert second == first
+
+    def test_partial_line_at_eof_excluded(self, tmp_path: Path) -> None:
+        """A partial (no-newline) line at EOF is excluded until completed."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + "\n")
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # Append a partial line (no trailing newline).
+        with log_file.open("a") as f:
+            f.write(_make_log_line(req_idx=1))  # no \n
+
+        second = _get_cached_vscode_requests(log_file)
+        # Partial line is excluded — still only the original request.
+        assert len(second) == 1
+
+        # Complete the partial line by appending a newline.
+        with log_file.open("a") as f:
+            f.write("\n")
+
+        third = _get_cached_vscode_requests(log_file)
+        # Now both requests are returned.
+        assert len(third) == 2

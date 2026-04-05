@@ -142,17 +142,25 @@ def _parse_vscode_log_from_offset(
     """Parse VS Code Copilot Chat log starting at *offset* bytes.
 
     Returns ``(requests, end_offset)`` where *end_offset* is the byte
-    position at the end of the last complete line read.  This allows
-    callers to resume parsing from that point on a subsequent call.
+    position at the end of the last **complete** (newline-terminated)
+    line read.  Partial lines at EOF are intentionally excluded so that
+    the next incremental call can re-read them once the writer finishes
+    the line.
 
     Raises:
         OSError: If the file cannot be opened or read.
     """
     requests: list[VSCodeRequest] = []
+    safe_end: int = offset
     with log_path.open("rb") as fb:
         if offset > 0:
             fb.seek(offset)
         for raw_line in fb:
+            if not raw_line.endswith(b"\n"):
+                # Partial line at EOF — stop advancing so the next
+                # incremental call re-reads this line once complete.
+                break
+            safe_end += len(raw_line)
             # Decode with replacement to mirror parse_vscode_log behaviour.
             line = raw_line.decode("utf-8", errors="replace")
             # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
@@ -175,15 +183,14 @@ def _parse_vscode_log_from_offset(
                     category=category,
                 )
             )
-        end_offset: int = fb.tell()
     logger.debug(
         "Parsed {} request(s) from {} (offset {}→{})",
         len(requests),
         log_path,
         offset,
-        end_offset,
+        safe_end,
     )
-    return requests, end_offset
+    return requests, safe_end
 
 
 # ---------------------------------------------------------------------------
@@ -250,8 +257,10 @@ def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
             _VSCODE_LOG_CACHE.move_to_end(log_path)
             return old_requests
 
-        # Incremental path: file grew (append-only).
-        if new_id is not None and old_id is not None and new_id[1] >= old_id[1]:
+        # Incremental path: file grew (append-only) beyond the cached
+        # resume point. Compare against ``end_offset`` because that is the
+        # position we will seek to when resuming parsing.
+        if new_id is not None and old_id is not None and new_id[1] >= end_offset:
             new_reqs, new_end = _parse_vscode_log_from_offset(log_path, end_offset)
             combined = old_requests + tuple(new_reqs)
             _update_vscode_cache(log_path, new_id, new_end, combined)
