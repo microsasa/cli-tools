@@ -1,6 +1,8 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -12,9 +14,13 @@ from loguru import logger
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
+    _MAX_CACHED_VSCODE_LOGS,  # pyright: ignore[reportPrivateUsage]
+    _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
+    _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
+    _safe_file_identity,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
@@ -44,6 +50,12 @@ _LOG_NOISE = (
     "2026-03-13 21:48:39.404 [info] [GitExtensionServiceImpl]"
     " Initializing Git extension service."
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_vscode_log_cache() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Ensure every test starts with an empty VS Code log cache."""
+    _VSCODE_LOG_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1215,3 +1227,126 @@ class TestParseVscodeLogFromisoformat:
         for i, req in enumerate(requests):
             assert req.request_id == f"req{i:05d}"
             assert req.duration_ms == 50 + i
+
+
+# ---------------------------------------------------------------------------
+# _safe_file_identity
+# ---------------------------------------------------------------------------
+
+
+class TestSafeFileIdentity:
+    def test_returns_mtime_ns_and_size(self, tmp_path: Path) -> None:
+        p = tmp_path / "f.txt"
+        p.write_text("hello")
+        result = _safe_file_identity(p)
+        assert result is not None
+        st = p.stat()
+        assert result == (st.st_mtime_ns, st.st_size)
+
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        assert _safe_file_identity(tmp_path / "nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# _VSCODE_LOG_CACHE / _get_cached_vscode_requests
+# ---------------------------------------------------------------------------
+
+
+def _make_log_line(*, req_idx: int = 0, model: str = "gpt-4o-mini") -> str:
+    return (
+        f"2026-03-13 22:10:{req_idx % 60:02d}.{req_idx:03d}"
+        f" [info] ccreq:req{req_idx:05d}.copilotmd"
+        f" | success | {model} | {100 + req_idx}ms | [inline]"
+    )
+
+
+class TestVscodeLogCache:
+    """Tests for the module-level _VSCODE_LOG_CACHE and _get_cached_vscode_requests."""
+
+    def test_first_call_populates_cache(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        requests = _get_cached_vscode_requests(log_file)
+        assert len(requests) == 1
+        assert log_file in _VSCODE_LOG_CACHE
+
+    def test_second_call_returns_cached_without_reparse(self, tmp_path: Path) -> None:
+        """parse_vscode_log is only called once when file is unchanged."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            first = _get_cached_vscode_requests(log_file)
+            second = _get_cached_vscode_requests(log_file)
+            assert spy.call_count == 1
+        assert first is second
+
+    def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
+        """Changing the file causes a re-parse on the next call."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # Mutate the file: add a second request line.
+        log_file.write_text(
+            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
+        )
+        # Ensure mtime_ns changes on filesystems with coarse resolution.
+        os.utime(log_file, (time.time() + 2, time.time() + 2))
+
+        second = _get_cached_vscode_requests(log_file)
+        assert len(second) == 2
+
+    def test_lru_eviction(self, tmp_path: Path) -> None:
+        """When the cache exceeds _MAX_CACHED_VSCODE_LOGS, the oldest entry is evicted."""
+        paths: list[Path] = []
+        for i in range(_MAX_CACHED_VSCODE_LOGS + 1):
+            p = tmp_path / f"log_{i}.log"
+            p.write_text(_make_log_line(req_idx=i))
+            paths.append(p)
+
+        for p in paths:
+            _get_cached_vscode_requests(p)
+
+        # The first entry should have been evicted.
+        assert paths[0] not in _VSCODE_LOG_CACHE
+        assert len(_VSCODE_LOG_CACHE) == _MAX_CACHED_VSCODE_LOGS
+
+    def test_lru_promotion_on_access(self, tmp_path: Path) -> None:
+        """Accessing a cached entry moves it to the back (most-recently used)."""
+        p1 = tmp_path / "a.log"
+        p2 = tmp_path / "b.log"
+        p1.write_text(_make_log_line(req_idx=0))
+        p2.write_text(_make_log_line(req_idx=1))
+
+        _get_cached_vscode_requests(p1)
+        _get_cached_vscode_requests(p2)
+        # p1 is currently the LRU entry; access it to promote.
+        _get_cached_vscode_requests(p1)
+
+        keys = list(_VSCODE_LOG_CACHE.keys())
+        assert keys[-1] == p1  # p1 is now at the back (most recently used)
+
+    def test_get_vscode_summary_uses_cache(self, tmp_path: Path) -> None:
+        """get_vscode_summary leverages the cache on repeated calls."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            s1 = get_vscode_summary(tmp_path)
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1
+        assert s1.total_requests == 1
+        assert s2.total_requests == 1
