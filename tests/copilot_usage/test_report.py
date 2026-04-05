@@ -5232,9 +5232,7 @@ class TestFilterSessionsEarlyTermination:
 
         with patch(
             "copilot_usage.report.ensure_aware",
-            wraps=__import__(
-                "copilot_usage.models", fromlist=["ensure_aware"]
-            ).ensure_aware,
+            wraps=ensure_aware,
         ) as spy:
             result = _filter_sessions(sessions, since=since, until=None)
 
@@ -5245,8 +5243,8 @@ class TestFilterSessionsEarlyTermination:
         )
 
     def test_none_start_time_at_end_excluded_with_break(self) -> None:
-        """A session with start_time=None at the end of the list must still be
-        excluded — the None guard fires before the since-break check."""
+        """Sessions with start_time=None must not be included even when
+        early termination on ``since`` breaks the loop before reaching them."""
         now = datetime(2026, 4, 5, tzinfo=UTC)
         since = now - timedelta(days=1)
         recent = SessionSummary(

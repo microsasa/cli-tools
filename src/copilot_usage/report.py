@@ -232,7 +232,12 @@ def _filter_sessions(
     since: datetime | None,
     until: datetime | None,
 ) -> list[SessionSummary]:
-    """Return sessions whose start_time falls within [since, until]."""
+    """Return sessions whose start_time falls within [since, until].
+
+    *sessions* must be sorted newest-first (descending ``start_time``).
+    When *since* is provided the loop breaks on the first session older
+    than the threshold, so unsorted input will produce incorrect results.
+    """
     if since is not None and until is not None and since > until:
         return []
 
