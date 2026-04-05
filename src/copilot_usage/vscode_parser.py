@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from collections import OrderedDict, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -176,19 +177,24 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
 
 _MAX_CACHED_VSCODE_LOGS: Final[int] = 64
 _VSCODE_LOG_CACHE: OrderedDict[
-    Path, tuple[tuple[int, int] | None, list[VSCodeRequest]]
+    Path, tuple[tuple[int, int] | None, tuple[VSCodeRequest, ...]]
 ] = OrderedDict()
 
 
-def _get_cached_vscode_requests(log_path: Path) -> list[VSCodeRequest]:
+def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
     """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
 
     On the first call for a given *log_path*, delegates to
     :func:`parse_vscode_log` and stores the result.  Subsequent calls
-    return the cached list as long as the file identity is unchanged.
+    return the cached tuple as long as the file identity is unchanged.
     The cache is bounded to :data:`_MAX_CACHED_VSCODE_LOGS` entries;
     the **least-recently used** entry is evicted when the limit is
     reached.
+
+    The parsed list is converted to a ``tuple`` before storage so that
+    callers cannot accidentally append, pop, or reorder entries in the
+    cache — matching the container-level immutability pattern used by
+    :func:`parser.get_cached_events`.
 
     Raises:
         OSError: Propagated from :func:`parse_vscode_log` when the file
@@ -199,7 +205,7 @@ def _get_cached_vscode_requests(log_path: Path) -> list[VSCodeRequest]:
     if cached is not None and cached[0] == file_id:
         _VSCODE_LOG_CACHE.move_to_end(log_path)
         return cached[1]
-    requests = parse_vscode_log(log_path)
+    requests = tuple(parse_vscode_log(log_path))
     if log_path in _VSCODE_LOG_CACHE:
         del _VSCODE_LOG_CACHE[log_path]
     elif len(_VSCODE_LOG_CACHE) >= _MAX_CACHED_VSCODE_LOGS:
@@ -233,7 +239,7 @@ class _SummaryAccumulator:
 
 
 def _update_vscode_summary(
-    acc: _SummaryAccumulator, requests: list[VSCodeRequest]
+    acc: _SummaryAccumulator, requests: Sequence[VSCodeRequest]
 ) -> None:
     """Merge *requests* into *acc* in-place, then discard."""
     last_date_key: str = ""
