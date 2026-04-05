@@ -4,6 +4,12 @@ Append-only history of repo-level changes (CI, infra, shared config). Tool-speci
 
 ---
 
+## errata: cron minutes in changelog are authored values — 2026-04-05
+
+The cron times listed in the "adjust cron schedules" entry (2026-03-21) are the *authored* values in the `.md` source files. `gh aw compile` scatters the cron minutes to avoid all workflows firing simultaneously — compiled `.lock.yml` files will show different minute values.
+
+---
+
 ## hotfix: remove keepalive-interval — gateway rejects it — 2026-04-04
 
 **Problem**: PR #709 added `sandbox.mcp.keepalive-interval: 120` to all 8 agent workflow frontmatters. MCP Gateway v0.2.12 (shipped with gh-aw v0.66.1) rejects this field during schema validation — `additionalProperties 'keepaliveInterval' not allowed`. Every agent workflow broken at startup.
@@ -98,11 +104,11 @@ Closes #63.
 ## chore: adjust cron schedules for all workflows — 2026-03-21
 
 **Changes**:
-- Code-health: daily → every 6 hours (`:29` past the hour, authored)
-- Test-analysis: weekly → every 6 hours (`:24` past the hour, authored)
+- Code-health: daily → every 6 hours (`:29` past the hour)
+- Test-analysis: weekly → every 6 hours (`:24` past the hour)
 - Pipeline orchestrator: every 5 min → every 30 min (`:00` and `:30`). The orchestrator is mostly event-driven (`workflow_run` triggers); cron is just a safety net.
 
-All schedules are offset to avoid collisions. Note: `gh aw compile` scatters the authored cron minutes — compiled `.lock.yml` files will show different minute values.
+All schedules are offset to avoid collisions.
 
 Closes #217.
 
