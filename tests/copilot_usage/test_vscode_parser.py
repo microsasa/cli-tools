@@ -519,6 +519,23 @@ class TestDefaultLogCandidates:
             tmp_path / "AppData" / "Roaming" / "Code - Insiders" / "logs",
         ]
 
+    @pytest.mark.parametrize("platform", ["freebsd", "openbsd", "sunos", "haiku"])
+    def test_unknown_platform_falls_back_to_linux_layout(
+        self,
+        platform: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Any unrecognised platform uses the ~/.config/Code/logs layout."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", platform)
+        monkeypatch.delenv("APPDATA", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        candidates = _default_log_candidates()
+        assert candidates == [
+            tmp_path / ".config" / "Code" / "logs",
+            tmp_path / ".config" / "Code - Insiders" / "logs",
+        ], f"Expected ~/.config layout for platform={platform!r}"
+
 
 # ---------------------------------------------------------------------------
 # get_vscode_summary (end-to-end)
