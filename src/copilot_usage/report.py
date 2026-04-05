@@ -311,8 +311,9 @@ def _render_summary_header(
                 earliest = latest
             else:
                 earliest_session = sessions[last_idx]
-                if earliest_session.start_time is not None:
-                    earliest = ensure_aware(earliest_session.start_time)
+                # last_idx was found by scanning for start_time is not None,
+                # so this is guaranteed.
+                earliest = ensure_aware(earliest_session.start_time)  # type: ignore[arg-type]
 
     if earliest is not None and latest is not None:
         subtitle = f"{earliest.strftime('%Y-%m-%d')}  →  {latest.strftime('%Y-%m-%d')}"

@@ -2171,6 +2171,30 @@ def test_interactive_loop_fallback_eof_exits_cleanly(
     assert result.exit_code == 0
 
 
+def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _read_line_nonblocking raises ValueError and the fallback input()
+    raises an unexpected exception (e.g. UnicodeDecodeError), the loop logs a
+    warning and terminates without propagating the exception."""
+    _write_session(tmp_path, "fb_uni00-0000-0000-0000-000000000000", name="UniErr")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("stdin not selectable")
+
+    def _raise_unicode(*_args: Any, **_kwargs: Any) -> str:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+    monkeypatch.setattr("builtins.input", _raise_unicode)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+
 # ---------------------------------------------------------------------------
 # Issue #329 — observer=None when session_path doesn't exist
 # ---------------------------------------------------------------------------
