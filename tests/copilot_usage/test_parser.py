@@ -6612,3 +6612,237 @@ class TestFirstPassPreFilter:
             f"Expected 10 000 frozenset membership checks, got {check_count}"
         )
         assert fp.session_id == "bench"
+
+
+# ---------------------------------------------------------------------------
+# Issue #756 — _detect_resume: if/elif chain short-circuits after first match
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeElifShortCircuit:
+    """Verify _detect_resume uses a short-circuiting if/elif chain.
+
+    With the old implementation, every event triggered 5 unconditional ``if``
+    checks.  The new ``if/elif`` chain should evaluate at most 4 comparisons
+    per event and exactly 1 for the most common ``ASSISTANT_MESSAGE`` case.
+    """
+
+    def test_comparison_count_500_assistant_messages(self, tmp_path: Path) -> None:
+        """500 post-shutdown ASSISTANT_MESSAGE events → ≤ 500 type comparisons.
+
+        Uses a spy wrapper around ``ev.type`` access to count the total number
+        of equality comparisons performed inside the _detect_resume loop.
+        """
+        # Build a minimal session: start → user → shutdown → 500 assistant msgs
+        start_raw = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "cmp-bench",
+                    "machineId": "m1",
+                    "parentSessionId": None,
+                    "repoName": "test-repo",
+                    "repoUrl": "https://example.com/repo",
+                    "clientVersion": "1.0.0",
+                    "extensionVersion": "1.0.0",
+                    "userAgent": "test",
+                    "repoDevcontainerConfig": None,
+                },
+                "id": "ev-start",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user_raw = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "hello"},
+                "id": "ev-u0",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        shutdown_raw = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        asst_events: list[str] = [
+            json.dumps(
+                {
+                    "type": "assistant.message",
+                    "data": {
+                        "messageId": f"m{n}",
+                        "content": f"reply{n}",
+                        "toolRequests": [],
+                        "interactionId": f"i{n}",
+                        "outputTokens": 10,
+                    },
+                    "id": f"ev-a{n}",
+                    "timestamp": "2026-03-07T12:00:00.000Z",
+                }
+            )
+            for n in range(500)
+        ]
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, start_raw, user_raw, shutdown_raw, *asst_events)
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        # Spy: wrap each post-shutdown event's type to count == comparisons
+        eq_count = 0
+        last_sd_idx = fp.all_shutdowns[-1][0]
+
+        class _SpyType:
+            """Proxy around EventType that counts __eq__ calls."""
+
+            __slots__ = ("_real",)
+
+            def __init__(self, real: str) -> None:
+                object.__setattr__(self, "_real", real)
+
+            def __eq__(self, other: object) -> bool:
+                nonlocal eq_count
+                eq_count += 1
+                return self._real == other
+
+            def __hash__(self) -> int:
+                return hash(self._real)
+
+        for idx in range(last_sd_idx + 1, len(events)):
+            object.__setattr__(events[idx], "type", _SpyType(events[idx].type))
+
+        result = _detect_resume(events, fp.all_shutdowns)
+
+        # Correctness: all 500 assistant messages recognised
+        assert result.session_resumed is True
+        assert result.post_shutdown_output_tokens == 5000
+        assert result.post_shutdown_turn_starts == 0
+        assert result.post_shutdown_user_messages == 0
+
+        # Performance: with an elif chain, ASSISTANT_MESSAGE is the first
+        # branch so each event needs exactly 1 comparison → 500 total.
+        # Allow a small margin for any non-assistant events (there are none
+        # here, but be robust).
+        assert eq_count <= 500, (
+            f"Expected ≤ 500 ev.type comparisons for 500 ASSISTANT_MESSAGE "
+            f"events with if/elif chain, got {eq_count}"
+        )
+
+    def test_correctness_mixed_post_shutdown_events(self, tmp_path: Path) -> None:
+        """Mixed post-shutdown events produce correct counters with elif chain."""
+        start_raw = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "mix-bench",
+                    "machineId": "m1",
+                    "parentSessionId": None,
+                    "repoName": "test-repo",
+                    "repoUrl": "https://example.com/repo",
+                    "clientVersion": "1.0.0",
+                    "extensionVersion": "1.0.0",
+                    "userAgent": "test",
+                    "repoDevcontainerConfig": None,
+                },
+                "id": "ev-start",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        user_pre = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "pre"},
+                "id": "ev-u-pre",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        shutdown_raw = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "totalPremiumRequests": 0,
+                    "totalApiDurationMs": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        user_post = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "post"},
+                "id": "ev-u-post",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "t1"},
+                "id": "ev-ts",
+                "timestamp": "2026-03-07T12:01:30.000Z",
+            }
+        )
+        asst_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "toolRequests": [],
+                    "interactionId": "i1",
+                    "outputTokens": 42,
+                },
+                "id": "ev-a1",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        tool_exec = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc1",
+                    "model": "claude-sonnet-4",
+                    "interactionId": "int-1",
+                    "success": True,
+                },
+                "id": "ev-tool",
+                "timestamp": "2026-03-07T12:03:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            start_raw,
+            user_pre,
+            shutdown_raw,
+            resume_ev,
+            user_post,
+            turn_start,
+            asst_msg,
+            tool_exec,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _detect_resume(events, fp.all_shutdowns)
+
+        assert result.session_resumed is True
+        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+        assert result.post_shutdown_user_messages == 1
+        assert result.post_shutdown_turn_starts == 1
+        assert result.post_shutdown_output_tokens == 42
