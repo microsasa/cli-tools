@@ -2746,7 +2746,7 @@ class TestBuildSessionSummaryEdgeCases:
         assert summary.active_output_tokens == 0
 
     def test_mixed_valid_bool_negative_tokens(self, tmp_path: Path) -> None:
-        """Mix of valid (150), boolean (rejected), and negative (-50) outputTokens → 150."""
+        """Mix of valid (150), boolean (mapped to 0), and negative (-50) outputTokens → 150."""
         bool_msg = json.dumps(
             {
                 "type": "assistant.message",
@@ -2783,7 +2783,7 @@ class TestBuildSessionSummaryEdgeCases:
         )
         events = parse_events(p)
         summary = build_session_summary(events)
-        # 150 (valid) + 0 (bool rejected) + 0 (negative rejected) = 150
+        # 150 (valid) + 0 (bool mapped to 0) + 0 (negative rejected) = 150
         assert summary.active_output_tokens == 150
 
     def test_multiple_session_start_uses_first(self, tmp_path: Path) -> None:
@@ -4207,8 +4207,8 @@ class TestParserFalsyStringEdgeCases:
         config.write_text('{"model": ""}', encoding="utf-8")
         assert _read_config_model(config) is None
 
-    def test_output_tokens_boolean_true_rejected(self, tmp_path: Path) -> None:
-        """Boolean True is rejected by the field validator and not counted."""
+    def test_output_tokens_boolean_true_sanitized(self, tmp_path: Path) -> None:
+        """Boolean True is mapped to 0 by the field validator and not counted."""
         msg_bool_tokens = json.dumps(
             {
                 "type": "assistant.message",
@@ -4281,7 +4281,7 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(3.14)) is None
 
     def test_returns_none_for_bool_true(self) -> None:
-        """Boolean True is rejected by the field validator, not coerced to 1."""
+        """Boolean True is mapped to 0 by the field validator, not coerced to 1."""
         assert _extract_output_tokens(_make_assistant_event(True)) is None
 
     def test_returns_none_for_bool_false(self) -> None:
@@ -4291,11 +4291,11 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(None)) is None
 
     def test_returns_none_for_string(self) -> None:
-        """Strings are rejected by the field validator, even numeric ones."""
+        """Strings are mapped to 0 by the field validator, even numeric ones."""
         assert _extract_output_tokens(_make_assistant_event("abc")) is None
 
     def test_returns_none_for_numeric_string(self) -> None:
-        """Numeric strings like ``"100"`` are rejected, not coerced to int."""
+        """Numeric strings like ``"100"`` are mapped to 0, not coerced to int."""
         assert _extract_output_tokens(_make_assistant_event("100")) is None
 
     def test_returns_none_for_zero(self) -> None:

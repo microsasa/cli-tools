@@ -245,7 +245,8 @@ def _extract_output_tokens(ev: SessionEvent) -> int | None:
     event payload is malformed or the value is zero/negative.  Pydantic
     lax-mode coercion handles whole-number floats (e.g. ``1234.0 → 1234``)
     that the raw dict path would silently discard.  Bool and str values are
-    rejected by a field validator before coercion.
+    mapped to ``0`` by a field validator so that the rest of the assistant
+    message payload remains parsable.
 
     Callers are responsible for verifying ``ev.type`` before calling; this
     function validates only the ``data`` payload via

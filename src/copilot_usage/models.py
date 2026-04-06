@@ -218,16 +218,16 @@ class AssistantMessageData(BaseModel):
 
     @field_validator("outputTokens", mode="before")
     @classmethod
-    def _reject_non_numeric_tokens(cls, v: object) -> object:
-        """Reject bool and str before Pydantic lax-mode int coercion.
+    def _sanitize_non_numeric_tokens(cls, v: object) -> object:
+        """Map invalid bool/str token counts to ``0`` before int coercion.
 
         JSON ``true``/``false`` and numeric strings like ``"100"`` are not
-        valid token counts.  Only ``int`` and whole-number ``float`` values
-        (e.g. ``1234.0``) are accepted.
+        valid token counts. Returning ``0`` preserves parsing of the rest of
+        the assistant message payload while preventing these values from
+        being lax-coerced into token counts.
         """
         if isinstance(v, (bool, str)):
-            msg = f"bool/str not accepted for outputTokens: {v!r}"
-            raise ValueError(msg)
+            return 0
         return v
 
     reasoningText: str | None = None
