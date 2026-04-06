@@ -11,7 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 __all__: Final[list[str]] = [
     "EPOCH",
@@ -215,6 +215,21 @@ class AssistantMessageData(BaseModel):
     content: str = ""
     outputTokens: int = 0
     interactionId: str = ""
+
+    @field_validator("outputTokens", mode="before")
+    @classmethod
+    def _reject_non_numeric_tokens(cls, v: object) -> object:
+        """Reject bool and str before Pydantic lax-mode int coercion.
+
+        JSON ``true``/``false`` and numeric strings like ``"100"`` are not
+        valid token counts.  Only ``int`` and whole-number ``float`` values
+        (e.g. ``1234.0``) are accepted.
+        """
+        if isinstance(v, (bool, str)):
+            msg = f"bool/str not accepted for outputTokens: {v!r}"
+            raise ValueError(msg)
+        return v
+
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
     toolRequests: list[ToolRequest] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType] - Pydantic infers the generic at runtime

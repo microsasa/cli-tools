@@ -2783,8 +2783,8 @@ class TestBuildSessionSummaryEdgeCases:
         )
         events = parse_events(p)
         summary = build_session_summary(events)
-        # 150 (valid) + 1 (Pydantic coerces True→1) + 0 (negative rejected) = 151
-        assert summary.active_output_tokens == 151
+        # 150 (valid) + 0 (bool rejected) + 0 (negative rejected) = 150
+        assert summary.active_output_tokens == 150
 
     def test_multiple_session_start_uses_first(self, tmp_path: Path) -> None:
         """Two session.start events; session_id, start_time, cwd match FIRST event."""
@@ -4207,8 +4207,8 @@ class TestParserFalsyStringEdgeCases:
         config.write_text('{"model": ""}', encoding="utf-8")
         assert _read_config_model(config) is None
 
-    def test_output_tokens_boolean_true_coerced(self, tmp_path: Path) -> None:
-        """Boolean True is coerced to 1 by Pydantic validation."""
+    def test_output_tokens_boolean_true_rejected(self, tmp_path: Path) -> None:
+        """Boolean True is rejected by the field validator and not counted."""
         msg_bool_tokens = json.dumps(
             {
                 "type": "assistant.message",
@@ -4225,7 +4225,7 @@ class TestParserFalsyStringEdgeCases:
         _write_events(p, _START_EVENT, msg_bool_tokens)
         events = parse_events(p)
         summary = build_session_summary(events)
-        assert summary.active_output_tokens == 1
+        assert summary.active_output_tokens == 0
 
     def test_output_tokens_boolean_false_excluded(self, tmp_path: Path) -> None:
         """Boolean False must not be counted as outputTokens."""
@@ -4281,8 +4281,8 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(3.14)) is None
 
     def test_returns_none_for_bool_true(self) -> None:
-        """Pydantic coerces True → 1; the result is treated as a valid positive int."""
-        assert _extract_output_tokens(_make_assistant_event(True)) == 1
+        """Boolean True is rejected by the field validator, not coerced to 1."""
+        assert _extract_output_tokens(_make_assistant_event(True)) is None
 
     def test_returns_none_for_bool_false(self) -> None:
         assert _extract_output_tokens(_make_assistant_event(False)) is None
@@ -4291,8 +4291,12 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(None)) is None
 
     def test_returns_none_for_string(self) -> None:
-        """Pydantic coerces numeric strings; non-numeric strings yield None."""
+        """Strings are rejected by the field validator, even numeric ones."""
         assert _extract_output_tokens(_make_assistant_event("abc")) is None
+
+    def test_returns_none_for_numeric_string(self) -> None:
+        """Numeric strings like ``"100"`` are rejected, not coerced to int."""
+        assert _extract_output_tokens(_make_assistant_event("100")) is None
 
     def test_returns_none_for_zero(self) -> None:
         assert _extract_output_tokens(_make_assistant_event(0)) is None

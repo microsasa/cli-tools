@@ -244,7 +244,8 @@ def _extract_output_tokens(ev: SessionEvent) -> int | None:
     Returns the validated positive integer token count, or ``None`` if the
     event payload is malformed or the value is zero/negative.  Pydantic
     lax-mode coercion handles whole-number floats (e.g. ``1234.0 → 1234``)
-    that the raw dict path would silently discard.
+    that the raw dict path would silently discard.  Bool and str values are
+    rejected by a field validator before coercion.
 
     Callers are responsible for verifying ``ev.type`` before calling; this
     function validates only the ``data`` payload via
