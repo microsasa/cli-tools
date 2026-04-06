@@ -16,15 +16,23 @@ _DAILY_ACTIVITY_LIMIT: Final[int] = 14
 
 
 def _format_log_files_line(summary: VSCodeLogSummary) -> str:
-    """Build the 'Log Files' line, surfacing unreadable files when present."""
-    unreadable = summary.log_files_found - summary.log_files_parsed
+    """Build the 'Log Files' line, surfacing unreadable or inconsistent counts."""
+    found = summary.log_files_found
+    parsed = summary.log_files_parsed
+    unreadable = found - parsed
+
     if unreadable > 0:
         return (
-            f"[bold]Log Files:[/bold]  {summary.log_files_parsed}"
-            f" ({summary.log_files_found} found, "
+            f"[bold]Log Files:[/bold]  {parsed}"
+            f" ({found} found, "
             f"[red]{unreadable} unreadable[/red])"
         )
-    return f"[bold]Log Files:[/bold]  {summary.log_files_parsed}"
+    if unreadable < 0:
+        return (
+            f"[bold]Log Files:[/bold]  {parsed}"
+            f" ([yellow]{found} found; inconsistent counts[/yellow])"
+        )
+    return f"[bold]Log Files:[/bold]  {parsed}"
 
 
 def render_vscode_summary(

@@ -89,7 +89,8 @@ class TestRenderVscodeSummaryTotalsPanel:
     def test_log_files_count_rendered(self) -> None:
         summary = _make_summary(log_files_parsed=3)
         output = _capture(summary)
-        assert "3" in output
+        log_line = next(line for line in output.splitlines() if "Log Files" in line)
+        assert "3" in log_line
 
 
 # ---------------------------------------------------------------------------
@@ -335,9 +336,10 @@ class TestRenderVscodeSummaryUnreadableFiles:
             log_files_found=5,
         )
         output = _capture(summary)
-        assert "5 found" in output
-        assert "2 unreadable" in output
-        assert "3" in output
+        log_line = next(line for line in output.splitlines() if "Log Files" in line)
+        assert "5 found" in log_line
+        assert "2 unreadable" in log_line
+        assert "3" in log_line
 
     def test_happy_path_no_unreadable_annotation(self) -> None:
         """When all found files are parsed, output is unchanged (no 'unreadable')."""
@@ -347,7 +349,21 @@ class TestRenderVscodeSummaryUnreadableFiles:
             log_files_found=4,
         )
         output = _capture(summary)
-        assert "Log Files" in output
-        assert "4" in output
-        assert "unreadable" not in output
-        assert "found" not in output
+        log_line = next(line for line in output.splitlines() if "Log Files" in line)
+        assert "4" in log_line
+        assert "unreadable" not in log_line
+        assert "found" not in log_line
+
+    def test_inconsistent_counts_shown_when_parsed_exceeds_found(self) -> None:
+        """When parsed > found, a yellow warning about inconsistent counts appears."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=5,
+            log_files_found=3,
+        )
+        output = _capture(summary)
+        log_line = next(line for line in output.splitlines() if "Log Files" in line)
+        assert "5" in log_line
+        assert "3 found" in log_line
+        assert "inconsistent counts" in log_line
+        assert "unreadable" not in log_line
