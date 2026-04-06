@@ -2746,7 +2746,7 @@ class TestBuildSessionSummaryEdgeCases:
         assert summary.active_output_tokens == 0
 
     def test_mixed_valid_bool_negative_tokens(self, tmp_path: Path) -> None:
-        """Mix of valid (150), boolean (True→1 via Pydantic), and negative (-50) outputTokens → 151."""
+        """Mix of valid (150), boolean (rejected), and negative (-50) outputTokens → 150."""
         bool_msg = json.dumps(
             {
                 "type": "assistant.message",
