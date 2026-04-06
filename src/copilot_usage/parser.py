@@ -321,7 +321,7 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
     try:
         with events_path.open(encoding="utf-8") as fh:
             for lineno, line in enumerate(fh, start=1):
-                if not line or line == "\n":
+                if not line or line.isspace():
                     continue
                 try:
                     events.append(SessionEvent.model_validate_json(line))

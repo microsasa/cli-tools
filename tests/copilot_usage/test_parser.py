@@ -827,10 +827,13 @@ class TestParseEventsModelValidateJson:
         """Malformed JSON lines are skipped; valid lines still parse."""
         p = tmp_path / "s" / "events.jsonl"
         _write_events(p, _START_EVENT, "NOT-JSON{{{", _USER_MSG)
-        events = parse_events(p)
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            events = parse_events(p)
         assert len(events) == 2
         assert events[0].type == EventType.SESSION_START
         assert events[1].type == EventType.USER_MESSAGE
+        warning_spy.assert_called_once()
+        assert "json" in str(warning_spy.call_args).lower()
 
 
 # ---------------------------------------------------------------------------
