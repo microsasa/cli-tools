@@ -195,6 +195,25 @@ class _CachedVSCodeSummary:
 _vscode_summary_cache: _CachedVSCodeSummary | None = None
 
 
+# ---------------------------------------------------------------------------
+# Per-file partial-summary cache: avoids O(total_requests) re-aggregation
+# for unchanged files when the global summary cache is invalidated.
+# Keyed by log file Path; each entry pairs a file identity with an
+# already-aggregated VSCodeLogSummary for that single file.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedFileSummary:
+    """Cache entry pairing a file identity with an aggregated per-file summary."""
+
+    file_id: tuple[int, int] | None
+    partial: VSCodeLogSummary
+
+
+_PER_FILE_SUMMARY_CACHE: dict[Path, _CachedFileSummary] = {}
+
+
 _FILE_ID_UNSET: Final = "unset"
 
 
@@ -296,6 +315,36 @@ def _update_vscode_summary(
             acc.last_timestamp = req.timestamp
 
 
+def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
+    """Merge a pre-aggregated per-file summary into *acc* in O(num_models) time.
+
+    Unlike :func:`_update_vscode_summary`, which iterates every individual
+    request, this function merges already-aggregated counters and dict
+    entries — proportional to the number of distinct models, categories,
+    and dates rather than the total request count.
+    """
+    acc.total_requests += partial.total_requests
+    acc.total_duration_ms += partial.total_duration_ms
+
+    for model, count in partial.requests_by_model.items():
+        acc.requests_by_model[model] += count
+    for model, dur in partial.duration_by_model.items():
+        acc.duration_by_model[model] += dur
+    for cat, count in partial.requests_by_category.items():
+        acc.requests_by_category[cat] += count
+    for date_key, count in partial.requests_by_date.items():
+        acc.requests_by_date[date_key] += count
+
+    if partial.first_timestamp is not None and (
+        acc.first_timestamp is None or partial.first_timestamp < acc.first_timestamp
+    ):
+        acc.first_timestamp = partial.first_timestamp
+    if partial.last_timestamp is not None and (
+        acc.last_timestamp is None or partial.last_timestamp > acc.last_timestamp
+    ):
+        acc.last_timestamp = partial.last_timestamp
+
+
 def _copy_summary(summary: VSCodeLogSummary) -> VSCodeLogSummary:
     """Return a shallow copy with independent dict fields.
 
@@ -356,8 +405,14 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
     cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
-    requests when no log file has changed, reducing per-call cost from
-    **O(total_requests)** to **O(num_files)** on a warm cache.
+    requests when no log file has changed.
+
+    When the summary cache is invalidated (a file changed or was added),
+    a per-file partial-summary cache (:data:`_PER_FILE_SUMMARY_CACHE`)
+    avoids re-iterating requests for unchanged files.  Only files whose
+    ``(mtime_ns, size)`` identity differs are re-aggregated via
+    :func:`_update_vscode_summary`; unchanged files contribute via an
+    O(num_models) :func:`_merge_partial` instead of O(requests).
     """
     global _vscode_summary_cache  # noqa: PLW0603
 
@@ -375,12 +430,22 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path, file_id in log_ids:
-        try:
-            result = _get_cached_vscode_requests(log_path, file_id)
-        except OSError as exc:
-            logger.warning("Could not read log file {}: {}", log_path, exc)
-            continue
-        _update_vscode_summary(acc, result)
+        cached_fs = _PER_FILE_SUMMARY_CACHE.get(log_path)
+        if cached_fs is not None and cached_fs.file_id == file_id:
+            _merge_partial(acc, cached_fs.partial)
+        else:
+            try:
+                result = _get_cached_vscode_requests(log_path, file_id)
+            except OSError as exc:
+                logger.warning("Could not read log file {}: {}", log_path, exc)
+                continue
+            partial_acc = _SummaryAccumulator()
+            _update_vscode_summary(partial_acc, result)
+            partial_summary = _finalize_summary(partial_acc)
+            _PER_FILE_SUMMARY_CACHE[log_path] = _CachedFileSummary(
+                file_id, partial_summary
+            )
+            _merge_partial(acc, partial_summary)
         acc.log_files_parsed += 1
     summary = _finalize_summary(acc)
 
