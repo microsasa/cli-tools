@@ -211,28 +211,7 @@ class _CachedFileSummary:
     partial: VSCodeLogSummary
 
 
-class _BoundedFileSummaryCache(OrderedDict[Path, _CachedFileSummary]):
-    """LRU-bounded cache for per-file summaries.
-
-    This keeps the existing mapping-style API used by callers while ensuring
-    entries for old log paths do not accumulate without bound.
-    """
-
-    def __init__(self, max_size: int) -> None:
-        super().__init__()
-        self._max_size = max_size
-
-    def __setitem__(self, key: Path, value: _CachedFileSummary) -> None:
-        if key in self:
-            super().__delitem__(key)
-        super().__setitem__(key, value)
-        while len(self) > self._max_size:
-            self.popitem(last=False)
-
-
-_PER_FILE_SUMMARY_CACHE: OrderedDict[Path, _CachedFileSummary] = (
-    _BoundedFileSummaryCache(_MAX_CACHED_VSCODE_LOGS)
-)
+_PER_FILE_SUMMARY_CACHE: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
 
 
 _FILE_ID_UNSET: Final = "unset"
@@ -466,8 +445,11 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
             partial_acc = _SummaryAccumulator()
             _update_vscode_summary(partial_acc, result)
             partial_summary = _finalize_summary(partial_acc)
-            _PER_FILE_SUMMARY_CACHE[log_path] = _CachedFileSummary(
-                file_id, partial_summary
+            lru_insert(
+                _PER_FILE_SUMMARY_CACHE,
+                log_path,
+                _CachedFileSummary(file_id, partial_summary),
+                _MAX_CACHED_VSCODE_LOGS,
             )
             _merge_partial(acc, partial_summary)
         acc.log_files_parsed += 1

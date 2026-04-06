@@ -1670,3 +1670,53 @@ class TestSafeFileIdentityCalledOncePerFile:
                 f"safe_file_identity called {call_counts[log_file]} times "
                 f"for {log_file.name}, expected at most 1"
             )
+
+
+# ---------------------------------------------------------------------------
+# _PER_FILE_SUMMARY_CACHE LRU eviction
+# ---------------------------------------------------------------------------
+
+
+class TestPerFileSummaryCacheLRUEviction:
+    """Verify that _PER_FILE_SUMMARY_CACHE evicts the oldest entry when full.
+
+    After removing _BoundedFileSummaryCache, eviction is handled by the
+    shared ``lru_insert()`` helper.  This test exercises the integration:
+    writing more than ``_MAX_CACHED_VSCODE_LOGS`` distinct files must
+    evict the oldest entry while the newest survives.
+    """
+
+    def test_oldest_evicted_newest_survives(self, tmp_path: Path) -> None:
+        """Inserting _MAX_CACHED_VSCODE_LOGS + 1 files evicts the first."""
+        limit = _MAX_CACHED_VSCODE_LOGS
+
+        # Create limit + 1 log files inside a VS Code log directory layout.
+        log_files: list[Path] = []
+        for i in range(limit + 1):
+            log_dir = (
+                tmp_path
+                / f"session{i:04d}"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            log_file = log_dir / "GitHub Copilot Chat.log"
+            log_file.write_text(_make_log_line(req_idx=i))
+            log_files.append(log_file)
+
+        # Process all files through get_vscode_summary so the per-file
+        # summary cache is populated via lru_insert.
+        summary = get_vscode_summary(tmp_path)
+        assert summary.total_requests == limit + 1
+
+        # The cache is bounded: the oldest (first) file should be evicted.
+        assert log_files[0] not in _PER_FILE_SUMMARY_CACHE, (
+            "oldest entry should have been evicted from _PER_FILE_SUMMARY_CACHE"
+        )
+        # The newest (last) file should survive.
+        assert log_files[-1] in _PER_FILE_SUMMARY_CACHE, (
+            "newest entry should be present in _PER_FILE_SUMMARY_CACHE"
+        )
+        # Cache size must match the configured limit after one eviction.
+        assert len(_PER_FILE_SUMMARY_CACHE) == limit
