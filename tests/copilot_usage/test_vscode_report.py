@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import re
 import warnings
 from datetime import datetime
 from io import StringIO
@@ -13,6 +14,13 @@ from rich.console import Console
 from copilot_usage.pricing import ModelPricing, PricingTier
 from copilot_usage.vscode_parser import VSCodeLogSummary
 from copilot_usage.vscode_report import _DAILY_ACTIVITY_LIMIT, render_vscode_summary
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so assertions can match plain text."""
+    return _ANSI_RE.sub("", text)
 
 
 def _capture(summary: VSCodeLogSummary) -> str:
@@ -34,6 +42,7 @@ def _make_summary(
     first_timestamp: datetime | None = None,
     last_timestamp: datetime | None = None,
     log_files_parsed: int = 1,
+    log_files_found: int | None = None,
 ) -> VSCodeLogSummary:
     return VSCodeLogSummary(
         total_requests=total_requests,
@@ -45,6 +54,9 @@ def _make_summary(
         first_timestamp=first_timestamp,
         last_timestamp=last_timestamp,
         log_files_parsed=log_files_parsed,
+        log_files_found=log_files_found
+        if log_files_found is not None
+        else log_files_parsed,
     )
 
 
@@ -85,7 +97,10 @@ class TestRenderVscodeSummaryTotalsPanel:
     def test_log_files_count_rendered(self) -> None:
         summary = _make_summary(log_files_parsed=3)
         output = _capture(summary)
-        assert "3" in output
+        log_line = _strip_ansi(
+            next(line for line in output.splitlines() if "Log Files" in line)
+        )
+        assert "Log Files:  3" in log_line
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +330,56 @@ class TestRenderVscodeSummaryDailyActivity:
         summary = _make_summary(total_requests=5, requests_by_date={})
         output = _capture(summary)
         assert "Daily Activity" not in output
+
+
+# ---------------------------------------------------------------------------
+# Unreadable log files
+# ---------------------------------------------------------------------------
+
+
+class TestRenderVscodeSummaryUnreadableFiles:
+    def test_unreadable_files_shown_when_found_exceeds_parsed(self) -> None:
+        """When some files are unreadable, the rendered output shows the gap."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=3,
+            log_files_found=5,
+        )
+        output = _capture(summary)
+        log_line = _strip_ansi(
+            next(line for line in output.splitlines() if "Log Files" in line)
+        )
+        assert "Log Files:  3" in log_line
+        assert "5 found" in log_line
+        assert "2 unreadable" in log_line
+
+    def test_happy_path_no_unreadable_annotation(self) -> None:
+        """When all found files are parsed, output is unchanged (no 'unreadable')."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=4,
+            log_files_found=4,
+        )
+        output = _capture(summary)
+        log_line = _strip_ansi(
+            next(line for line in output.splitlines() if "Log Files" in line)
+        )
+        assert "Log Files:  4" in log_line
+        assert "unreadable" not in log_line
+        assert "found" not in log_line
+
+    def test_inconsistent_counts_shown_when_parsed_exceeds_found(self) -> None:
+        """When parsed > found, a yellow warning about inconsistent counts appears."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=5,
+            log_files_found=3,
+        )
+        output = _capture(summary)
+        log_line = _strip_ansi(
+            next(line for line in output.splitlines() if "Log Files" in line)
+        )
+        assert "Log Files:  5" in log_line
+        assert "3 found" in log_line
+        assert "inconsistent counts" in log_line
+        assert "unreadable" not in log_line
