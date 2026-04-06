@@ -14,6 +14,7 @@ from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
     _MAX_CACHED_VSCODE_LOGS,  # pyright: ignore[reportPrivateUsage]
+    _PER_FILE_SUMMARY_CACHE,  # pyright: ignore[reportPrivateUsage]
     _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
@@ -54,6 +55,7 @@ _LOG_NOISE = (
 def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     """Ensure every test starts with empty VS Code caches."""
     _VSCODE_LOG_CACHE.clear()
+    _PER_FILE_SUMMARY_CACHE.clear()
     import copilot_usage.vscode_parser as _mod
 
     _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
@@ -1443,7 +1445,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             wraps=_update_vscode_summary,
         ) as spy:
             s2 = get_vscode_summary(tmp_path)
-            assert spy.call_count == 2  # re-aggregated both files
+            assert spy.call_count == 1  # only the new file re-aggregated
 
         assert s2.total_requests == 2
         assert s2.log_files_found == 2
@@ -1493,7 +1495,8 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             wraps=_update_vscode_summary,
         ) as spy:
             get_vscode_summary(tmp_path)
-            assert spy.call_count == 2  # both files re-aggregated
+            # Only file2 is re-aggregated; file1's per-file summary is cached.
+            assert spy.call_count == 1
 
     def test_cached_return_is_mutation_safe(self, tmp_path: Path) -> None:
         """Mutating dict fields on a cached return does not corrupt the cache."""
@@ -1515,6 +1518,69 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         s2 = get_vscode_summary(tmp_path)
         assert s2.requests_by_model == {"gpt-4o-mini": 1}
         assert "injected" not in s2.requests_by_model
+
+
+# ---------------------------------------------------------------------------
+# Per-file summary cache — only changed files trigger _update_vscode_summary
+# ---------------------------------------------------------------------------
+
+
+class TestPerFileSummaryCacheSkipsUnchangedFiles:
+    """Verify that get_vscode_summary re-aggregates only changed files.
+
+    When one of several log files changes, the per-file summary cache
+    provides the unchanged files' contribution via _merge_partial (which
+    is O(num_models + num_categories + num_dates)), so
+    _update_vscode_summary is only called for the file(s) that actually
+    changed.
+
+    Uses monkeypatching to count calls to _update_vscode_summary,
+    following the project's deterministic perf-test convention (no
+    wall-clock timing).
+    """
+
+    def test_only_changed_file_reaggregated(self, tmp_path: Path) -> None:
+        """_update_vscode_summary is called only for the changed file."""
+        n = 50  # requests per file
+        m = 10  # new lines appended to one file
+
+        log_dir1 = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir1.mkdir(parents=True)
+        log_file1 = log_dir1 / "GitHub Copilot Chat.log"
+
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+
+        # Write N lines to each file.
+        log_file1.write_text("\n".join(_make_log_line(req_idx=i) for i in range(n)))
+        log_file2.write_text("\n".join(_make_log_line(req_idx=i + n) for i in range(n)))
+
+        # Warm both caches (summary + per-file).
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == n * 2
+
+        # Append M new lines to file2 only; file1 is unchanged.
+        existing = log_file2.read_text()
+        extra = "\n".join(_make_log_line(req_idx=i + n * 2) for i in range(m))
+        log_file2.write_text(existing + "\n" + extra)
+
+        # Spy on _update_vscode_summary and call again.
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            # Only the changed file's requests are aggregated; the
+            # unchanged file's contribution comes from the per-file
+            # summary cache without iterating its requests.
+            assert spy.call_count == 1
+
+        assert s2.total_requests == n * 2 + m
 
 
 # ---------------------------------------------------------------------------
