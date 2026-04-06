@@ -63,6 +63,11 @@ class _DiscoveryCache:
 # has not changed (no sessions added or removed).
 _DISCOVERY_CACHE: dict[Path, _DiscoveryCache] = {}
 
+# On cache hits, probe at most this many sessions without a cached
+# plan.md for a newly-created file.  This keeps the cache-hit path
+# at O(N + _MAX_PLAN_PROBES) stats instead of O(2N).
+_MAX_PLAN_PROBES: Final[int] = 5
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CachedSession:
@@ -308,9 +313,11 @@ def _discover_with_identity(
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
     its file identity is computed via :func:`safe_file_identity`.  If a
     previously-present ``plan.md`` becomes unreadable, the cached path is
-    cleared to avoid repeated failing syscalls.  On cache hits, entries
-    with no cached ``plan.md`` are probed for a newly-created file so
-    that session names from ``plan.md`` appear without a full rescan.
+    cleared to avoid repeated failing syscalls.  On cache hits, up to
+    ``_MAX_PLAN_PROBES`` entries with no cached ``plan.md`` are probed
+    for a newly-created file so that session names appear without a full
+    rescan; remaining entries are left unprobed until the next full
+    rescan to keep the cache-hit path at O(N) stats.
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
@@ -334,6 +341,7 @@ def _discover_with_identity(
 
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
     definitively_gone: list[Path] = []
+    plan_probes_remaining = _MAX_PLAN_PROBES if is_cache_hit else 0
     for idx, (events_path, plan_path) in enumerate(entries):
         # Distinguish permanent deletion from transient errors so only
         # truly-gone files are pruned from the cache.
@@ -356,10 +364,13 @@ def _discover_with_identity(
                     # Plan deleted or unreadable — clear cached path to
                     # avoid repeated failing syscalls on cache hits.
                     entries[idx] = (events_path, None)
-            elif is_cache_hit:
+            elif plan_probes_remaining > 0:
                 # Probe for newly-created plan.md not yet in cache.
+                # Bounded to _MAX_PLAN_PROBES to keep cache-hit path
+                # at O(N) stats instead of O(2N).
                 candidate = events_path.parent / "plan.md"
                 plan_id = safe_file_identity(candidate)
+                plan_probes_remaining -= 1
                 if plan_id is not None:
                     entries[idx] = (events_path, candidate)
 

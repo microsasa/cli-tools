@@ -449,10 +449,8 @@ class TestDiscoverSessions:
         with patch.object(Path, "stat", _flaky_stat):
             result = discover_sessions(tmp_path)
 
-        # s2 still returned; s1 may also be present (with mtime 0)
-        assert any(p == s2 for p in result)
-        # The call must not raise
-        assert isinstance(result, list)
+        # s1 is excluded (FileNotFoundError → pruned); s2 still returned.
+        assert result == [s2]
 
     def test_stat_race_permission_error(self, tmp_path: Path) -> None:
         """discover_sessions skips sessions whose events.jsonl is unreadable."""
@@ -533,8 +531,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         Creates 100 sessions where only 10 have plan.md.  Patches
         ``safe_file_identity`` to count calls and asserts that the call
-        count equals exactly 100 (events.jsonl) + 10 (existing plan.md),
-        with zero calls for the 90 absent plan.md files.
+        count equals exactly 1 (root directory) + 10 (existing plan.md).
+        ``events.jsonl`` uses direct ``Path.stat()`` rather than
+        ``safe_file_identity``, and absent plan.md files are not probed
+        on fresh discovery.
         """
         n_total = 100
         n_with_plan = 10
