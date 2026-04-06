@@ -299,6 +299,11 @@ def _discover_with_identity(
     changed (for example, because a session was added, removed, or
     otherwise changed on disk), a full rescan is performed.
 
+    If a cached ``events.jsonl`` path becomes unreadable (e.g. deleted
+    without changing the root mtime), the entry is excluded from the
+    result and pruned from the cache so that subsequent calls behave
+    identically to a fresh ``os.scandir`` discovery.
+
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
     its file identity is computed via :func:`safe_file_identity`.  When
     ``plan.md`` is absent, the ``plan_file_id`` element is ``None`` with
@@ -323,13 +328,31 @@ def _discover_with_identity(
         _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
 
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
+    stale_events: list[Path] = []
     for events_path, plan_path in entries:
         events_id = safe_file_identity(events_path)
+        if events_id is None:
+            # events.jsonl deleted or unreadable — skip so behaviour matches
+            # a fresh scandir (which would not include this session at all).
+            stale_events.append(events_path)
+            continue
         if include_plan and plan_path is not None:
             plan_id = safe_file_identity(plan_path)
         else:
             plan_id = None
         result.append((events_path, events_id, plan_id))
+
+    # Prune stale entries whose events.jsonl is no longer readable so
+    # subsequent cached calls do not re-stat missing files or emit
+    # repeated parse warnings.
+    if stale_events:
+        stale_set = frozenset(stale_events)
+        current = _DISCOVERY_CACHE.get(root)
+        if current is not None:
+            current.entries = [
+                (ep, pp) for ep, pp in current.entries if ep not in stale_set
+            ]
+
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
@@ -342,8 +365,9 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     Returns list of paths to ``events.jsonl`` files, sorted by file
     identity (newest first).
 
-    Tolerates directories deleted between the glob and the stat call
-    (TOCTOU race) by returning a zero identity for vanished paths.
+    Sessions whose ``events.jsonl`` has been deleted or become unreadable
+    since the last directory scan are silently skipped (and pruned from
+    the discovery cache).
     """
     return [
         p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)

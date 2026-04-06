@@ -455,7 +455,7 @@ class TestDiscoverSessions:
         assert isinstance(result, list)
 
     def test_stat_race_permission_error(self, tmp_path: Path) -> None:
-        """discover_sessions should not crash when stat() raises PermissionError."""
+        """discover_sessions skips sessions whose events.jsonl is unreadable."""
         s1 = tmp_path / "sess-a" / "events.jsonl"
         _write_events(s1, _START_EVENT)
 
@@ -469,8 +469,8 @@ class TestDiscoverSessions:
         with patch.object(Path, "stat", _flaky_stat):
             result = discover_sessions(tmp_path)
 
-        # Should return the path (with mtime=0), not crash
-        assert result == [s1]
+        # Session with unreadable events.jsonl is skipped, not crashed
+        assert result == []
 
     def test_get_all_sessions_skips_vanished_session(self, tmp_path: Path) -> None:
         """TOCTOU: events.jsonl deleted after discover but before parse."""
@@ -839,6 +839,43 @@ class TestDiscoverWithIdentityCache:
         result2 = _discover_with_identity(tmp_path, include_plan=True)
         assert len(result2) == 1
         assert result2[0][2] is not None  # plan_id must be present
+
+    def test_deleted_events_jsonl_skipped_and_pruned_from_cache(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cached entries with unreadable events.jsonl are skipped and pruned.
+
+        When ``events.jsonl`` is deleted from a session directory *without*
+        changing the root directory mtime (so the cached directory listing
+        is reused), the entry must be excluded from the result — matching
+        the behaviour of a fresh ``os.scandir``.  The stale entry must
+        also be removed from the cached entries list so subsequent calls
+        do not re-stat the missing file.
+        """
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        # Populate discovery cache.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        # Delete one session's events.jsonl without changing root mtime.
+        target = tmp_path / "sess-1" / "events.jsonl"
+        target.unlink()
+
+        result2 = _discover_with_identity(tmp_path)
+        names2 = {p.parent.name for p, _, _ in result2}
+        assert len(result2) == 2
+        assert "sess-1" not in names2
+
+        # The stale entry must be pruned from the cache so a third call
+        # also returns only 2 sessions (no repeated stat warnings).
+        result3 = _discover_with_identity(tmp_path)
+        assert len(result3) == 2
+        assert _DISCOVERY_CACHE[tmp_path] is not None
+        cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
+        assert target not in cached_paths
 
 
 # ---------------------------------------------------------------------------
