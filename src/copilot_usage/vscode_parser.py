@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from loguru import logger
 
@@ -195,8 +195,20 @@ class _CachedVSCodeSummary:
 _vscode_summary_cache: _CachedVSCodeSummary | None = None
 
 
-def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
+_FILE_ID_UNSET: Final = "unset"
+
+
+def _get_cached_vscode_requests(
+    log_path: Path,
+    file_id: tuple[int, int] | None | Literal["unset"] = _FILE_ID_UNSET,
+) -> tuple[VSCodeRequest, ...]:
     """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
+
+    When *file_id* is omitted (or the sentinel ``"unset"``), the file
+    identity is computed internally via :func:`safe_file_identity`.
+    Callers that have already stat'd the file (e.g.
+    :func:`get_vscode_summary`) can pass the pre-computed identity to
+    avoid a redundant ``stat()`` call.
 
     On the first call for a given *log_path*, delegates to
     :func:`parse_vscode_log` and stores the result.  Subsequent calls
@@ -214,16 +226,18 @@ def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
         OSError: Propagated from :func:`parse_vscode_log` when the file
             cannot be opened or read.
     """
-    file_id = safe_file_identity(log_path)
+    resolved_id: tuple[int, int] | None = (
+        safe_file_identity(log_path) if file_id == _FILE_ID_UNSET else file_id
+    )
     cached = _VSCODE_LOG_CACHE.get(log_path)
-    if cached is not None and cached.file_id == file_id:
+    if cached is not None and cached.file_id == resolved_id:
         _VSCODE_LOG_CACHE.move_to_end(log_path)
         return cached.requests
     requests = tuple(parse_vscode_log(log_path))
     lru_insert(
         _VSCODE_LOG_CACHE,
         log_path,
-        _CachedVSCodeLog(file_id=file_id, requests=requests),
+        _CachedVSCodeLog(file_id=resolved_id, requests=requests),
         _MAX_CACHED_VSCODE_LOGS,
     )
     return requests
@@ -348,9 +362,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     global _vscode_summary_cache  # noqa: PLW0603
 
     logs = discover_vscode_logs(base_path)
-    current_ids: frozenset[tuple[Path, tuple[int, int] | None]] = frozenset(
+    log_ids: list[tuple[Path, tuple[int, int] | None]] = [
         (p, safe_file_identity(p)) for p in logs
-    )
+    ]
+    current_ids: frozenset[tuple[Path, tuple[int, int] | None]] = frozenset(log_ids)
 
     if (
         _vscode_summary_cache is not None
@@ -359,9 +374,9 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
         return _copy_summary(_vscode_summary_cache.summary)
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
-    for log_path in logs:
+    for log_path, file_id in log_ids:
         try:
-            result = _get_cached_vscode_requests(log_path)
+            result = _get_cached_vscode_requests(log_path, file_id)
         except OSError as exc:
             logger.warning("Could not read log file {}: {}", log_path, exc)
             continue
