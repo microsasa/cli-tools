@@ -13,6 +13,7 @@ from typing import SupportsIndex, overload
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 import copilot_usage.parser as _parser_module
 from copilot_usage._fs_utils import safe_file_identity
@@ -43,6 +44,7 @@ from copilot_usage.parser import (
     _build_completed_summary,
     _CachedEvents,
     _CachedSession,
+    _CopilotConfig,
     _detect_resume,
     _discover_with_identity,
     _extract_session_name,
@@ -4446,6 +4448,15 @@ class TestReadConfigModel:
         config = tmp_path / "config.json"
         config.write_text('"a string"', encoding="utf-8")
         assert _read_config_model(config) is None
+
+
+class TestCopilotConfigRejectsNonObject:
+    """Verify that ``_CopilotConfig`` rejects a non-object JSON root."""
+
+    def test_model_validate_json_rejects_list(self) -> None:
+        """``_CopilotConfig.model_validate_json('[]')`` raises ``ValidationError``."""
+        with pytest.raises(ValidationError):
+            _CopilotConfig.model_validate_json("[]")
 
 
 # ---------------------------------------------------------------------------
