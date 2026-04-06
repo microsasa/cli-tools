@@ -1490,3 +1490,24 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         ) as spy:
             get_vscode_summary(tmp_path)
             assert spy.call_count >= 1  # re-aggregated (not served from cache)
+
+    def test_cached_return_is_mutation_safe(self, tmp_path: Path) -> None:
+        """Mutating dict fields on a cached return does not corrupt the cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0, model="gpt-4o-mini"))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.requests_by_model == {"gpt-4o-mini": 1}
+
+        # Mutate the dict on the returned summary.
+        s1.requests_by_model["gpt-4o-mini"] = 9999
+        s1.requests_by_model["injected"] = 1
+
+        # Second call should return a clean copy, unaffected by the mutation.
+        s2 = get_vscode_summary(tmp_path)
+        assert s2.requests_by_model == {"gpt-4o-mini": 1}
+        assert "injected" not in s2.requests_by_model
