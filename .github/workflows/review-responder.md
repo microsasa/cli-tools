@@ -70,10 +70,18 @@ This workflow addresses unresolved review comments on a pull request.
    c. Make the requested fix in the code
    d. Reply to the comment thread using `reply_to_pull_request_review_comment` with the comment's `databaseId` as the `comment_id`
 
-5. After addressing all comments, run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass: `make fix && make check`
+5. **Fix-forward scan**: After addressing all comments, review what you just fixed and identify the *class* of each issue (e.g., "stale docstring", "missing assertion", "TOCTOU race", "dead code"). For each class, scan ALL files changed in this PR for other instances of the same problem. Common patterns to check:
+   - If you fixed a stale/inaccurate docstring → audit every docstring in the changed functions
+   - If you fixed a weak test assertion → check sibling tests for similar assertion gaps
+   - If you fixed a bug in one code path → check parallel code paths for the same bug
+   - If you removed dead code → grep for similar dead references elsewhere
+   - If you fixed a naming mismatch → check all related names/comments for consistency
+   Fix any additional instances you find. This prevents the reviewer from flagging the same class of issue in the next round.
 
-6. If CI checks fail, fix the issues and re-run until they pass. Do not push broken code.
+6. Run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass: `make fix && make check`
 
-7. Push all changes in a single commit with message "fix: address review comments".
+7. If CI checks fail, fix the issues and re-run until they pass. Do not push broken code.
+
+8. Push all changes in a single commit with message "fix: address review comments".
 
 If a review comment requests a change that would be architecturally significant or you're unsure about, reply to the thread explaining your concern rather than making the change blindly.
