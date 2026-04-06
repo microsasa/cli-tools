@@ -82,17 +82,8 @@ def _insert_session_entry(
     events_path: Path,
     entry: _CachedSession,
 ) -> None:
-    """Insert a session entry into ``_SESSION_CACHE`` with LRU eviction.
-
-    If *events_path* already exists in the cache (stale entry), the old
-    entry is removed first.  Otherwise, when the cache is full the
-    least-recently-used entry (front of the ``OrderedDict``) is evicted.
-    """
-    if events_path in _SESSION_CACHE:
-        del _SESSION_CACHE[events_path]
-    elif len(_SESSION_CACHE) >= _MAX_CACHED_SESSIONS:
-        _SESSION_CACHE.popitem(last=False)  # evict LRU (front)
-    _SESSION_CACHE[events_path] = entry
+    """Insert a session entry into ``_SESSION_CACHE`` with LRU eviction."""
+    lru_insert(_SESSION_CACHE, events_path, entry, _MAX_CACHED_SESSIONS)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
