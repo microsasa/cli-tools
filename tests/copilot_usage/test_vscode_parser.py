@@ -50,7 +50,7 @@ _LOG_NOISE = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_vscode_log_cache() -> None:  # pyright: ignore[reportUnusedFunction]
+def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     """Ensure every test starts with empty VS Code caches."""
     _VSCODE_LOG_CACHE.clear()
     import copilot_usage.vscode_parser as _mod
@@ -1489,7 +1489,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             wraps=_update_vscode_summary,
         ) as spy:
             get_vscode_summary(tmp_path)
-            assert spy.call_count >= 1  # re-aggregated (not served from cache)
+            assert spy.call_count == 2  # both files re-aggregated
 
     def test_cached_return_is_mutation_safe(self, tmp_path: Path) -> None:
         """Mutating dict fields on a cached return does not corrupt the cache."""
