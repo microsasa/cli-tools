@@ -553,10 +553,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             result = _discover_with_identity(tmp_path)
 
         assert len(result) == n_total
-        # 1 call for root directory + n_total calls for events.jsonl
-        # + n_with_plan for existing plan.md.
-        # No calls for the 90 absent plan.md files.
-        assert spy.call_count == 1 + n_total + n_with_plan
+        # 1 call for root directory + n_with_plan for existing plan.md.
+        # events.jsonl uses direct stat() rather than safe_file_identity,
+        # and absent plan.md files are not probed on fresh discovery.
+        assert spy.call_count == 1 + n_with_plan
 
     def test_plan_id_populated_when_present(self, tmp_path: Path) -> None:
         """plan_id is non-None only for sessions that have plan.md on disk."""
@@ -586,8 +586,9 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         assert len(result) == 1
         assert result[0][2] is None  # plan_id is None
-        # 1 call for root directory + 1 call for events.jsonl, zero for plan.md
-        assert spy.call_count == 1 + 1
+        # 1 call for root directory only; events.jsonl uses direct stat()
+        # and include_plan=False skips all plan.md stat calls.
+        assert spy.call_count == 1
 
     def test_scandir_root_oserror_returns_empty(self, tmp_path: Path) -> None:
         """Return [] when os.scandir on the root directory raises OSError."""
@@ -844,14 +845,13 @@ class TestDiscoverWithIdentityCache:
         self,
         tmp_path: Path,
     ) -> None:
-        """Cached entries with unreadable events.jsonl are skipped and pruned.
+        """Definitively-deleted events.jsonl is pruned from the cache.
 
-        When ``events.jsonl`` is deleted from a session directory *without*
-        changing the root directory mtime (so the cached directory listing
-        is reused), the entry must be excluded from the result — matching
-        the behaviour of a fresh ``os.scandir``.  The stale entry must
-        also be removed from the cached entries list so subsequent calls
-        do not re-stat the missing file.
+        When ``events.jsonl`` is deleted (``FileNotFoundError``) from a
+        session directory *without* changing the root directory mtime,
+        the entry must be excluded from the result and pruned from the
+        cached entries list so subsequent calls do not re-stat the
+        missing file.
         """
         for i in range(3):
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
@@ -876,6 +876,109 @@ class TestDiscoverWithIdentityCache:
         assert _DISCOVERY_CACHE[tmp_path] is not None
         cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
         assert target not in cached_paths
+
+    def test_transient_permission_error_preserves_cache_entry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Transient PermissionError on events.jsonl keeps entry in cache.
+
+        When ``events.jsonl`` raises a non-``FileNotFoundError`` OSError
+        (e.g. ``PermissionError``), the entry is excluded from the
+        current result but *not* pruned from the cache — so the session
+        reappears once the file becomes readable again.
+        """
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        target = tmp_path / "sess-1" / "events.jsonl"
+        original_stat = Path.stat
+
+        def _permission_bomb(self: Path) -> os.stat_result:
+            if self == target:
+                raise PermissionError("transient")
+            return original_stat(self)
+
+        # Simulate transient PermissionError on one session.
+        with patch.object(Path, "stat", _permission_bomb):
+            result2 = _discover_with_identity(tmp_path)
+
+        assert len(result2) == 2
+        names2 = {p.parent.name for p, _, _ in result2}
+        assert "sess-1" not in names2
+
+        # Entry must still be in the cache.
+        cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
+        assert target in cached_paths
+
+        # Once readable again, the session reappears.
+        result3 = _discover_with_identity(tmp_path)
+        assert len(result3) == 3
+
+    def test_deleted_plan_clears_cached_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Deleted plan.md clears cached plan_path to avoid repeated stats.
+
+        When a previously-present ``plan.md`` becomes unreadable, the
+        cached ``plan_path`` is set to ``None`` so subsequent calls
+        do not repeatedly stat a missing file.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 1
+        assert result1[0][2] is not None  # plan_id present
+
+        # Delete plan.md without changing root mtime.
+        plan.unlink()
+
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 1
+        assert result2[0][2] is None  # plan_id gone
+
+        # Cached plan_path must be cleared to None.
+        cached_entries = _DISCOVERY_CACHE[tmp_path].entries
+        assert cached_entries[0][1] is None
+
+    def test_plan_md_created_after_cache_detected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Newly-created plan.md is detected on cache hit.
+
+        When ``plan.md`` is created after the discovery cache is
+        populated (without changing root mtime), the next call with
+        ``include_plan=True`` must detect it and return a non-None
+        ``plan_id``.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md exists.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 1
+        assert result1[0][2] is None  # no plan_id
+
+        # Create plan.md without changing root mtime.
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        # Cache hit must detect the new plan.md.
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 1
+        assert result2[0][2] is not None  # plan_id detected
+
+        # Cached entry must now include the plan path.
+        cached_entries = _DISCOVERY_CACHE[tmp_path].entries
+        assert cached_entries[0][1] == plan
 
 
 # ---------------------------------------------------------------------------
@@ -5663,12 +5766,12 @@ class TestSessionCacheMtime:
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # safe_file_identity called once for _CONFIG_PATH, once for the
-            # root directory (discovery cache check), and once by
-            # _discover_with_identity for events.jsonl.  plan.md does not
-            # exist so its absence is detected via os.scandir dir listing
-            # — no stat call is issued.
-            assert spy.call_count == 3
+            # safe_file_identity called once for _CONFIG_PATH and once for
+            # the root directory (discovery cache check).  events.jsonl is
+            # stat'd directly (not via safe_file_identity) and plan.md does
+            # not exist so its absence is detected via os.scandir dir
+            # listing — no stat call is issued.
+            assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""

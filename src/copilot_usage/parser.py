@@ -299,17 +299,20 @@ def _discover_with_identity(
     changed (for example, because a session was added, removed, or
     otherwise changed on disk), a full rescan is performed.
 
-    If a cached ``events.jsonl`` path becomes unreadable (e.g. deleted
-    without changing the root mtime), the entry is excluded from the
-    result and pruned from the cache so that subsequent calls behave
-    identically to a fresh ``os.scandir`` discovery.
+    If a cached ``events.jsonl`` is definitively deleted
+    (``FileNotFoundError``), the entry is excluded from the result and
+    pruned from the cache.  Transient errors (e.g. ``PermissionError``)
+    also exclude the entry from the current result but leave it in the
+    cache so it can reappear once readable again.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
-    its file identity is computed via :func:`safe_file_identity`.  When
-    ``plan.md`` is absent, the ``plan_file_id`` element is ``None`` with
-    zero overhead.  When *include_plan* is ``False``, the ``plan_file_id``
-    element is always ``None`` — useful for callers that only need event
-    ordering.
+    its file identity is computed via :func:`safe_file_identity`.  If a
+    previously-present ``plan.md`` becomes unreadable, the cached path is
+    cleared to avoid repeated failing syscalls.  On cache hits, entries
+    with no cached ``plan.md`` are probed for a newly-created file so
+    that session names from ``plan.md`` appear without a full rescan.
+    When *include_plan* is ``False``, the ``plan_file_id`` element is
+    always ``None`` — useful for callers that only need event ordering.
     """
     root = base_path or _DEFAULT_BASE
 
@@ -320,37 +323,57 @@ def _discover_with_identity(
 
     if cached is not None and cached.root_id is not None and cached.root_id == root_id:
         entries = cached.entries
+        is_cache_hit = True
     else:
         try:
             entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
             return []
         _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
+        is_cache_hit = False
 
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
-    stale_events: list[Path] = []
-    for events_path, plan_path in entries:
-        events_id = safe_file_identity(events_path)
-        if events_id is None:
-            # events.jsonl deleted or unreadable — skip so behaviour matches
-            # a fresh scandir (which would not include this session at all).
-            stale_events.append(events_path)
+    definitively_gone: list[Path] = []
+    for idx, (events_path, plan_path) in enumerate(entries):
+        # Distinguish permanent deletion from transient errors so only
+        # truly-gone files are pruned from the cache.
+        try:
+            st = events_path.stat()
+            events_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
+        except FileNotFoundError:
+            definitively_gone.append(events_path)
             continue
-        if include_plan and plan_path is not None:
-            plan_id = safe_file_identity(plan_path)
-        else:
-            plan_id = None
+        except OSError:
+            # Transient error (e.g. PermissionError) — skip from result
+            # but keep in cache so the entry reappears once readable.
+            continue
+
+        plan_id: tuple[int, int] | None = None
+        if include_plan:
+            if plan_path is not None:
+                plan_id = safe_file_identity(plan_path)
+                if plan_id is None:
+                    # Plan deleted or unreadable — clear cached path to
+                    # avoid repeated failing syscalls on cache hits.
+                    entries[idx] = (events_path, None)
+            elif is_cache_hit:
+                # Probe for newly-created plan.md not yet in cache.
+                candidate = events_path.parent / "plan.md"
+                plan_id = safe_file_identity(candidate)
+                if plan_id is not None:
+                    entries[idx] = (events_path, candidate)
+
         result.append((events_path, events_id, plan_id))
 
-    # Prune stale entries whose events.jsonl is no longer readable so
-    # subsequent cached calls do not re-stat missing files or emit
-    # repeated parse warnings.
-    if stale_events:
-        stale_set = frozenset(stale_events)
+    # Prune only definitively-deleted entries (FileNotFoundError) from
+    # the cache.  Entries that failed with a transient OSError are kept
+    # so they can reappear once readable again.
+    if definitively_gone:
+        gone_set = frozenset(definitively_gone)
         current = _DISCOVERY_CACHE.get(root)
         if current is not None:
             current.entries = [
-                (ep, pp) for ep, pp in current.entries if ep not in stale_set
+                (ep, pp) for ep, pp in current.entries if ep not in gone_set
             ]
 
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
@@ -365,9 +388,10 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     Returns list of paths to ``events.jsonl`` files, sorted by file
     identity (newest first).
 
-    Sessions whose ``events.jsonl`` has been deleted or become unreadable
-    since the last directory scan are silently skipped (and pruned from
-    the discovery cache).
+    Sessions whose ``events.jsonl`` has been deleted since the last
+    directory scan are silently skipped and pruned from the discovery
+    cache; transiently unreadable sessions are skipped but retained in
+    the cache.
     """
     return [
         p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)
