@@ -799,6 +799,40 @@ class TestParseEvents:
         assert len(result) <= first_repeat
 
 
+class TestParseEventsModelValidateJson:
+    """Verify parse_events uses model_validate_json (fast path)."""
+
+    def test_model_validate_json_called_per_valid_line(self, tmp_path: Path) -> None:
+        """model_validate_json is called once per valid event line."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        with patch.object(
+            SessionEvent, "model_validate_json", wraps=SessionEvent.model_validate_json
+        ) as spy:
+            events = parse_events(p)
+        assert spy.call_count == 3
+        assert len(events) == 3
+
+    def test_model_validate_not_called(self, tmp_path: Path) -> None:
+        """The old slow path (model_validate with a dict) is not used."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        with patch.object(
+            SessionEvent, "model_validate", wraps=SessionEvent.model_validate
+        ) as spy:
+            parse_events(p)
+        assert spy.call_count == 0
+
+    def test_malformed_json_skipped_with_warning(self, tmp_path: Path) -> None:
+        """Malformed JSON lines are skipped; valid lines still parse."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, "NOT-JSON{{{", _USER_MSG)
+        events = parse_events(p)
+        assert len(events) == 2
+        assert events[0].type == EventType.SESSION_START
+        assert events[1].type == EventType.USER_MESSAGE
+
+
 # ---------------------------------------------------------------------------
 # build_session_summary — completed session
 # ---------------------------------------------------------------------------

@@ -6,7 +6,6 @@ aggregates.
 """
 
 import dataclasses
-import json
 import os
 from collections import OrderedDict
 from datetime import datetime
@@ -302,6 +301,10 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
 def parse_events(events_path: Path) -> list[SessionEvent]:
     """Parse an ``events.jsonl`` file into a list of :class:`SessionEvent`.
 
+    Uses ``SessionEvent.model_validate_json`` (Rust-based parser) for each
+    line, bypassing the intermediate ``dict`` allocation of
+    ``json.loads`` + ``model_validate``.
+
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
 
@@ -318,25 +321,25 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
     try:
         with events_path.open(encoding="utf-8") as fh:
             for lineno, line in enumerate(fh, start=1):
-                stripped = line.strip()
-                if not stripped:
+                if not line or line == "\n":
                     continue
                 try:
-                    raw = json.loads(stripped)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "{}:{} — malformed JSON, skipping", events_path, lineno
-                    )
-                    continue
-                try:
-                    events.append(SessionEvent.model_validate(raw))
+                    events.append(SessionEvent.model_validate_json(line))
                 except ValidationError as exc:
-                    logger.warning(
-                        "{}:{} — validation error ({}), skipping",
-                        events_path,
-                        lineno,
-                        exc.error_count(),
-                    )
+                    errors = exc.errors(include_url=False)
+                    if errors and errors[0].get("type") == "json_invalid":
+                        logger.warning(
+                            "{}:{} — malformed JSON, skipping",
+                            events_path,
+                            lineno,
+                        )
+                    else:
+                        logger.warning(
+                            "{}:{} — validation error ({}), skipping",
+                            events_path,
+                            lineno,
+                            exc.error_count(),
+                        )
     except UnicodeDecodeError as exc:
         logger.warning(
             "{} — UTF-8 decode error while reading; returning {} parsed events so far (partial session): {}",
