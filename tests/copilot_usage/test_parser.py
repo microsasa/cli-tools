@@ -35,6 +35,7 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _DISCOVERY_CACHE,
     _EVENTS_CACHE,
     _FIRST_PASS_EVENT_TYPES,
     _MAX_CACHED_EVENTS,
@@ -67,6 +68,7 @@ def _reset_all_caches() -> None:
     """Clear all module-level caches (shared between fixture and tests)."""
     _SESSION_CACHE.clear()
     _EVENTS_CACHE.clear()
+    _DISCOVERY_CACHE.clear()
     _read_config_model.cache_clear()
     _parser_module._config_file_id = None
 
@@ -551,9 +553,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             result = _discover_with_identity(tmp_path)
 
         assert len(result) == n_total
-        # Exactly n_total calls for events.jsonl + n_with_plan for existing
-        # plan.md.  No calls for the 90 absent plan.md files.
-        assert spy.call_count == n_total + n_with_plan
+        # 1 call for root directory + n_total calls for events.jsonl
+        # + n_with_plan for existing plan.md.
+        # No calls for the 90 absent plan.md files.
+        assert spy.call_count == 1 + n_total + n_with_plan
 
     def test_plan_id_populated_when_present(self, tmp_path: Path) -> None:
         """plan_id is non-None only for sessions that have plan.md on disk."""
@@ -583,8 +586,8 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         assert len(result) == 1
         assert result[0][2] is None  # plan_id is None
-        # Only 1 call for events.jsonl, zero for plan.md
-        assert spy.call_count == 1
+        # 1 call for root directory + 1 call for events.jsonl, zero for plan.md
+        assert spy.call_count == 1 + 1
 
     def test_scandir_root_oserror_returns_empty(self, tmp_path: Path) -> None:
         """Return [] when os.scandir on the root directory raises OSError."""
@@ -692,6 +695,124 @@ class TestDiscoverWithIdentityLinearScan:
 
         assert len(result) == 1
         assert result[0][0].parent.name == "sess-good"
+
+
+# ---------------------------------------------------------------------------
+# _discover_with_identity — discovery cache (issue #809)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverWithIdentityCache:
+    """Root-directory identity caching skips inner os.scandir on repeat calls."""
+
+    def test_second_call_skips_inner_scandir(self, tmp_path: Path) -> None:
+        """When root mtime is unchanged, inner os.scandir calls are skipped.
+
+        Creates 10 session subdirectories.  The first call to
+        ``_discover_with_identity`` populates the discovery cache.  The
+        second call — with an unchanged root directory — must issue at
+        most one ``os.scandir`` call (for the root) and zero inner
+        per-session scandir calls.
+        """
+        k = 10
+        for i in range(k):
+            _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
+
+        # First call — full discovery.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == k
+
+        original_scandir = os.scandir
+        scandir_calls: list[str] = []
+
+        def _tracking_scandir(
+            path: str | os.PathLike[str],
+        ) -> Iterator[os.DirEntry[str]]:
+            scandir_calls.append(str(path))
+            return original_scandir(path)
+
+        # Second call — root unchanged, cache should be used.
+        with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
+            result2 = _discover_with_identity(tmp_path)
+
+        assert len(result2) == k
+        # No os.scandir calls at all — the cached entries list is reused.
+        assert len(scandir_calls) == 0
+
+    def test_changed_events_detected_despite_cached_discovery(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Mutating events.jsonl is detected even when inner scandir is cached.
+
+        After a cached second call, changing a session's events.jsonl
+        must still produce a different ``events_file_id`` because the
+        per-file ``stat`` call is always issued.
+        """
+        k = 5
+        for i in range(k):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == k
+        ids1 = {p.parent.name: eid for p, eid, _ in result1}
+
+        # Mutate one session's events.jsonl to change its file identity.
+        target = tmp_path / "sess-2" / "events.jsonl"
+        target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+        result2 = _discover_with_identity(tmp_path)
+        ids2 = {p.parent.name: eid for p, eid, _ in result2}
+
+        assert len(result2) == k
+        # The mutated session's identity must differ.
+        assert ids2["sess-2"] != ids1["sess-2"]
+        # Other sessions' identities remain unchanged.
+        for name in ("sess-0", "sess-1", "sess-3", "sess-4"):
+            assert ids2[name] == ids1[name]
+
+    def test_new_session_triggers_rescan(self, tmp_path: Path) -> None:
+        """Adding a session directory changes root mtime and triggers rescan."""
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        # Add a new session — this changes the root directory mtime.
+        _write_events(tmp_path / "sess-new" / "events.jsonl", _START_EVENT)
+
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 4
+        names = {p.parent.name for p, _, _ in result2}
+        assert "sess-new" in names
+
+    def test_cache_invalidated_when_root_changes(self, tmp_path: Path) -> None:
+        """Full rescan issues inner os.scandir calls when root mtime changes."""
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        # First call populates cache.
+        _discover_with_identity(tmp_path)
+
+        # Add a new session to change root mtime.
+        _write_events(tmp_path / "sess-new" / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+        scandir_calls: list[str] = []
+
+        def _tracking_scandir(
+            path: str | os.PathLike[str],
+        ) -> Iterator[os.DirEntry[str]]:
+            scandir_calls.append(str(path))
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
+            result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 4
+        # Full rescan: root + inner per-session calls.
+        assert len(scandir_calls) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -5479,11 +5600,12 @@ class TestSessionCacheMtime:
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # safe_file_identity called once for _CONFIG_PATH and once by
+            # safe_file_identity called once for _CONFIG_PATH, once for the
+            # root directory (discovery cache check), and once by
             # _discover_with_identity for events.jsonl.  plan.md does not
             # exist so its absence is detected via os.scandir dir listing
             # — no stat call is issued.
-            assert spy.call_count == 2
+            assert spy.call_count == 3
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""
@@ -5638,9 +5760,10 @@ class TestSessionCacheMtime:
         ) as spy:
             results = get_all_sessions(tmp_path)
             assert len(results) == n
-            # 1 for _CONFIG_PATH + 1 per session from _discover_with_identity
+            # 1 for _CONFIG_PATH + 1 for root directory (discovery cache) +
+            # 1 per session from _discover_with_identity
             # (events.jsonl only — plan.md absent, detected by scandir).
-            assert spy.call_count == 1 + n
+            assert spy.call_count == 2 + n
 
     def test_stale_cache_entries_evicted_on_session_delete(
         self, tmp_path: Path

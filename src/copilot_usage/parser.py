@@ -42,6 +42,28 @@ _DEFAULT_BASE: Final[Path] = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Final[Path] = Path.home() / ".copilot" / "config.json"
 
 
+@dataclasses.dataclass(slots=True)
+class _DiscoveryCache:
+    """Cached directory listing for a session-state root.
+
+    Stores the ``(st_mtime_ns, st_size)`` identity of the root directory
+    at the time of the last full ``os.scandir`` sweep together with the
+    ``(events_path, plan_path | None)`` pairs found.  When the root
+    identity is unchanged on the next call, the inner per-session
+    ``os.scandir`` calls are skipped entirely — only per-file ``stat``
+    calls are issued to detect content changes.
+    """
+
+    root_id: tuple[int, int] | None
+    entries: list[tuple[Path, Path | None]]  # (events_path, plan_path)
+
+
+# Module-level discovery cache: root_path → _DiscoveryCache.
+# Avoids redundant inner os.scandir calls when the root directory
+# has not changed (no sessions added or removed).
+_DISCOVERY_CACHE: dict[Path, _DiscoveryCache] = {}
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CachedSession:
     """Cache entry pairing file identities with a built summary.
@@ -211,6 +233,51 @@ def _safe_int_tokens(raw: object) -> int | None:
     return None
 
 
+def _full_scandir_discovery(
+    root: Path,
+    *,
+    include_plan: bool,
+) -> list[tuple[Path, Path | None]]:
+    """Perform a full ``os.scandir`` sweep of *root* and its session subdirs.
+
+    Returns ``(events_path, plan_path | None)`` pairs — one per session
+    directory that contains an ``events.jsonl`` file.  Uses a two-variable
+    linear scan per subdirectory with early exit once both target files are
+    found.
+    """
+    entries: list[tuple[Path, Path | None]] = []
+    with os.scandir(root) as session_entries:
+        for session_entry in session_entries:
+            try:
+                is_session_dir = session_entry.is_dir(follow_symlinks=False)
+            except OSError:
+                is_session_dir = False
+            if not is_session_dir:
+                continue
+            events_entry: os.DirEntry[str] | None = None
+            plan_entry: os.DirEntry[str] | None = None
+            try:
+                with os.scandir(session_entry.path) as dir_entries:
+                    for e in dir_entries:
+                        name = e.name
+                        if name == "events.jsonl":
+                            events_entry = e
+                            if not include_plan or plan_entry is not None:
+                                break
+                        elif include_plan and name == "plan.md":
+                            plan_entry = e
+                            if events_entry is not None:
+                                break
+            except OSError:
+                continue
+            if events_entry is None:
+                continue
+            events_path = Path(events_entry.path)
+            plan_path = Path(plan_entry.path) if plan_entry is not None else None
+            entries.append((events_path, plan_path))
+    return entries
+
+
 def _discover_with_identity(
     base_path: Path | None = None,
     *,
@@ -221,10 +288,14 @@ def _discover_with_identity(
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
     by *events_file_id* (mtime descending, then size as tie-breaker).
 
-    Uses :func:`os.scandir` to enumerate session directories in a single
-    pass.  A two-variable linear scan checks for ``events.jsonl`` and
-    ``plan.md`` with early exit once both are found — no intermediate
-    ``dict`` is allocated per directory.
+    Session directories are append-only (created once, never renamed or
+    removed).  A module-level ``_DISCOVERY_CACHE`` stores the root
+    directory's ``(st_mtime_ns, st_size)`` identity alongside the
+    discovered ``(events_path, plan_path)`` pairs.  When the root
+    identity is unchanged, inner per-session ``os.scandir`` calls are
+    skipped entirely — only per-file ``stat`` calls are issued.  When
+    the root identity has changed (new session created), a full rescan
+    is performed.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
     its file identity is computed via :func:`safe_file_identity`.  When
@@ -236,43 +307,27 @@ def _discover_with_identity(
     root = base_path or _DEFAULT_BASE
     if not root.is_dir():
         return []
+
+    root_id = safe_file_identity(root)
+    cached = _DISCOVERY_CACHE.get(root)
+
+    if cached is not None and cached.root_id is not None and cached.root_id == root_id:
+        entries = cached.entries
+    else:
+        try:
+            entries = _full_scandir_discovery(root, include_plan=include_plan)
+        except OSError:
+            return []
+        _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
+
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
-    try:
-        with os.scandir(root) as session_entries:
-            for session_entry in session_entries:
-                try:
-                    is_session_dir = session_entry.is_dir(follow_symlinks=False)
-                except OSError:
-                    is_session_dir = False
-                if not is_session_dir:
-                    continue
-                events_entry: os.DirEntry[str] | None = None
-                plan_entry: os.DirEntry[str] | None = None
-                try:
-                    with os.scandir(session_entry.path) as dir_entries:
-                        for e in dir_entries:
-                            name = e.name
-                            if name == "events.jsonl":
-                                events_entry = e
-                                if not include_plan or plan_entry is not None:
-                                    break
-                            elif include_plan and name == "plan.md":
-                                plan_entry = e
-                                if events_entry is not None:
-                                    break
-                except OSError:
-                    continue
-                if events_entry is None:
-                    continue
-                events_path = Path(events_entry.path)
-                events_id = safe_file_identity(events_path)
-                if include_plan and plan_entry is not None:
-                    plan_id = safe_file_identity(Path(plan_entry.path))
-                else:
-                    plan_id = None
-                result.append((events_path, events_id, plan_id))
-    except OSError:
-        return []
+    for events_path, plan_path in entries:
+        events_id = safe_file_identity(events_path)
+        if include_plan and plan_path is not None:
+            plan_id = safe_file_identity(plan_path)
+        else:
+            plan_id = None
+        result.append((events_path, events_id, plan_id))
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
