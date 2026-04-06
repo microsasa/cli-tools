@@ -1718,5 +1718,5 @@ class TestPerFileSummaryCacheLRUEviction:
         assert log_files[-1] in _PER_FILE_SUMMARY_CACHE, (
             "newest entry should be present in _PER_FILE_SUMMARY_CACHE"
         )
-        # Cache size must not exceed the limit.
-        assert len(_PER_FILE_SUMMARY_CACHE) <= limit
+        # Cache size must match the configured limit after one eviction.
+        assert len(_PER_FILE_SUMMARY_CACHE) == limit
