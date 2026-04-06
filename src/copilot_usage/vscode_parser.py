@@ -177,6 +177,24 @@ class _CachedVSCodeLog:
 _VSCODE_LOG_CACHE: OrderedDict[Path, _CachedVSCodeLog] = OrderedDict()
 
 
+# ---------------------------------------------------------------------------
+# Module-level summary cache: avoids O(total_requests) re-aggregation when
+# no log file has changed.  Keyed by a frozenset of (path, file_id) tuples
+# representing all discovered log files.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedVSCodeSummary:
+    """Cache entry pairing a snapshot of file identities with the summary."""
+
+    file_ids: frozenset[tuple[Path, tuple[int, int] | None]]
+    summary: VSCodeLogSummary
+
+
+_VSCODE_SUMMARY_CACHE: _CachedVSCodeSummary | None = None
+
+
 def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
     """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
 
@@ -303,9 +321,24 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
-    are not re-parsed on repeated invocations.
+    are not re-parsed on repeated invocations.  A module-level summary
+    cache (:data:`_VSCODE_SUMMARY_CACHE`) avoids re-aggregating all
+    requests when no log file has changed, reducing per-call cost from
+    **O(total_requests)** to **O(num_files)** on a warm cache.
     """
+    global _VSCODE_SUMMARY_CACHE  # noqa: PLW0603
+
     logs = discover_vscode_logs(base_path)
+    current_ids: frozenset[tuple[Path, tuple[int, int] | None]] = frozenset(
+        (p, safe_file_identity(p)) for p in logs
+    )
+
+    if (
+        _VSCODE_SUMMARY_CACHE is not None
+        and _VSCODE_SUMMARY_CACHE.file_ids == current_ids
+    ):
+        return _VSCODE_SUMMARY_CACHE.summary
+
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path in logs:
         try:
@@ -315,4 +348,9 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
             continue
         _update_vscode_summary(acc, result)
         acc.log_files_parsed += 1
-    return _finalize_summary(acc)
+    summary = _finalize_summary(acc)
+
+    _VSCODE_SUMMARY_CACHE = _CachedVSCodeSummary(  # pyright: ignore[reportConstantRedefinition]
+        file_ids=current_ids, summary=summary
+    )
+    return summary

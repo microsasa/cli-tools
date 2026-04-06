@@ -51,8 +51,11 @@ _LOG_NOISE = (
 
 @pytest.fixture(autouse=True)
 def _clear_vscode_log_cache() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Ensure every test starts with an empty VS Code log cache."""
+    """Ensure every test starts with empty VS Code caches."""
     _VSCODE_LOG_CACHE.clear()
+    import copilot_usage.vscode_parser as _mod
+
+    _mod._VSCODE_SUMMARY_CACHE = None  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1348,3 +1351,98 @@ class TestVscodeLogCache:
             assert spy.call_count == 1
         assert s1.total_requests == 1
         assert s2.total_requests == 1
+
+
+# ---------------------------------------------------------------------------
+# _VSCODE_SUMMARY_CACHE – summary-level caching
+# ---------------------------------------------------------------------------
+
+
+class TestVscodeSummaryCacheSkipsReaggregation:
+    """Verify that get_vscode_summary() skips _update_vscode_summary on a warm cache.
+
+    Uses monkeypatching to count calls to _update_vscode_summary, matching
+    the project's deterministic perf-test convention (no wall-clock timing).
+    """
+
+    def test_second_call_skips_update(self, tmp_path: Path) -> None:
+        """_update_vscode_summary is not called on the second invocation."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+
+        # Write 500 synthetic request lines.
+        lines = [_make_log_line(req_idx=i) for i in range(500)]
+        log_file.write_text("\n".join(lines))
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s1 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # called once during first aggregation
+
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # NOT called again — cached summary returned
+
+        assert s1.total_requests == 500
+        assert s2.total_requests == 500
+
+    def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
+        """Changing a log file invalidates the summary cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+
+        # Mutate the file — summary cache should be invalidated.
+        log_file.write_text(
+            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
+        )
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # re-aggregated because file changed
+
+        assert s2.total_requests == 2
+
+    def test_cache_invalidated_on_new_file(self, tmp_path: Path) -> None:
+        """Adding a new log file invalidates the summary cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+        assert s1.log_files_found == 1
+
+        # Add a second log directory with a new log file.
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+        log_file2.write_text(_make_log_line(req_idx=10))
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 2  # re-aggregated both files
+
+        assert s2.total_requests == 2
+        assert s2.log_files_found == 2
