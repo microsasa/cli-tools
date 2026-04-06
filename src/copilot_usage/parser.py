@@ -42,6 +42,39 @@ _DEFAULT_BASE: Final[Path] = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Final[Path] = Path.home() / ".copilot" / "config.json"
 
 
+@dataclasses.dataclass(slots=True)
+class _DiscoveryCache:
+    """Cached directory listing for a session-state root.
+
+    Stores the ``(st_mtime_ns, st_size)`` identity of the root directory
+    at the time of the last full ``os.scandir`` sweep together with the
+    ``(events_path, plan_path | None)`` pairs found.  When the root
+    identity is unchanged on the next call, the inner per-session
+    ``os.scandir`` calls are skipped entirely — only per-file ``stat``
+    calls are issued to detect content changes.
+
+    *probe_cursor* tracks where the next ``plan.md`` probe sweep should
+    start so that every session is eventually probed across multiple
+    cache-hit calls rather than always probing the first
+    ``_MAX_PLAN_PROBES`` entries.
+    """
+
+    root_id: tuple[int, int] | None
+    entries: list[tuple[Path, Path | None]]  # (events_path, plan_path)
+    probe_cursor: int = 0
+
+
+# Module-level discovery cache: root_path → _DiscoveryCache.
+# Avoids redundant inner os.scandir calls when the root directory
+# has not changed (no sessions added or removed).
+_DISCOVERY_CACHE: dict[Path, _DiscoveryCache] = {}
+
+# On cache hits, probe at most this many sessions without a cached
+# plan.md for a newly-created file.  The probe window rotates via
+# _DiscoveryCache.probe_cursor so every session is eventually checked.
+_MAX_PLAN_PROBES: Final[int] = 5
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CachedSession:
     """Cache entry pairing file identities with a built summary.
@@ -211,6 +244,51 @@ def _safe_int_tokens(raw: object) -> int | None:
     return None
 
 
+def _full_scandir_discovery(
+    root: Path,
+    *,
+    include_plan: bool,
+) -> list[tuple[Path, Path | None]]:
+    """Perform a full ``os.scandir`` sweep of *root* and its session subdirs.
+
+    Returns ``(events_path, plan_path | None)`` pairs — one per session
+    directory that contains an ``events.jsonl`` file.  Uses a two-variable
+    linear scan per subdirectory with early exit once both target files are
+    found.
+    """
+    entries: list[tuple[Path, Path | None]] = []
+    with os.scandir(root) as session_entries:
+        for session_entry in session_entries:
+            try:
+                is_session_dir = session_entry.is_dir(follow_symlinks=False)
+            except OSError:
+                is_session_dir = False
+            if not is_session_dir:
+                continue
+            events_entry: os.DirEntry[str] | None = None
+            plan_entry: os.DirEntry[str] | None = None
+            try:
+                with os.scandir(session_entry.path) as dir_entries:
+                    for e in dir_entries:
+                        name = e.name
+                        if name == "events.jsonl":
+                            events_entry = e
+                            if not include_plan or plan_entry is not None:
+                                break
+                        elif include_plan and name == "plan.md":
+                            plan_entry = e
+                            if events_entry is not None:
+                                break
+            except OSError:
+                continue
+            if events_entry is None:
+                continue
+            events_path = Path(events_entry.path)
+            plan_path = Path(plan_entry.path) if plan_entry is not None else None
+            entries.append((events_path, plan_path))
+    return entries
+
+
 def _discover_with_identity(
     base_path: Path | None = None,
     *,
@@ -221,58 +299,121 @@ def _discover_with_identity(
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
     by *events_file_id* (mtime descending, then size as tie-breaker).
 
-    Uses :func:`os.scandir` to enumerate session directories in a single
-    pass.  A two-variable linear scan checks for ``events.jsonl`` and
-    ``plan.md`` with early exit once both are found — no intermediate
-    ``dict`` is allocated per directory.
+    Copilot CLI session directories are typically append-only in normal
+    operation: new session directories are created over time and existing
+    ones are not usually modified structurally. A module-level
+    ``_DISCOVERY_CACHE`` stores the root directory's
+    ``(st_mtime_ns, st_size)`` identity alongside the discovered
+    ``(events_path, plan_path)`` pairs. When the root identity is
+    unchanged, inner per-session ``os.scandir`` calls are skipped entirely
+    — only per-file ``stat`` calls are issued. When the root identity has
+    changed (for example, because a session was added, removed, or
+    otherwise changed on disk), a full rescan is performed.
+
+    If a cached ``events.jsonl`` is definitively deleted
+    (``FileNotFoundError``), the entry is excluded from the result and
+    pruned from the cache.  Transient errors (e.g. ``PermissionError``)
+    also exclude the entry from the current result but leave it in the
+    cache so it can reappear once readable again.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
-    its file identity is computed via :func:`safe_file_identity`.  When
-    ``plan.md`` is absent, the ``plan_file_id`` element is ``None`` with
-    zero overhead.  When *include_plan* is ``False``, the ``plan_file_id``
-    element is always ``None`` — useful for callers that only need event
-    ordering.
+    its file identity is computed via :func:`safe_file_identity`.  If a
+    previously-present ``plan.md`` becomes unreadable, the cached path is
+    cleared to avoid repeated failing syscalls.  On cache hits, up to
+    ``_MAX_PLAN_PROBES`` entries with no cached ``plan.md`` are probed
+    for a newly-created file so that session names appear without a full
+    rescan; the probe window rotates via a per-root cursor stored in
+    ``_DiscoveryCache.probe_cursor`` so every session is eventually
+    checked across successive cache-hit calls.
+    When *include_plan* is ``False``, the ``plan_file_id`` element is
+    always ``None`` — useful for callers that only need event ordering.
     """
     root = base_path or _DEFAULT_BASE
-    if not root.is_dir():
+
+    root_id = safe_file_identity(root)
+    if root_id is None:
         return []
+    cached = _DISCOVERY_CACHE.get(root)
+
+    if cached is not None and cached.root_id is not None and cached.root_id == root_id:
+        entries = cached.entries
+        is_cache_hit = True
+    else:
+        try:
+            entries = _full_scandir_discovery(root, include_plan=True)
+        except OSError:
+            return []
+        _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
+        is_cache_hit = False
+
+    # On cache hits, select which entries to probe for newly-created
+    # plan.md, rotating from the stored cursor so every session is
+    # eventually checked across successive cache-hit calls.
+    probe_indices: frozenset[int] = frozenset()
+    current_cache = _DISCOVERY_CACHE.get(root)
+    if is_cache_hit and include_plan and current_cache is not None:
+        n = len(entries)
+        if n > 0:
+            cursor = current_cache.probe_cursor % n
+            selected: list[int] = []
+            for offset in range(n):
+                i = (cursor + offset) % n
+                if entries[i][1] is None:
+                    selected.append(i)
+                    if len(selected) >= _MAX_PLAN_PROBES:
+                        current_cache.probe_cursor = (i + 1) % n
+                        break
+            else:
+                # All entries scanned; wrap cursor to start.
+                current_cache.probe_cursor = 0
+            probe_indices = frozenset(selected)
+
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
-    try:
-        with os.scandir(root) as session_entries:
-            for session_entry in session_entries:
-                try:
-                    is_session_dir = session_entry.is_dir(follow_symlinks=False)
-                except OSError:
-                    is_session_dir = False
-                if not is_session_dir:
-                    continue
-                events_entry: os.DirEntry[str] | None = None
-                plan_entry: os.DirEntry[str] | None = None
-                try:
-                    with os.scandir(session_entry.path) as dir_entries:
-                        for e in dir_entries:
-                            name = e.name
-                            if name == "events.jsonl":
-                                events_entry = e
-                                if not include_plan or plan_entry is not None:
-                                    break
-                            elif include_plan and name == "plan.md":
-                                plan_entry = e
-                                if events_entry is not None:
-                                    break
-                except OSError:
-                    continue
-                if events_entry is None:
-                    continue
-                events_path = Path(events_entry.path)
-                events_id = safe_file_identity(events_path)
-                if include_plan and plan_entry is not None:
-                    plan_id = safe_file_identity(Path(plan_entry.path))
-                else:
-                    plan_id = None
-                result.append((events_path, events_id, plan_id))
-    except OSError:
-        return []
+    definitively_gone: list[Path] = []
+    for idx, (events_path, plan_path) in enumerate(entries):
+        # Distinguish permanent deletion from transient errors so only
+        # truly-gone files are pruned from the cache.
+        try:
+            st = events_path.stat()
+            events_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
+        except FileNotFoundError:
+            definitively_gone.append(events_path)
+            continue
+        except OSError:
+            # Transient error (e.g. PermissionError) — skip from result
+            # but keep in cache so the entry reappears once readable.
+            continue
+
+        plan_id: tuple[int, int] | None = None
+        if include_plan:
+            if plan_path is not None:
+                plan_id = safe_file_identity(plan_path)
+                if plan_id is None:
+                    # Plan deleted or unreadable — clear cached path to
+                    # avoid repeated failing syscalls on cache hits.
+                    entries[idx] = (events_path, None)
+            elif idx in probe_indices:
+                # Probe for newly-created plan.md not yet in cache.
+                # Bounded to _MAX_PLAN_PROBES per call; cursor rotates
+                # so every session is eventually checked.
+                candidate = events_path.parent / "plan.md"
+                plan_id = safe_file_identity(candidate)
+                if plan_id is not None:
+                    entries[idx] = (events_path, candidate)
+
+        result.append((events_path, events_id, plan_id))
+
+    # Prune only definitively-deleted entries (FileNotFoundError) from
+    # the cache.  Entries that failed with a transient OSError are kept
+    # so they can reappear once readable again.
+    if definitively_gone:
+        gone_set = frozenset(definitively_gone)
+        current = _DISCOVERY_CACHE.get(root)
+        if current is not None:
+            current.entries = [
+                (ep, pp) for ep, pp in current.entries if ep not in gone_set
+            ]
+
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
 
@@ -285,8 +426,10 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     Returns list of paths to ``events.jsonl`` files, sorted by file
     identity (newest first).
 
-    Tolerates directories deleted between the glob and the stat call
-    (TOCTOU race) by returning a zero identity for vanished paths.
+    Sessions whose ``events.jsonl`` has been deleted since the last
+    directory scan are silently skipped and pruned from the discovery
+    cache; transiently unreadable sessions are skipped but retained in
+    the cache.
     """
     return [
         p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)

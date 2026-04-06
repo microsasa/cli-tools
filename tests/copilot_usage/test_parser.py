@@ -35,10 +35,12 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _DISCOVERY_CACHE,
     _EVENTS_CACHE,
     _FIRST_PASS_EVENT_TYPES,
     _MAX_CACHED_EVENTS,
     _MAX_CACHED_SESSIONS,
+    _MAX_PLAN_PROBES,
     _SESSION_CACHE,
     _build_active_summary,
     _build_completed_summary,
@@ -67,6 +69,7 @@ def _reset_all_caches() -> None:
     """Clear all module-level caches (shared between fixture and tests)."""
     _SESSION_CACHE.clear()
     _EVENTS_CACHE.clear()
+    _DISCOVERY_CACHE.clear()
     _read_config_model.cache_clear()
     _parser_module._config_file_id = None
 
@@ -447,13 +450,11 @@ class TestDiscoverSessions:
         with patch.object(Path, "stat", _flaky_stat):
             result = discover_sessions(tmp_path)
 
-        # s2 still returned; s1 may also be present (with mtime 0)
-        assert any(p == s2 for p in result)
-        # The call must not raise
-        assert isinstance(result, list)
+        # s1 is excluded (FileNotFoundError → pruned); s2 still returned.
+        assert result == [s2]
 
     def test_stat_race_permission_error(self, tmp_path: Path) -> None:
-        """discover_sessions should not crash when stat() raises PermissionError."""
+        """discover_sessions skips sessions whose events.jsonl is unreadable."""
         s1 = tmp_path / "sess-a" / "events.jsonl"
         _write_events(s1, _START_EVENT)
 
@@ -467,8 +468,8 @@ class TestDiscoverSessions:
         with patch.object(Path, "stat", _flaky_stat):
             result = discover_sessions(tmp_path)
 
-        # Should return the path (with mtime=0), not crash
-        assert result == [s1]
+        # Session with unreadable events.jsonl is skipped, not crashed
+        assert result == []
 
     def test_get_all_sessions_skips_vanished_session(self, tmp_path: Path) -> None:
         """TOCTOU: events.jsonl deleted after discover but before parse."""
@@ -531,8 +532,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         Creates 100 sessions where only 10 have plan.md.  Patches
         ``safe_file_identity`` to count calls and asserts that the call
-        count equals exactly 100 (events.jsonl) + 10 (existing plan.md),
-        with zero calls for the 90 absent plan.md files.
+        count equals exactly 1 (root directory) + 10 (existing plan.md).
+        ``events.jsonl`` uses direct ``Path.stat()`` rather than
+        ``safe_file_identity``, and absent plan.md files are not probed
+        on fresh discovery.
         """
         n_total = 100
         n_with_plan = 10
@@ -551,9 +554,10 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             result = _discover_with_identity(tmp_path)
 
         assert len(result) == n_total
-        # Exactly n_total calls for events.jsonl + n_with_plan for existing
-        # plan.md.  No calls for the 90 absent plan.md files.
-        assert spy.call_count == n_total + n_with_plan
+        # 1 call for root directory + n_with_plan for existing plan.md.
+        # events.jsonl uses direct stat() rather than safe_file_identity,
+        # and absent plan.md files are not probed on fresh discovery.
+        assert spy.call_count == 1 + n_with_plan
 
     def test_plan_id_populated_when_present(self, tmp_path: Path) -> None:
         """plan_id is non-None only for sessions that have plan.md on disk."""
@@ -583,7 +587,8 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         assert len(result) == 1
         assert result[0][2] is None  # plan_id is None
-        # Only 1 call for events.jsonl, zero for plan.md
+        # 1 call for root directory only; events.jsonl uses direct stat()
+        # and include_plan=False skips all plan.md stat calls.
         assert spy.call_count == 1
 
     def test_scandir_root_oserror_returns_empty(self, tmp_path: Path) -> None:
@@ -692,6 +697,339 @@ class TestDiscoverWithIdentityLinearScan:
 
         assert len(result) == 1
         assert result[0][0].parent.name == "sess-good"
+
+
+# ---------------------------------------------------------------------------
+# _discover_with_identity — discovery cache (issue #809)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverWithIdentityCache:
+    """Root-directory identity caching skips inner os.scandir on repeat calls."""
+
+    def test_second_call_skips_inner_scandir(self, tmp_path: Path) -> None:
+        """When root mtime is unchanged, cached discovery avoids os.scandir.
+
+        Creates 10 session subdirectories.  The first call to
+        ``_discover_with_identity`` populates the discovery cache.  The
+        second call — with an unchanged root directory — checks root
+        identity via ``stat`` and reuses the cached entries list, so it
+        must issue zero ``os.scandir`` calls, including for the root.
+        """
+        k = 10
+        for i in range(k):
+            _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
+
+        # First call — full discovery.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == k
+
+        original_scandir = os.scandir
+        scandir_calls: list[str] = []
+
+        def _tracking_scandir(
+            path: str | os.PathLike[str],
+        ) -> Iterator[os.DirEntry[str]]:
+            scandir_calls.append(str(path))
+            return original_scandir(path)
+
+        # Second call — root unchanged, cache should be used.
+        with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
+            result2 = _discover_with_identity(tmp_path)
+
+        assert len(result2) == k
+        # No os.scandir calls at all — the cached entries list is reused.
+        assert len(scandir_calls) == 0
+
+    def test_changed_events_detected_despite_cached_discovery(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Mutating events.jsonl is detected even when inner scandir is cached.
+
+        After a cached second call, changing a session's events.jsonl
+        must still produce a different ``events_file_id`` because the
+        per-file ``stat`` call is always issued.
+        """
+        k = 5
+        for i in range(k):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == k
+        ids1 = {p.parent.name: eid for p, eid, _ in result1}
+
+        # Mutate one session's events.jsonl to change its file identity.
+        target = tmp_path / "sess-2" / "events.jsonl"
+        target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+        result2 = _discover_with_identity(tmp_path)
+        ids2 = {p.parent.name: eid for p, eid, _ in result2}
+
+        assert len(result2) == k
+        # The mutated session's identity must differ.
+        assert ids2["sess-2"] != ids1["sess-2"]
+        # Other sessions' identities remain unchanged.
+        for name in ("sess-0", "sess-1", "sess-3", "sess-4"):
+            assert ids2[name] == ids1[name]
+
+    def test_new_session_triggers_rescan(self, tmp_path: Path) -> None:
+        """Adding a session directory changes root mtime and triggers rescan."""
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        # Add a new session — this changes the root directory mtime.
+        _write_events(tmp_path / "sess-new" / "events.jsonl", _START_EVENT)
+
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 4
+        names = {p.parent.name for p, _, _ in result2}
+        assert "sess-new" in names
+
+    def test_cache_invalidated_when_root_changes(self, tmp_path: Path) -> None:
+        """Full rescan issues inner os.scandir calls when root mtime changes."""
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        # First call populates cache.
+        _discover_with_identity(tmp_path)
+
+        # Add a new session to change root mtime.
+        _write_events(tmp_path / "sess-new" / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+        scandir_calls: list[str] = []
+
+        def _tracking_scandir(
+            path: str | os.PathLike[str],
+        ) -> Iterator[os.DirEntry[str]]:
+            scandir_calls.append(str(path))
+            return original_scandir(path)
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
+            result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 4
+        # Full rescan: root + inner per-session calls.
+        assert len(scandir_calls) >= 2
+
+    def test_include_plan_false_then_true_returns_plan_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cache populated via include_plan=False still has plan paths.
+
+        The discovery cache always stores plan paths unconditionally.
+        A call with ``include_plan=False`` followed by ``include_plan=True``
+        must return non-None ``plan_id`` for sessions that have ``plan.md``.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        # First call with include_plan=False — populates cache.
+        result1 = _discover_with_identity(tmp_path, include_plan=False)
+        assert len(result1) == 1
+        assert result1[0][2] is None  # plan_id omitted when include_plan=False
+
+        # Second call with include_plan=True — must use cached entries
+        # but still produce a valid plan_id.
+        result2 = _discover_with_identity(tmp_path, include_plan=True)
+        assert len(result2) == 1
+        assert result2[0][2] is not None  # plan_id must be present
+
+    def test_deleted_events_jsonl_skipped_and_pruned_from_cache(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Definitively-deleted events.jsonl is pruned from the cache.
+
+        When ``events.jsonl`` is deleted (``FileNotFoundError``) from a
+        session directory *without* changing the root directory mtime,
+        the entry must be excluded from the result and pruned from the
+        cached entries list so subsequent calls do not re-stat the
+        missing file.
+        """
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        # Populate discovery cache.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        # Delete one session's events.jsonl without changing root mtime.
+        target = tmp_path / "sess-1" / "events.jsonl"
+        target.unlink()
+
+        result2 = _discover_with_identity(tmp_path)
+        names2 = {p.parent.name for p, _, _ in result2}
+        assert len(result2) == 2
+        assert "sess-1" not in names2
+
+        # The stale entry must be pruned from the cache so a third call
+        # also returns only 2 sessions (no repeated stat warnings).
+        result3 = _discover_with_identity(tmp_path)
+        assert len(result3) == 2
+        assert _DISCOVERY_CACHE[tmp_path] is not None
+        cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
+        assert target not in cached_paths
+
+    def test_transient_permission_error_preserves_cache_entry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Transient PermissionError on events.jsonl keeps entry in cache.
+
+        When ``events.jsonl`` raises a non-``FileNotFoundError`` OSError
+        (e.g. ``PermissionError``), the entry is excluded from the
+        current result but *not* pruned from the cache — so the session
+        reappears once the file becomes readable again.
+        """
+        for i in range(3):
+            _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 3
+
+        target = tmp_path / "sess-1" / "events.jsonl"
+        original_stat = Path.stat
+
+        def _permission_bomb(self: Path) -> os.stat_result:
+            if self == target:
+                raise PermissionError("transient")
+            return original_stat(self)
+
+        # Simulate transient PermissionError on one session.
+        with patch.object(Path, "stat", _permission_bomb):
+            result2 = _discover_with_identity(tmp_path)
+
+        assert len(result2) == 2
+        names2 = {p.parent.name for p, _, _ in result2}
+        assert "sess-1" not in names2
+
+        # Entry must still be in the cache.
+        cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
+        assert target in cached_paths
+
+        # Once readable again, the session reappears.
+        result3 = _discover_with_identity(tmp_path)
+        assert len(result3) == 3
+
+    def test_deleted_plan_clears_cached_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Deleted plan.md clears cached plan_path to avoid repeated stats.
+
+        When a previously-present ``plan.md`` becomes unreadable, the
+        cached ``plan_path`` is set to ``None`` so subsequent calls
+        do not repeatedly stat a missing file.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 1
+        assert result1[0][2] is not None  # plan_id present
+
+        # Delete plan.md without changing root mtime.
+        plan.unlink()
+
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 1
+        assert result2[0][2] is None  # plan_id gone
+
+        # Cached plan_path must be cleared to None.
+        cached_entries = _DISCOVERY_CACHE[tmp_path].entries
+        assert cached_entries[0][1] is None
+
+    def test_plan_md_created_after_cache_detected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Newly-created plan.md is detected on cache hit.
+
+        When ``plan.md`` is created after the discovery cache is
+        populated (without changing root mtime), the next call with
+        ``include_plan=True`` must detect it and return a non-None
+        ``plan_id``.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md exists.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == 1
+        assert result1[0][2] is None  # no plan_id
+
+        # Create plan.md without changing root mtime.
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        # Cache hit must detect the new plan.md.
+        result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == 1
+        assert result2[0][2] is not None  # plan_id detected
+
+        # Cached entry must now include the plan path.
+        cached_entries = _DISCOVERY_CACHE[tmp_path].entries
+        assert cached_entries[0][1] == plan
+
+    def test_plan_probe_rotates_across_cache_hits(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """plan.md created beyond initial probe budget is eventually detected.
+
+        Creates more sessions than ``_MAX_PLAN_PROBES`` without any
+        ``plan.md``.  A ``plan.md`` is then created in a session that
+        sits beyond the first probe window.  After enough cache-hit
+        calls for the rotating cursor to reach the target session, the
+        new ``plan.md`` must be detected.
+        """
+        n = _MAX_PLAN_PROBES * 3
+        for i in range(n):
+            _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md in any session.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == n
+        for _, _, pid in result1:
+            assert pid is None
+
+        # Create plan.md in a session that is beyond the first probe
+        # window.  Which index it lands on depends on entry order, so
+        # target the *last* entry in the cached list to maximise the
+        # distance from any starting cursor.
+        cached = _DISCOVERY_CACHE[tmp_path]
+        last_events_path = cached.entries[-1][0]
+        target_dir = last_events_path.parent
+        plan = target_dir / "plan.md"
+        plan.write_text("# Late Session\n", encoding="utf-8")
+
+        # Call repeatedly — the rotating cursor should eventually reach
+        # the target entry.  ceil(n / _MAX_PLAN_PROBES) calls suffice.
+        max_calls = (n + _MAX_PLAN_PROBES - 1) // _MAX_PLAN_PROBES
+        detected = False
+        for _ in range(max_calls):
+            result = _discover_with_identity(tmp_path)
+            for path, _, pid in result:
+                if path == last_events_path and pid is not None:
+                    detected = True
+                    break
+            if detected:
+                break
+
+        assert detected, (
+            f"plan.md in {target_dir.name} not detected after "
+            f"{max_calls} cache-hit calls"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -5479,10 +5817,11 @@ class TestSessionCacheMtime:
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # safe_file_identity called once for _CONFIG_PATH and once by
-            # _discover_with_identity for events.jsonl.  plan.md does not
-            # exist so its absence is detected via os.scandir dir listing
-            # — no stat call is issued.
+            # safe_file_identity called once for _CONFIG_PATH and once for
+            # the root directory (discovery cache check).  events.jsonl is
+            # stat'd directly (not via safe_file_identity) and plan.md does
+            # not exist so its absence is detected via os.scandir dir
+            # listing — no stat call is issued.
             assert spy.call_count == 2
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
@@ -5638,9 +5977,10 @@ class TestSessionCacheMtime:
         ) as spy:
             results = get_all_sessions(tmp_path)
             assert len(results) == n
-            # 1 for _CONFIG_PATH + 1 per session from _discover_with_identity
+            # 1 for _CONFIG_PATH + 1 for root directory (discovery cache) +
+            # 1 per session from _discover_with_identity
             # (events.jsonl only — plan.md absent, detected by scandir).
-            assert spy.call_count == 1 + n
+            assert spy.call_count == 2 + n
 
     def test_stale_cache_entries_evicted_on_session_delete(
         self, tmp_path: Path
