@@ -40,6 +40,7 @@ from copilot_usage.parser import (
     _FIRST_PASS_EVENT_TYPES,
     _MAX_CACHED_EVENTS,
     _MAX_CACHED_SESSIONS,
+    _MAX_PLAN_PROBES,
     _SESSION_CACHE,
     _build_active_summary,
     _build_completed_summary,
@@ -979,6 +980,56 @@ class TestDiscoverWithIdentityCache:
         # Cached entry must now include the plan path.
         cached_entries = _DISCOVERY_CACHE[tmp_path].entries
         assert cached_entries[0][1] == plan
+
+    def test_plan_probe_rotates_across_cache_hits(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """plan.md created beyond initial probe budget is eventually detected.
+
+        Creates more sessions than ``_MAX_PLAN_PROBES`` without any
+        ``plan.md``.  A ``plan.md`` is then created in a session that
+        sits beyond the first probe window.  After enough cache-hit
+        calls for the rotating cursor to reach the target session, the
+        new ``plan.md`` must be detected.
+        """
+        n = _MAX_PLAN_PROBES * 3
+        for i in range(n):
+            _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md in any session.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == n
+        for _, _, pid in result1:
+            assert pid is None
+
+        # Create plan.md in a session that is beyond the first probe
+        # window.  Which index it lands on depends on entry order, so
+        # target the *last* entry in the cached list to maximise the
+        # distance from any starting cursor.
+        cached = _DISCOVERY_CACHE[tmp_path]
+        last_events_path = cached.entries[-1][0]
+        target_dir = last_events_path.parent
+        plan = target_dir / "plan.md"
+        plan.write_text("# Late Session\n", encoding="utf-8")
+
+        # Call repeatedly — the rotating cursor should eventually reach
+        # the target entry.  ceil(n / _MAX_PLAN_PROBES) calls suffice.
+        max_calls = (n + _MAX_PLAN_PROBES - 1) // _MAX_PLAN_PROBES
+        detected = False
+        for _ in range(max_calls):
+            result = _discover_with_identity(tmp_path)
+            for path, _, pid in result:
+                if path == last_events_path and pid is not None:
+                    detected = True
+                    break
+            if detected:
+                break
+
+        assert detected, (
+            f"plan.md in {target_dir.name} not detected after "
+            f"{max_calls} cache-hit calls"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -52,10 +52,16 @@ class _DiscoveryCache:
     identity is unchanged on the next call, the inner per-session
     ``os.scandir`` calls are skipped entirely — only per-file ``stat``
     calls are issued to detect content changes.
+
+    *probe_cursor* tracks where the next ``plan.md`` probe sweep should
+    start so that every session is eventually probed across multiple
+    cache-hit calls rather than always probing the first
+    ``_MAX_PLAN_PROBES`` entries.
     """
 
     root_id: tuple[int, int] | None
     entries: list[tuple[Path, Path | None]]  # (events_path, plan_path)
+    probe_cursor: int = 0
 
 
 # Module-level discovery cache: root_path → _DiscoveryCache.
@@ -64,8 +70,8 @@ class _DiscoveryCache:
 _DISCOVERY_CACHE: dict[Path, _DiscoveryCache] = {}
 
 # On cache hits, probe at most this many sessions without a cached
-# plan.md for a newly-created file.  This keeps the cache-hit path
-# at O(N + _MAX_PLAN_PROBES) stats instead of O(2N).
+# plan.md for a newly-created file.  The probe window rotates via
+# _DiscoveryCache.probe_cursor so every session is eventually checked.
 _MAX_PLAN_PROBES: Final[int] = 5
 
 
@@ -316,8 +322,9 @@ def _discover_with_identity(
     cleared to avoid repeated failing syscalls.  On cache hits, up to
     ``_MAX_PLAN_PROBES`` entries with no cached ``plan.md`` are probed
     for a newly-created file so that session names appear without a full
-    rescan; remaining entries are left unprobed until the next full
-    rescan to keep the cache-hit path at O(N) stats.
+    rescan; the probe window rotates via a per-root cursor stored in
+    ``_DiscoveryCache.probe_cursor`` so every session is eventually
+    checked across successive cache-hit calls.
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
@@ -339,9 +346,30 @@ def _discover_with_identity(
         _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
         is_cache_hit = False
 
+    # On cache hits, select which entries to probe for newly-created
+    # plan.md, rotating from the stored cursor so every session is
+    # eventually checked across successive cache-hit calls.
+    probe_indices: frozenset[int] = frozenset()
+    current_cache = _DISCOVERY_CACHE.get(root)
+    if is_cache_hit and include_plan and current_cache is not None:
+        n = len(entries)
+        if n > 0:
+            cursor = current_cache.probe_cursor % n
+            selected: list[int] = []
+            for offset in range(n):
+                i = (cursor + offset) % n
+                if entries[i][1] is None:
+                    selected.append(i)
+                    if len(selected) >= _MAX_PLAN_PROBES:
+                        current_cache.probe_cursor = (i + 1) % n
+                        break
+            else:
+                # All entries scanned; wrap cursor to start.
+                current_cache.probe_cursor = 0
+            probe_indices = frozenset(selected)
+
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
     definitively_gone: list[Path] = []
-    plan_probes_remaining = _MAX_PLAN_PROBES if is_cache_hit else 0
     for idx, (events_path, plan_path) in enumerate(entries):
         # Distinguish permanent deletion from transient errors so only
         # truly-gone files are pruned from the cache.
@@ -364,13 +392,12 @@ def _discover_with_identity(
                     # Plan deleted or unreadable — clear cached path to
                     # avoid repeated failing syscalls on cache hits.
                     entries[idx] = (events_path, None)
-            elif plan_probes_remaining > 0:
+            elif idx in probe_indices:
                 # Probe for newly-created plan.md not yet in cache.
-                # Bounded to _MAX_PLAN_PROBES to keep cache-hit path
-                # at O(N) stats instead of O(2N).
+                # Bounded to _MAX_PLAN_PROBES per call; cursor rotates
+                # so every session is eventually checked.
                 candidate = events_path.parent / "plan.md"
                 plan_id = safe_file_identity(candidate)
-                plan_probes_remaining -= 1
                 if plan_id is not None:
                     entries[idx] = (events_path, candidate)
 
