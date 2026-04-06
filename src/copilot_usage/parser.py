@@ -288,14 +288,16 @@ def _discover_with_identity(
     Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
     by *events_file_id* (mtime descending, then size as tie-breaker).
 
-    Session directories are append-only (created once, never renamed or
-    removed).  A module-level ``_DISCOVERY_CACHE`` stores the root
-    directory's ``(st_mtime_ns, st_size)`` identity alongside the
-    discovered ``(events_path, plan_path)`` pairs.  When the root
-    identity is unchanged, inner per-session ``os.scandir`` calls are
-    skipped entirely — only per-file ``stat`` calls are issued.  When
-    the root identity has changed (new session created), a full rescan
-    is performed.
+    Copilot CLI session directories are typically append-only in normal
+    operation: new session directories are created over time and existing
+    ones are not usually modified structurally. A module-level
+    ``_DISCOVERY_CACHE`` stores the root directory's
+    ``(st_mtime_ns, st_size)`` identity alongside the discovered
+    ``(events_path, plan_path)`` pairs. When the root identity is
+    unchanged, inner per-session ``os.scandir`` calls are skipped entirely
+    — only per-file ``stat`` calls are issued. When the root identity has
+    changed (for example, because a session was added, removed, or
+    otherwise changed on disk), a full rescan is performed.
 
     When *include_plan* is ``True`` (default) and ``plan.md`` is present,
     its file identity is computed via :func:`safe_file_identity`.  When
@@ -305,17 +307,17 @@ def _discover_with_identity(
     ordering.
     """
     root = base_path or _DEFAULT_BASE
-    if not root.is_dir():
-        return []
 
     root_id = safe_file_identity(root)
+    if root_id is None:
+        return []
     cached = _DISCOVERY_CACHE.get(root)
 
     if cached is not None and cached.root_id is not None and cached.root_id == root_id:
         entries = cached.entries
     else:
         try:
-            entries = _full_scandir_discovery(root, include_plan=include_plan)
+            entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
             return []
         _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)

@@ -706,13 +706,13 @@ class TestDiscoverWithIdentityCache:
     """Root-directory identity caching skips inner os.scandir on repeat calls."""
 
     def test_second_call_skips_inner_scandir(self, tmp_path: Path) -> None:
-        """When root mtime is unchanged, inner os.scandir calls are skipped.
+        """When root mtime is unchanged, cached discovery avoids os.scandir.
 
         Creates 10 session subdirectories.  The first call to
         ``_discover_with_identity`` populates the discovery cache.  The
-        second call — with an unchanged root directory — must issue at
-        most one ``os.scandir`` call (for the root) and zero inner
-        per-session scandir calls.
+        second call — with an unchanged root directory — checks root
+        identity via ``stat`` and reuses the cached entries list, so it
+        must issue zero ``os.scandir`` calls, including for the root.
         """
         k = 10
         for i in range(k):
@@ -813,6 +813,32 @@ class TestDiscoverWithIdentityCache:
         assert len(result) == 4
         # Full rescan: root + inner per-session calls.
         assert len(scandir_calls) >= 2
+
+    def test_include_plan_false_then_true_returns_plan_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Cache populated via include_plan=False still has plan paths.
+
+        The discovery cache always stores plan paths unconditionally.
+        A call with ``include_plan=False`` followed by ``include_plan=True``
+        must return non-None ``plan_id`` for sessions that have ``plan.md``.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+        plan = sess / "plan.md"
+        plan.write_text("# My Session\n", encoding="utf-8")
+
+        # First call with include_plan=False — populates cache.
+        result1 = _discover_with_identity(tmp_path, include_plan=False)
+        assert len(result1) == 1
+        assert result1[0][2] is None  # plan_id omitted when include_plan=False
+
+        # Second call with include_plan=True — must use cached entries
+        # but still produce a valid plan_id.
+        result2 = _discover_with_identity(tmp_path, include_plan=True)
+        assert len(result2) == 1
+        assert result2[0][2] is not None  # plan_id must be present
 
 
 # ---------------------------------------------------------------------------
