@@ -55,7 +55,7 @@ def _clear_vscode_log_cache() -> None:  # pyright: ignore[reportUnusedFunction]
     _VSCODE_LOG_CACHE.clear()
     import copilot_usage.vscode_parser as _mod
 
-    _mod._VSCODE_SUMMARY_CACHE = None  # pyright: ignore[reportPrivateUsage]
+    _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1354,7 +1354,7 @@ class TestVscodeLogCache:
 
 
 # ---------------------------------------------------------------------------
-# _VSCODE_SUMMARY_CACHE – summary-level caching
+# _vscode_summary_cache – summary-level caching
 # ---------------------------------------------------------------------------
 
 
@@ -1446,3 +1446,47 @@ class TestVscodeSummaryCacheSkipsReaggregation:
 
         assert s2.total_requests == 2
         assert s2.log_files_found == 2
+
+    def test_cache_not_populated_on_partial_failure(self, tmp_path: Path) -> None:
+        """Summary is NOT cached when a log file fails to read."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        # Add a second log file that will fail to read.
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+        log_file2.write_text(_make_log_line(req_idx=1))
+
+        # Make the second file's parse raise OSError after stat succeeds.
+        # Capture the real function before patching to avoid recursion.
+        real_fn = _get_cached_vscode_requests
+
+        def _fail_second(log_path: Path) -> tuple[VSCodeRequest, ...]:
+            if log_path == log_file2:
+                raise OSError("transient read failure")
+            return real_fn(log_path)
+
+        with patch(
+            "copilot_usage.vscode_parser._get_cached_vscode_requests",
+            side_effect=_fail_second,
+        ):
+            s1 = get_vscode_summary(tmp_path)
+
+        assert s1.total_requests == 1
+        assert s1.log_files_found == 2
+        assert s1.log_files_parsed == 1
+
+        # Second call should re-aggregate because the cache was not populated.
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            get_vscode_summary(tmp_path)
+            assert spy.call_count >= 1  # re-aggregated (not served from cache)

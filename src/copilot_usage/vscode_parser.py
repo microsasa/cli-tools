@@ -192,7 +192,7 @@ class _CachedVSCodeSummary:
     summary: VSCodeLogSummary
 
 
-_VSCODE_SUMMARY_CACHE: _CachedVSCodeSummary | None = None
+_vscode_summary_cache: _CachedVSCodeSummary | None = None
 
 
 def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
@@ -322,11 +322,11 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
-    cache (:data:`_VSCODE_SUMMARY_CACHE`) avoids re-aggregating all
+    cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
     requests when no log file has changed, reducing per-call cost from
     **O(total_requests)** to **O(num_files)** on a warm cache.
     """
-    global _VSCODE_SUMMARY_CACHE  # noqa: PLW0603
+    global _vscode_summary_cache  # noqa: PLW0603
 
     logs = discover_vscode_logs(base_path)
     current_ids: frozenset[tuple[Path, tuple[int, int] | None]] = frozenset(
@@ -334,10 +334,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     )
 
     if (
-        _VSCODE_SUMMARY_CACHE is not None
-        and _VSCODE_SUMMARY_CACHE.file_ids == current_ids
+        _vscode_summary_cache is not None
+        and _vscode_summary_cache.file_ids == current_ids
     ):
-        return _VSCODE_SUMMARY_CACHE.summary
+        return _vscode_summary_cache.summary
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path in logs:
@@ -350,7 +350,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
         acc.log_files_parsed += 1
     summary = _finalize_summary(acc)
 
-    _VSCODE_SUMMARY_CACHE = _CachedVSCodeSummary(  # pyright: ignore[reportConstantRedefinition]
-        file_ids=current_ids, summary=summary
-    )
+    # Only cache when every discovered log was successfully parsed;
+    # transient read failures should not produce a permanently stale cache.
+    if summary.log_files_parsed == summary.log_files_found:
+        _vscode_summary_cache = _CachedVSCodeSummary(
+            file_ids=current_ids, summary=summary
+        )
     return summary
