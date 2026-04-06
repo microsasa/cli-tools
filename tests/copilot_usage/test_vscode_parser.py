@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 from loguru import logger
 
+from copilot_usage._fs_utils import safe_file_identity
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
@@ -1468,10 +1469,13 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         # Capture the real function before patching to avoid recursion.
         real_fn = _get_cached_vscode_requests
 
-        def _fail_second(log_path: Path) -> tuple[VSCodeRequest, ...]:
+        def _fail_second(
+            log_path: Path,
+            file_id: tuple[int, int] | None = None,
+        ) -> tuple[VSCodeRequest, ...]:
             if log_path == log_file2:
                 raise OSError("transient read failure")
-            return real_fn(log_path)
+            return real_fn(log_path, file_id)
 
         with patch(
             "copilot_usage.vscode_parser._get_cached_vscode_requests",
@@ -1511,3 +1515,92 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         s2 = get_vscode_summary(tmp_path)
         assert s2.requests_by_model == {"gpt-4o-mini": 1}
         assert "injected" not in s2.requests_by_model
+
+
+# ---------------------------------------------------------------------------
+# stat() syscall budget — safe_file_identity called at most once per file
+# ---------------------------------------------------------------------------
+
+
+class TestSafeFileIdentityCalledOncePerFile:
+    """Assert safe_file_identity is called at most once per log file per call.
+
+    Before the optimisation, ``get_vscode_summary`` stat'd every file
+    twice on a cold summary cache: once to build ``current_ids`` and
+    again inside ``_get_cached_vscode_requests``.  After the fix the
+    pre-computed identity is threaded through, so only one stat per file
+    should occur.
+    """
+
+    @staticmethod
+    def _make_log_tree(tmp_path: Path, n_files: int) -> list[Path]:
+        """Create *n_files* log files under a VS Code log directory layout."""
+        paths: list[Path] = []
+        for i in range(n_files):
+            log_dir = (
+                tmp_path
+                / f"2026031{i}T211400"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            log_file = log_dir / "GitHub Copilot Chat.log"
+            log_file.write_text(_make_log_line(req_idx=i))
+            paths.append(log_file)
+        return paths
+
+    def test_cold_cache_stats_each_file_once(self, tmp_path: Path) -> None:
+        """On a cold summary + per-file cache, each file is stat'd once."""
+        log_files = self._make_log_tree(tmp_path, n_files=5)
+        call_counts: dict[Path, int] = {}
+        real_fn = safe_file_identity
+
+        def _counting_spy(path: Path) -> tuple[int, int] | None:
+            call_counts[path] = call_counts.get(path, 0) + 1
+            return real_fn(path)
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=_counting_spy,
+        ):
+            summary = get_vscode_summary(tmp_path)
+
+        assert summary.total_requests == len(log_files)
+        for log_file in log_files:
+            assert call_counts.get(log_file, 0) <= 1, (
+                f"safe_file_identity called {call_counts[log_file]} times "
+                f"for {log_file.name}, expected at most 1"
+            )
+
+    def test_warm_per_file_cache_stats_each_file_once(self, tmp_path: Path) -> None:
+        """With a warm per-file cache but cold summary cache, still one stat."""
+        log_files = self._make_log_tree(tmp_path, n_files=3)
+        # Warm the per-file cache.
+        for lf in log_files:
+            _get_cached_vscode_requests(lf)
+
+        # Clear summary cache only (per-file cache stays warm).
+        import copilot_usage.vscode_parser as _mod
+
+        _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
+
+        call_counts: dict[Path, int] = {}
+        real_fn = safe_file_identity
+
+        def _counting_spy(path: Path) -> tuple[int, int] | None:
+            call_counts[path] = call_counts.get(path, 0) + 1
+            return real_fn(path)
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=_counting_spy,
+        ):
+            summary = get_vscode_summary(tmp_path)
+
+        assert summary.total_requests == len(log_files)
+        for log_file in log_files:
+            assert call_counts.get(log_file, 0) <= 1, (
+                f"safe_file_identity called {call_counts[log_file]} times "
+                f"for {log_file.name}, expected at most 1"
+            )
