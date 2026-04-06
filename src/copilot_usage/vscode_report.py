@@ -15,6 +15,18 @@ __all__: Final[list[str]] = ["render_vscode_summary"]
 _DAILY_ACTIVITY_LIMIT: Final[int] = 14
 
 
+def _format_log_files_line(summary: VSCodeLogSummary) -> str:
+    """Build the 'Log Files' line, surfacing unreadable files when present."""
+    unreadable = summary.log_files_found - summary.log_files_parsed
+    if unreadable > 0:
+        return (
+            f"[bold]Log Files:[/bold]  {summary.log_files_parsed}"
+            f" ({summary.log_files_found} found, "
+            f"[red]{unreadable} unreadable[/red])"
+        )
+    return f"[bold]Log Files:[/bold]  {summary.log_files_parsed}"
+
+
 def render_vscode_summary(
     summary: VSCodeLogSummary, target_console: Console | None = None
 ) -> None:
@@ -28,11 +40,13 @@ def render_vscode_summary(
         last = summary.last_timestamp.strftime("%Y-%m-%d %H:%M")
         date_range = f"{first}  →  {last}"
 
+    log_files_line = _format_log_files_line(summary)
+
     lines = [
         f"[bold]Requests:[/bold]   [green]{summary.total_requests:,}[/green]",
         f"[bold]API Time:[/bold]   [green]{format_duration(summary.total_duration_ms)}[/green]",
         f"[bold]Date Range:[/bold] {date_range}",
-        f"[bold]Log Files:[/bold]  {summary.log_files_parsed}",
+        log_files_line,
     ]
     console.print(
         Panel("\n".join(lines), title="VS Code Copilot Chat", border_style="cyan")

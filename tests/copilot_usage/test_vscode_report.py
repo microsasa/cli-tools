@@ -34,6 +34,7 @@ def _make_summary(
     first_timestamp: datetime | None = None,
     last_timestamp: datetime | None = None,
     log_files_parsed: int = 1,
+    log_files_found: int | None = None,
 ) -> VSCodeLogSummary:
     return VSCodeLogSummary(
         total_requests=total_requests,
@@ -45,6 +46,9 @@ def _make_summary(
         first_timestamp=first_timestamp,
         last_timestamp=last_timestamp,
         log_files_parsed=log_files_parsed,
+        log_files_found=log_files_found
+        if log_files_found is not None
+        else log_files_parsed,
     )
 
 
@@ -315,3 +319,35 @@ class TestRenderVscodeSummaryDailyActivity:
         summary = _make_summary(total_requests=5, requests_by_date={})
         output = _capture(summary)
         assert "Daily Activity" not in output
+
+
+# ---------------------------------------------------------------------------
+# Unreadable log files
+# ---------------------------------------------------------------------------
+
+
+class TestRenderVscodeSummaryUnreadableFiles:
+    def test_unreadable_files_shown_when_found_exceeds_parsed(self) -> None:
+        """When some files are unreadable, the rendered output shows the gap."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=3,
+            log_files_found=5,
+        )
+        output = _capture(summary)
+        assert "5 found" in output
+        assert "2 unreadable" in output
+        assert "3" in output
+
+    def test_happy_path_no_unreadable_annotation(self) -> None:
+        """When all found files are parsed, output is unchanged (no 'unreadable')."""
+        summary = _make_summary(
+            total_requests=10,
+            log_files_parsed=4,
+            log_files_found=4,
+        )
+        output = _capture(summary)
+        assert "Log Files" in output
+        assert "4" in output
+        assert "unreadable" not in output
+        assert "found" not in output
