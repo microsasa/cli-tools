@@ -26,6 +26,7 @@ __all__: Final[list[str]] = [
 
 from copilot_usage._fs_utils import lru_insert, safe_file_identity
 from copilot_usage.models import (
+    AssistantMessageData,
     CodeChanges,
     EventType,
     ModelMetrics,
@@ -237,11 +238,25 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _safe_int_tokens(raw: object) -> int | None:
-    """Return *raw* as non-negative int if it is a genuine integer (not bool), else None."""
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-        return raw
-    return None
+def _extract_output_tokens(ev: SessionEvent) -> int | None:
+    """Extract ``outputTokens`` from an ``assistant.message`` event via Pydantic validation.
+
+    Returns the validated positive integer token count, or ``None`` if the
+    event payload is malformed or the value is zero/negative.  Pydantic
+    lax-mode coercion handles whole-number floats (e.g. ``1234.0 → 1234``)
+    that the raw dict path would silently discard.  Bool and str values are
+    mapped to ``0`` by a field validator so that the rest of the assistant
+    message payload remains parsable.
+
+    Callers are responsible for verifying ``ev.type`` before calling; this
+    function validates only the ``data`` payload via
+    :class:`AssistantMessageData`.
+    """
+    try:
+        tokens = AssistantMessageData.model_validate(ev.data).outputTokens
+    except ValidationError:
+        return None
+    return tokens if tokens > 0 else None
 
 
 def _full_scandir_discovery(
@@ -643,7 +658,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             total_turn_starts += 1
 
         elif etype == EventType.ASSISTANT_MESSAGE:
-            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
+            if (tokens := _extract_output_tokens(ev)) is not None:
                 total_output_tokens += tokens
 
     return _FirstPassResult(
@@ -686,7 +701,7 @@ def _detect_resume(
         etype = ev.type
         if etype == EventType.ASSISTANT_MESSAGE:
             session_resumed = True
-            if (tokens := _safe_int_tokens(ev.data.get("outputTokens"))) is not None:
+            if (tokens := _extract_output_tokens(ev)) is not None:
                 post_shutdown_output_tokens += tokens
         elif etype == EventType.USER_MESSAGE:
             session_resumed = True
