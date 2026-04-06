@@ -50,9 +50,12 @@ _LOG_NOISE = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_vscode_log_cache() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Ensure every test starts with an empty VS Code log cache."""
+def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Ensure every test starts with empty VS Code caches."""
     _VSCODE_LOG_CACHE.clear()
+    import copilot_usage.vscode_parser as _mod
+
+    _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1348,3 +1351,163 @@ class TestVscodeLogCache:
             assert spy.call_count == 1
         assert s1.total_requests == 1
         assert s2.total_requests == 1
+
+
+# ---------------------------------------------------------------------------
+# _vscode_summary_cache – summary-level caching
+# ---------------------------------------------------------------------------
+
+
+class TestVscodeSummaryCacheSkipsReaggregation:
+    """Verify that get_vscode_summary() skips _update_vscode_summary on a warm cache.
+
+    Uses monkeypatching to count calls to _update_vscode_summary, matching
+    the project's deterministic perf-test convention (no wall-clock timing).
+    """
+
+    def test_second_call_skips_update(self, tmp_path: Path) -> None:
+        """_update_vscode_summary is not called on the second invocation."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+
+        # Write 500 synthetic request lines.
+        lines = [_make_log_line(req_idx=i) for i in range(500)]
+        log_file.write_text("\n".join(lines))
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s1 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # called once during first aggregation
+
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # NOT called again — cached summary returned
+
+        assert s1.total_requests == 500
+        assert s2.total_requests == 500
+
+    def test_cache_invalidated_on_file_change(self, tmp_path: Path) -> None:
+        """Changing a log file invalidates the summary cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+
+        # Mutate the file — summary cache should be invalidated.
+        log_file.write_text(
+            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
+        )
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1  # re-aggregated because file changed
+
+        assert s2.total_requests == 2
+
+    def test_cache_invalidated_on_new_file(self, tmp_path: Path) -> None:
+        """Adding a new log file invalidates the summary cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+        assert s1.log_files_found == 1
+
+        # Add a second log directory with a new log file.
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+        log_file2.write_text(_make_log_line(req_idx=10))
+
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 2  # re-aggregated both files
+
+        assert s2.total_requests == 2
+        assert s2.log_files_found == 2
+
+    def test_cache_not_populated_on_partial_failure(self, tmp_path: Path) -> None:
+        """Summary is NOT cached when a log file fails to read."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        # Add a second log file that will fail to read.
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+        log_file2.write_text(_make_log_line(req_idx=1))
+
+        # Make the second file's parse raise OSError after stat succeeds.
+        # Capture the real function before patching to avoid recursion.
+        real_fn = _get_cached_vscode_requests
+
+        def _fail_second(log_path: Path) -> tuple[VSCodeRequest, ...]:
+            if log_path == log_file2:
+                raise OSError("transient read failure")
+            return real_fn(log_path)
+
+        with patch(
+            "copilot_usage.vscode_parser._get_cached_vscode_requests",
+            side_effect=_fail_second,
+        ):
+            s1 = get_vscode_summary(tmp_path)
+
+        assert s1.total_requests == 1
+        assert s1.log_files_found == 2
+        assert s1.log_files_parsed == 1
+
+        # Second call should re-aggregate because the cache was not populated.
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as spy:
+            get_vscode_summary(tmp_path)
+            assert spy.call_count == 2  # both files re-aggregated
+
+    def test_cached_return_is_mutation_safe(self, tmp_path: Path) -> None:
+        """Mutating dict fields on a cached return does not corrupt the cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0, model="gpt-4o-mini"))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.requests_by_model == {"gpt-4o-mini": 1}
+
+        # Mutate the dict on the returned summary.
+        s1.requests_by_model["gpt-4o-mini"] = 9999
+        s1.requests_by_model["injected"] = 1
+
+        # Second call should return a clean copy, unaffected by the mutation.
+        s2 = get_vscode_summary(tmp_path)
+        assert s2.requests_by_model == {"gpt-4o-mini": 1}
+        assert "injected" not in s2.requests_by_model

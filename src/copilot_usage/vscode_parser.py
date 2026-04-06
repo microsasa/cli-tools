@@ -5,7 +5,7 @@ import re
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Final
@@ -177,6 +177,24 @@ class _CachedVSCodeLog:
 _VSCODE_LOG_CACHE: OrderedDict[Path, _CachedVSCodeLog] = OrderedDict()
 
 
+# ---------------------------------------------------------------------------
+# Module-level summary cache: avoids O(total_requests) re-aggregation when
+# no log file has changed.  Keyed by a frozenset of (path, file_id) tuples
+# representing all discovered log files.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedVSCodeSummary:
+    """Cache entry pairing a snapshot of file identities with the summary."""
+
+    file_ids: frozenset[tuple[Path, tuple[int, int] | None]]
+    summary: VSCodeLogSummary
+
+
+_vscode_summary_cache: _CachedVSCodeSummary | None = None
+
+
 def _get_cached_vscode_requests(log_path: Path) -> tuple[VSCodeRequest, ...]:
     """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
 
@@ -264,6 +282,25 @@ def _update_vscode_summary(
             acc.last_timestamp = req.timestamp
 
 
+def _copy_summary(summary: VSCodeLogSummary) -> VSCodeLogSummary:
+    """Return a shallow copy with independent dict fields.
+
+    ``VSCodeLogSummary`` is a frozen dataclass, so scalar and datetime
+    fields are already immutable.  The four ``dict[str, int]`` fields,
+    however, are mutable containers — callers receiving a cached instance
+    could inadvertently mutate the module-level cache.  This helper
+    creates a new instance with copied dicts to preserve per-call
+    isolation.
+    """
+    return replace(
+        summary,
+        requests_by_model=dict(summary.requests_by_model),
+        duration_by_model=dict(summary.duration_by_model),
+        requests_by_category=dict(summary.requests_by_category),
+        requests_by_date=dict(summary.requests_by_date),
+    )
+
+
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``."""
     return VSCodeLogSummary(
@@ -303,9 +340,24 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
-    are not re-parsed on repeated invocations.
+    are not re-parsed on repeated invocations.  A module-level summary
+    cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
+    requests when no log file has changed, reducing per-call cost from
+    **O(total_requests)** to **O(num_files)** on a warm cache.
     """
+    global _vscode_summary_cache  # noqa: PLW0603
+
     logs = discover_vscode_logs(base_path)
+    current_ids: frozenset[tuple[Path, tuple[int, int] | None]] = frozenset(
+        (p, safe_file_identity(p)) for p in logs
+    )
+
+    if (
+        _vscode_summary_cache is not None
+        and _vscode_summary_cache.file_ids == current_ids
+    ):
+        return _copy_summary(_vscode_summary_cache.summary)
+
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path in logs:
         try:
@@ -315,4 +367,12 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
             continue
         _update_vscode_summary(acc, result)
         acc.log_files_parsed += 1
-    return _finalize_summary(acc)
+    summary = _finalize_summary(acc)
+
+    # Only cache when every discovered log was successfully parsed;
+    # transient read failures should not produce a permanently stale cache.
+    if summary.log_files_parsed == summary.log_files_found:
+        _vscode_summary_cache = _CachedVSCodeSummary(
+            file_ids=current_ids, summary=_copy_summary(summary)
+        )
+    return summary
