@@ -350,24 +350,13 @@ def render_session_detail(
 ) -> None:
     """Render a useful summary view of a single session.
 
-    Displays:
-    - Header panel (name, ID, model, status, start time)
-    - Aggregate stats (model calls, user messages, output tokens, premium)
-    - Per-shutdown-cycle table
-    - Active period (if session is active)
-    - Last 10 events (recent activity, not a full timeline)
-    - Code changes (if any)
+    Prints a header panel, aggregate stats, per-shutdown-cycle table,
+    active-period info (if the session is still active), the last 10
+    events, and code changes (if any) to *target_console* (or a fresh
+    :class:`Console` when not supplied).
 
-    Parameters
-    ----------
-    events:
-        The full list of parsed :class:`SessionEvent` objects for this
-        session.
-    summary:
-        Pre-computed :class:`SessionSummary` for the session.
-    target_console:
-        Optional :class:`Console` to print to (defaults to a fresh
-        console).
+    *events* is the full list of parsed :class:`SessionEvent` objects for
+    this session.  *summary* is the pre-computed :class:`SessionSummary`.
     """
     out = target_console or Console()
 
