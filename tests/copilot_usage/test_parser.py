@@ -49,6 +49,7 @@ from copilot_usage.parser import (
     _CopilotConfig,
     _detect_resume,
     _discover_with_identity,
+    _extract_output_tokens,
     _extract_session_name,
     _first_pass,
     _FirstPassResult,
@@ -56,7 +57,6 @@ from copilot_usage.parser import (
     _insert_session_entry,
     _read_config_model,
     _ResumeInfo,
-    _safe_int_tokens,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -2746,7 +2746,7 @@ class TestBuildSessionSummaryEdgeCases:
         assert summary.active_output_tokens == 0
 
     def test_mixed_valid_bool_negative_tokens(self, tmp_path: Path) -> None:
-        """Mix of valid (150), boolean (True), and negative (-50) outputTokens → 150."""
+        """Mix of valid (150), boolean (True→1 via Pydantic), and negative (-50) outputTokens → 151."""
         bool_msg = json.dumps(
             {
                 "type": "assistant.message",
@@ -2783,7 +2783,8 @@ class TestBuildSessionSummaryEdgeCases:
         )
         events = parse_events(p)
         summary = build_session_summary(events)
-        assert summary.active_output_tokens == 150
+        # 150 (valid) + 1 (Pydantic coerces True→1) + 0 (negative rejected) = 151
+        assert summary.active_output_tokens == 151
 
     def test_multiple_session_start_uses_first(self, tmp_path: Path) -> None:
         """Two session.start events; session_id, start_time, cwd match FIRST event."""
@@ -4206,8 +4207,8 @@ class TestParserFalsyStringEdgeCases:
         config.write_text('{"model": ""}', encoding="utf-8")
         assert _read_config_model(config) is None
 
-    def test_output_tokens_boolean_true_excluded(self, tmp_path: Path) -> None:
-        """Boolean True must not be counted as outputTokens."""
+    def test_output_tokens_boolean_true_coerced(self, tmp_path: Path) -> None:
+        """Boolean True is coerced to 1 by Pydantic validation."""
         msg_bool_tokens = json.dumps(
             {
                 "type": "assistant.message",
@@ -4224,7 +4225,7 @@ class TestParserFalsyStringEdgeCases:
         _write_events(p, _START_EVENT, msg_bool_tokens)
         events = parse_events(p)
         summary = build_session_summary(events)
-        assert summary.active_output_tokens == 0
+        assert summary.active_output_tokens == 1
 
     def test_output_tokens_boolean_false_excluded(self, tmp_path: Path) -> None:
         """Boolean False must not be counted as outputTokens."""
@@ -4248,37 +4249,67 @@ class TestParserFalsyStringEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _safe_int_tokens
+# _extract_output_tokens
 # ---------------------------------------------------------------------------
 
 
-class TestSafeIntTokens:
+def _make_assistant_event(output_tokens: object) -> SessionEvent:
+    """Build a minimal ``assistant.message`` SessionEvent with the given outputTokens."""
+    return SessionEvent(
+        type=EventType.ASSISTANT_MESSAGE,
+        data={
+            "messageId": "m1",
+            "content": "hi",
+            "outputTokens": output_tokens,
+        },
+        id="ev-test",
+        timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+    )
+
+
+class TestExtractOutputTokens:
+    """Unit tests for _extract_output_tokens."""
+
     def test_returns_int_for_genuine_int(self) -> None:
-        assert _safe_int_tokens(42) == 42
+        assert _extract_output_tokens(_make_assistant_event(42)) == 42
+
+    def test_coerces_whole_float_to_int(self) -> None:
+        """Whole-number floats like ``1234.0`` are coerced to int via Pydantic."""
+        assert _extract_output_tokens(_make_assistant_event(1234.0)) == 1234
+
+    def test_returns_none_for_fractional_float(self) -> None:
+        assert _extract_output_tokens(_make_assistant_event(3.14)) is None
 
     def test_returns_none_for_bool_true(self) -> None:
-        assert _safe_int_tokens(True) is None
+        """Pydantic coerces True → 1; the result is treated as a valid positive int."""
+        assert _extract_output_tokens(_make_assistant_event(True)) == 1
 
     def test_returns_none_for_bool_false(self) -> None:
-        assert _safe_int_tokens(False) is None
-
-    def test_returns_none_for_string(self) -> None:
-        assert _safe_int_tokens("100") is None
+        assert _extract_output_tokens(_make_assistant_event(False)) is None
 
     def test_returns_none_for_none(self) -> None:
-        assert _safe_int_tokens(None) is None
+        assert _extract_output_tokens(_make_assistant_event(None)) is None
 
-    def test_returns_none_for_float(self) -> None:
-        assert _safe_int_tokens(3.14) is None
+    def test_returns_none_for_string(self) -> None:
+        """Pydantic coerces numeric strings; non-numeric strings yield None."""
+        assert _extract_output_tokens(_make_assistant_event("abc")) is None
 
-    def test_returns_zero_for_zero(self) -> None:
-        assert _safe_int_tokens(0) == 0
+    def test_returns_none_for_zero(self) -> None:
+        assert _extract_output_tokens(_make_assistant_event(0)) is None
 
     def test_returns_none_for_negative_int(self) -> None:
-        assert _safe_int_tokens(-1) is None
+        assert _extract_output_tokens(_make_assistant_event(-1)) is None
 
     def test_returns_none_for_large_negative(self) -> None:
-        assert _safe_int_tokens(-100_000) is None
+        assert _extract_output_tokens(_make_assistant_event(-100_000)) is None
+
+    def test_returns_none_for_malformed_data(self) -> None:
+        """An event with completely invalid data yields None."""
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={"unexpected": "payload", "outputTokens": "not-a-number"},
+        )
+        assert _extract_output_tokens(ev) is None
 
 
 # ---------------------------------------------------------------------------
@@ -4286,10 +4317,34 @@ class TestSafeIntTokens:
 # ---------------------------------------------------------------------------
 
 
-class TestSafeIntTokensIntegration:
-    """Integration tests exercising _safe_int_tokens through parse → build_session_summary."""
+class TestExtractOutputTokensIntegration:
+    """Integration tests exercising _extract_output_tokens through parse → build_session_summary."""
 
-    def test_float_output_tokens_ignored_active_session(self, tmp_path: Path) -> None:
+    def test_whole_float_output_tokens_counted_active_session(
+        self, tmp_path: Path
+    ) -> None:
+        """An assistant.message with outputTokens=1234.0 must be coerced and counted."""
+        float_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hi",
+                    "outputTokens": 1234.0,
+                },
+                "id": "ev-float",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, float_msg, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.active_output_tokens == 1234
+
+    def test_fractional_float_output_tokens_ignored_active_session(
+        self, tmp_path: Path
+    ) -> None:
         """An assistant.message with outputTokens=1.5 must not add to active_output_tokens."""
         float_msg = json.dumps(
             {
@@ -4329,7 +4384,45 @@ class TestSafeIntTokensIntegration:
         summary = build_session_summary(events)
         assert summary.active_output_tokens == 0
 
-    def test_float_output_tokens_ignored_post_shutdown(self, tmp_path: Path) -> None:
+    def test_whole_float_output_tokens_counted_post_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        """A post-shutdown assistant.message with outputTokens=500.0 must be coerced and counted."""
+        post_resume_float_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-float-post",
+                    "content": "resuming with float",
+                    "toolRequests": [],
+                    "interactionId": "int-2",
+                    "outputTokens": 500.0,
+                },
+                "id": "ev-asst-float-post",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-user2",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            post_resume_float_msg,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # active_output_tokens only counts post-shutdown tokens
+        assert summary.active_output_tokens == 500
+        assert summary.is_active is True
+
+    def test_fractional_float_output_tokens_ignored_post_shutdown(
+        self, tmp_path: Path
+    ) -> None:
         """A post-shutdown assistant.message with outputTokens=2.9 must not add to active_output_tokens."""
         post_resume_float_msg = json.dumps(
             {
@@ -4359,6 +4452,7 @@ class TestSafeIntTokensIntegration:
         )
         events = parse_events(p)
         summary = build_session_summary(events)
+        # active_output_tokens only counts post-shutdown tokens; 2.9 is rejected
         assert summary.active_output_tokens == 0
         assert summary.is_active is True
 
