@@ -211,7 +211,28 @@ class _CachedFileSummary:
     partial: VSCodeLogSummary
 
 
-_PER_FILE_SUMMARY_CACHE: dict[Path, _CachedFileSummary] = {}
+class _BoundedFileSummaryCache(OrderedDict[Path, _CachedFileSummary]):
+    """LRU-bounded cache for per-file summaries.
+
+    This keeps the existing mapping-style API used by callers while ensuring
+    entries for old log paths do not accumulate without bound.
+    """
+
+    def __init__(self, max_size: int) -> None:
+        super().__init__()
+        self._max_size = max_size
+
+    def __setitem__(self, key: Path, value: _CachedFileSummary) -> None:
+        if key in self:
+            super().__delitem__(key)
+        super().__setitem__(key, value)
+        while len(self) > self._max_size:
+            self.popitem(last=False)
+
+
+_PER_FILE_SUMMARY_CACHE: OrderedDict[Path, _CachedFileSummary] = (
+    _BoundedFileSummaryCache(_MAX_CACHED_VSCODE_LOGS)
+)
 
 
 _FILE_ID_UNSET: Final = "unset"
@@ -316,12 +337,13 @@ def _update_vscode_summary(
 
 
 def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
-    """Merge a pre-aggregated per-file summary into *acc* in O(num_models) time.
+    """Merge a pre-aggregated per-file summary into *acc* in-place.
 
     Unlike :func:`_update_vscode_summary`, which iterates every individual
     request, this function merges already-aggregated counters and dict
-    entries — proportional to the number of distinct models, categories,
-    and dates rather than the total request count.
+    entries in O(num_models + num_categories + num_dates) time —
+    proportional to the number of distinct models, categories, and dates
+    rather than the total request count.
     """
     acc.total_requests += partial.total_requests
     acc.total_duration_ms += partial.total_duration_ms
@@ -412,7 +434,8 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     avoids re-iterating requests for unchanged files.  Only files whose
     ``(mtime_ns, size)`` identity differs are re-aggregated via
     :func:`_update_vscode_summary`; unchanged files contribute via an
-    O(num_models) :func:`_merge_partial` instead of O(requests).
+    O(num_models + num_categories + num_dates) :func:`_merge_partial`
+    instead of O(requests).
     """
     global _vscode_summary_cache  # noqa: PLW0603
 

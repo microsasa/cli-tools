@@ -1530,8 +1530,9 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
 
     When one of several log files changes, the per-file summary cache
     provides the unchanged files' contribution via _merge_partial (which
-    is O(num_models)), so _update_vscode_summary is only called for the
-    file(s) that actually changed.
+    is O(num_models + num_categories + num_dates)), so
+    _update_vscode_summary is only called for the file(s) that actually
+    changed.
 
     Uses monkeypatching to count calls to _update_vscode_summary,
     following the project's deterministic perf-test convention (no
