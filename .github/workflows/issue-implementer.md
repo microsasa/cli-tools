@@ -49,20 +49,20 @@ Read `.github/copilot-instructions.md` and follow all referenced guidelines for 
 
 Read all files in the repository. Read issue #${{ github.event.inputs.issue_number }} to understand what needs to be fixed. Implement the fix following the spec in the issue, including any testing requirements.
 
-Before committing, run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass (lint, type check, security, tests):
+**Self-review before pushing**: After implementing, audit your own changes for common reviewer findings:
+- **Docstrings**: Does every changed/new function have an accurate docstring? Do existing docstrings still match the new behavior?
+- **Test assertions**: Does each test actually verify what its name/docstring claims? Are assertions specific (exact match, not substring)?
+- **Dead references**: If you renamed or removed something, grep for stale references in docs, comments, imports, and tests
+- **Parallel code paths**: If you fixed a bug or added a guard, check sibling functions/paths for the same gap
+- **Naming consistency**: Do test names, variable names, and comments all match the current behavior?
+Fix any issues you find.
+
+Then run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass (lint, type check, security, tests):
 
 ```
 make fix && make check
 ```
 
 Fix any remaining errors and iterate until `make check` passes cleanly.
-
-**Pre-push self-review**: Before committing, audit your own changes for common reviewer findings:
-- **Docstrings**: Does every changed/new function have an accurate docstring? Do existing docstrings still match the new behavior?
-- **Test assertions**: Does each test actually verify what its name/docstring claims? Are assertions specific (exact match, not substring)?
-- **Dead references**: If you renamed or removed something, grep for stale references in docs, comments, imports, and tests
-- **Parallel code paths**: If you fixed a bug or added a guard, check sibling functions/paths for the same gap
-- **Naming consistency**: Do test names, variable names, and comments all match the current behavior?
-Fix any issues you find before pushing.
 
 Open a pull request with the fix. The PR title should reference the issue number. The PR body MUST include `Closes #${{ github.event.inputs.issue_number }}` so GitHub auto-closes the issue when the PR merges. Include tests as specified in the issue. The PR must NOT be a draft — open it as a regular PR ready for review.
