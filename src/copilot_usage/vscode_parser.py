@@ -455,6 +455,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     for log_path, file_id in log_ids:
         cached_fs = _PER_FILE_SUMMARY_CACHE.get(log_path)
         if cached_fs is not None and cached_fs.file_id == file_id:
+            _PER_FILE_SUMMARY_CACHE.move_to_end(log_path)
             _merge_partial(acc, cached_fs.partial)
         else:
             try:
