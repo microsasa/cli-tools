@@ -131,6 +131,13 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
         "The '↳ Since last shutdown' section in implementation.md must not "
         "claim 'N/A' for Premium Cost."
     )
+    # The code snippet must include the has_active_period_stats guard that
+    # suppresses the row when there is no meaningful post-shutdown activity.
+    assert "has_active_period_stats" in section, (
+        "The '↳ Since last shutdown' section in implementation.md must "
+        "mention 'has_active_period_stats' — the row is suppressed when "
+        "all active counters are 0 and last_resume_time is None."
+    )
 
 
 def test_architecture_detect_resume_lists_all_indicators() -> None:
