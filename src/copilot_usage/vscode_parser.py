@@ -2,6 +2,7 @@
 
 import os
 import re
+import stat
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
@@ -16,7 +17,7 @@ from copilot_usage._fs_utils import lru_insert, safe_file_identity
 
 # Type alias for a frozenset of (child_name, file_identity) tuples used
 # to detect changes in immediate child session directories.
-_ChildIds = frozenset[tuple[str, tuple[int, int] | None]]
+_ChildIds = frozenset[tuple[str, tuple[int, int]]]
 
 __all__: Final[list[str]] = [
     "VSCodeLogSummary",
@@ -93,7 +94,7 @@ class _VSCodeDiscoveryCache:
     mtime.
     """
 
-    root_id: tuple[int, int] | None  # (st_mtime_ns, st_size) of the logs root
+    root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
     child_ids: _ChildIds
     log_paths: tuple[Path, ...]
 
@@ -104,19 +105,26 @@ _VSCODE_DISCOVERY_CACHE: dict[Path, _VSCodeDiscoveryCache] = {}
 def _scan_child_ids(root: Path) -> _ChildIds:
     """Return identities of immediate child directories under *root*.
 
-    Each child is represented as ``(name, (st_mtime_ns, st_size))`` or
-    ``(name, None)`` when the stat fails.  Returns an empty frozenset
-    when *root* cannot be scanned (e.g. it was removed between the
-    ``is_dir`` check and this call).
+    Each child is represented as ``(name, (st_mtime_ns, st_size))``.
+    Entries whose stat fails are silently skipped.  Returns an empty
+    frozenset when *root* cannot be scanned (e.g. it was removed between
+    the ``is_dir`` check and this call).
+
+    Uses ``os.DirEntry.stat(follow_symlinks=False)`` once per entry to
+    obtain both the directory check and the file identity, costing at
+    most one stat syscall per child.
     """
-    result: list[tuple[str, tuple[int, int] | None]] = []
+    result: list[tuple[str, tuple[int, int]]] = []
     try:
         with os.scandir(root) as it:
-            result.extend(
-                (entry.name, safe_file_identity(root / entry.name))
-                for entry in it
-                if entry.is_dir(follow_symlinks=False)
-            )
+            for entry in it:
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if not stat.S_ISDIR(st.st_mode):
+                    continue
+                result.append((entry.name, (st.st_mtime_ns, st.st_size)))
     except OSError:
         pass
     return frozenset(result)
@@ -192,9 +200,13 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     candidates = [base_path] if base_path is not None else _default_log_candidates()
     result: list[Path] = []
     for candidate in candidates:
-        if not candidate.is_dir():
+        try:
+            st = candidate.stat()
+        except OSError:
             continue
-        root_id = safe_file_identity(candidate)
+        if not stat.S_ISDIR(st.st_mode):
+            continue
+        root_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
         child_ids = _scan_child_ids(candidate)
         cached = _VSCODE_DISCOVERY_CACHE.get(candidate)
         if (
@@ -205,10 +217,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
             result.extend(cached.log_paths)
             continue
         # Cache miss — run glob
-        if root_id is None:
-            found: list[Path] = []
-        else:
-            found = sorted(candidate.glob(_GLOB_PATTERN))
+        found = sorted(candidate.glob(_GLOB_PATTERN))
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id, child_ids=child_ids, log_paths=tuple(found)
         )

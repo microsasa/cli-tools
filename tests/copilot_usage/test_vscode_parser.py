@@ -26,6 +26,7 @@ from copilot_usage.vscode_parser import (
     _scan_child_ids,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
+    _VSCodeDiscoveryCache,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
     discover_vscode_logs,
     get_vscode_summary,
@@ -2029,12 +2030,12 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == 1
 
-        # Simulate root directory change by returning a new identity.
-        original_identity = safe_file_identity(tmp_path)
-        new_identity = (
-            (original_identity[0] + 1_000_000_000, original_identity[1])
-            if original_identity is not None
-            else (1, 4096)
+        # Tamper with the cached root_id to simulate a directory change.
+        cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
+        _VSCODE_DISCOVERY_CACHE[tmp_path] = _VSCodeDiscoveryCache(
+            root_id=(cached.root_id[0] + 1_000_000_000, cached.root_id[1]),
+            child_ids=cached.child_ids,
+            log_paths=cached.log_paths,
         )
 
         original_glob = Path.glob
@@ -2049,16 +2050,7 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             glob_call_count += 1
             return list(original_glob(self, pattern))
 
-        def _fake_identity(p: Path) -> tuple[int, int] | None:
-            return new_identity if p == tmp_path else safe_file_identity(p)
-
-        with (
-            patch(
-                "copilot_usage.vscode_parser.safe_file_identity",
-                side_effect=_fake_identity,
-            ),
-            patch.object(Path, "glob", _counting_glob),
-        ):
+        with patch.object(Path, "glob", _counting_glob):
             s2 = get_vscode_summary(tmp_path)
             assert glob_call_count == 1  # glob called again due to identity change
 
