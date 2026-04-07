@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import builtins
 import io
 import json
 import os
@@ -1030,6 +1031,145 @@ class TestDiscoverWithIdentityCache:
             f"plan.md in {target_dir.name} not detected after "
             f"{max_calls} cache-hit calls"
         )
+
+
+# ---------------------------------------------------------------------------
+# _discover_with_identity — no_plan_count probe-loop skip (issue #823)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverWithIdentityNoPlanCount:
+    """Probe loop is O(1) when all sessions already have plan.md."""
+
+    def test_probe_loop_skipped_when_all_have_plan(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """When all entries have plan.md, no_plan_count is 0 and probe loop is skipped.
+
+        Creates 200 sessions each with ``plan.md``.  After the first
+        (cache-populating) call, ``no_plan_count`` must be 0 and a
+        second (cache-hit) call must not enter the probe-window scan —
+        verified by ensuring ``range`` is never called for the probe
+        loop body via a spy on the inner ``entries[i][1] is None``
+        comparisons.
+        """
+        n = 200
+        for i in range(n):
+            sess = tmp_path / f"sess-{i:04d}"
+            _write_events(sess / "events.jsonl", _START_EVENT)
+            (sess / "plan.md").write_text(f"# Session {i}\n", encoding="utf-8")
+
+        # First call — populates the cache.
+        result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == n
+
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert cached.no_plan_count == 0
+
+        # Second call — cache hit.  Spy on builtins.range to verify
+        # the probe-window scan is never entered (the only range(n)
+        # call inside the probe block).
+        original_range = builtins.range
+        probe_range_calls: list[int] = []
+
+        def _spy_range(*args: int) -> range:
+            # The probe loop calls range(n) where n == len(entries).
+            if len(args) == 1 and args[0] == n:
+                probe_range_calls.append(args[0])
+            return original_range(*args)
+
+        with patch("builtins.range", side_effect=_spy_range):
+            result2 = _discover_with_identity(tmp_path)
+
+        assert len(result2) == n
+        assert probe_range_calls == [], (
+            f"probe-window range({n}) was called {len(probe_range_calls)} "
+            f"time(s) despite no_plan_count == 0"
+        )
+
+    def test_no_plan_count_set_on_fresh_discovery(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """no_plan_count matches the number of entries without plan.md."""
+        n_total = 10
+        n_with_plan = 4
+        for i in range(n_total):
+            sess = tmp_path / f"sess-{i}"
+            _write_events(sess / "events.jsonl", _START_EVENT)
+            if i < n_with_plan:
+                (sess / "plan.md").write_text(f"# S{i}\n", encoding="utf-8")
+
+        _discover_with_identity(tmp_path)
+
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert cached.no_plan_count == n_total - n_with_plan
+
+    def test_no_plan_count_decremented_on_probe_success(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """no_plan_count decreases when a probe discovers a new plan.md."""
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md.
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert cached.no_plan_count == 1
+
+        # Create plan.md, trigger cache-hit probe.
+        (sess / "plan.md").write_text("# New Plan\n", encoding="utf-8")
+        _discover_with_identity(tmp_path)
+
+        assert cached.no_plan_count == 0
+
+    def test_no_plan_count_incremented_on_plan_deletion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """no_plan_count increases when a previously-present plan.md is deleted."""
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+        plan = sess / "plan.md"
+        plan.write_text("# My Plan\n", encoding="utf-8")
+
+        # Populate cache — plan.md present.
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert cached.no_plan_count == 0
+
+        # Delete plan.md, trigger cache-hit call.
+        plan.unlink()
+        _discover_with_identity(tmp_path)
+
+        assert cached.no_plan_count == 1
+
+    def test_no_plan_count_adjusted_on_prune(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """no_plan_count is adjusted when entries are pruned.
+
+        Deleting ``events.jsonl`` for a session without ``plan.md``
+        must decrement ``no_plan_count`` when the entry is pruned.
+        """
+        for i in range(3):
+            sess = tmp_path / f"sess-{i}"
+            _write_events(sess / "events.jsonl", _START_EVENT)
+        # Give only sess-0 a plan.
+        (tmp_path / "sess-0" / "plan.md").write_text("# P\n", encoding="utf-8")
+
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert cached.no_plan_count == 2
+
+        # Delete events.jsonl for a no-plan session.
+        (tmp_path / "sess-1" / "events.jsonl").unlink()
+        _discover_with_identity(tmp_path)
+
+        assert cached.no_plan_count == 1
 
 
 # ---------------------------------------------------------------------------

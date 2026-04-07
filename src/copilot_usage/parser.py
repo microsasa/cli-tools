@@ -57,11 +57,16 @@ class _DiscoveryCache:
     start so that every session is eventually probed across multiple
     cache-hit calls rather than always probing the first
     ``_MAX_PLAN_PROBES`` entries.
+
+    *no_plan_count* tracks the number of entries where ``plan_path`` is
+    ``None``.  When zero, the O(n) probe-window scan is skipped entirely
+    because there are no entries to probe.
     """
 
     root_id: tuple[int, int] | None
     entries: list[tuple[Path, Path | None]]  # (events_path, plan_path)
     probe_cursor: int = 0
+    no_plan_count: int = 0
 
 
 # Module-level discovery cache: root_path → _DiscoveryCache.
@@ -344,7 +349,9 @@ def _discover_with_identity(
     for a newly-created file so that session names appear without a full
     rescan; the probe window rotates via a per-root cursor stored in
     ``_DiscoveryCache.probe_cursor`` so every session is eventually
-    checked across successive cache-hit calls.
+    checked across successive cache-hit calls.  When all cached entries
+    already have a ``plan.md`` (``no_plan_count == 0``), the O(n)
+    probe-window scan is skipped entirely.
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
@@ -363,7 +370,10 @@ def _discover_with_identity(
             entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
             return []
-        _DISCOVERY_CACHE[root] = _DiscoveryCache(root_id=root_id, entries=entries)
+        no_plan = sum(1 for _, pp in entries if pp is None)
+        _DISCOVERY_CACHE[root] = _DiscoveryCache(
+            root_id=root_id, entries=entries, no_plan_count=no_plan
+        )
         is_cache_hit = False
 
     # On cache hits, select which entries to probe for newly-created
@@ -371,7 +381,12 @@ def _discover_with_identity(
     # eventually checked across successive cache-hit calls.
     probe_indices: frozenset[int] = frozenset()
     current_cache = _DISCOVERY_CACHE.get(root)
-    if is_cache_hit and include_plan and current_cache is not None:
+    if (
+        is_cache_hit
+        and include_plan
+        and current_cache is not None
+        and current_cache.no_plan_count > 0
+    ):
         n = len(entries)
         if n > 0:
             cursor = current_cache.probe_cursor % n
@@ -412,6 +427,8 @@ def _discover_with_identity(
                     # Plan deleted or unreadable — clear cached path to
                     # avoid repeated failing syscalls on cache hits.
                     entries[idx] = (events_path, None)
+                    if current_cache is not None:
+                        current_cache.no_plan_count += 1
             elif idx in probe_indices:
                 # Probe for newly-created plan.md not yet in cache.
                 # Bounded to _MAX_PLAN_PROBES per call; cursor rotates
@@ -420,6 +437,8 @@ def _discover_with_identity(
                 plan_id = safe_file_identity(candidate)
                 if plan_id is not None:
                     entries[idx] = (events_path, candidate)
+                    if current_cache is not None:
+                        current_cache.no_plan_count -= 1
 
         result.append((events_path, events_id, plan_id))
 
@@ -430,9 +449,13 @@ def _discover_with_identity(
         gone_set = frozenset(definitively_gone)
         current = _DISCOVERY_CACHE.get(root)
         if current is not None:
+            removed_no_plan = sum(
+                1 for ep, pp in current.entries if ep in gone_set and pp is None
+            )
             current.entries = [
                 (ep, pp) for ep, pp in current.entries if ep not in gone_set
             ]
+            current.no_plan_count -= removed_no_plan
 
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return result
