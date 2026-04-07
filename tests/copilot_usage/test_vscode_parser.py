@@ -1,5 +1,6 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from copilot_usage.vscode_parser import (
     _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
+    _cached_discover_vscode_logs,  # pyright: ignore[reportPrivateUsage]
     _copy_summary,  # pyright: ignore[reportPrivateUsage]
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
@@ -2118,3 +2120,58 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         summary = get_vscode_summary(file_path)
         assert summary.total_requests == 0
         assert file_path not in _VSCODE_DISCOVERY_CACHE
+
+
+class TestScanChildIdsEdgeCases:
+    """Cover error-handling paths in _scan_child_ids."""
+
+    def test_non_directory_entries_skipped(self, tmp_path: Path) -> None:
+        """Regular files under root are excluded from child_ids."""
+        (tmp_path / "session_dir").mkdir()
+        (tmp_path / "regular_file.txt").write_text("data")
+
+        ids = _scan_child_ids(tmp_path)
+        names = {name for name, _ in ids}
+        assert "session_dir" in names
+        assert "regular_file.txt" not in names
+
+    def test_stat_failure_on_entry_skipped(self, tmp_path: Path) -> None:
+        """An entry whose stat raises OSError is silently skipped."""
+        from unittest.mock import MagicMock
+
+        good_stat = os.stat(tmp_path)
+        good_entry = MagicMock(spec=os.DirEntry)
+        good_entry.name = "good_dir"
+        good_entry.stat.return_value = good_stat
+
+        bad_entry = MagicMock(spec=os.DirEntry)
+        bad_entry.name = "bad_dir"
+        bad_entry.stat.side_effect = OSError("simulated stat failure")
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=iter([good_entry, bad_entry]))
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch("os.scandir", return_value=ctx):
+            ids = _scan_child_ids(tmp_path)
+
+        names = {name for name, _ in ids}
+        assert "good_dir" in names
+        assert "bad_dir" not in names
+
+    def test_scandir_oserror_returns_empty(self) -> None:
+        """When os.scandir itself raises OSError, return empty frozenset."""
+        missing = Path("/nonexistent/path/that/does/not/exist")
+        ids = _scan_child_ids(missing)
+        assert ids == frozenset()
+
+
+class TestCachedDiscoverOsErrors:
+    """Cover OSError paths in _cached_discover_vscode_logs."""
+
+    def test_missing_candidate_skipped(self) -> None:
+        """A candidate whose stat raises OSError produces no results."""
+        missing = Path("/nonexistent/vscode/logs/dir")
+        result = _cached_discover_vscode_logs(missing)
+        assert result == []
+        assert missing not in _VSCODE_DISCOVERY_CACHE
