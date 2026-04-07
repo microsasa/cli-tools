@@ -485,9 +485,8 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     cache; transiently unreadable sessions are skipped but retained in
     the cache.
     """
-    return [
-        p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)[1]
-    ]
+    _, entries = _discover_with_identity(base_path, include_plan=False)
+    return [p for p, _eid, _pid in entries]
 
 
 # ---------------------------------------------------------------------------
