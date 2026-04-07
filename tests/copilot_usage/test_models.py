@@ -185,7 +185,7 @@ def test_assistant_message_data_tool_requests_populated() -> None:
 
 
 class TestSanitizeNonNumericTokens:
-    """Validator maps bool/str outputTokens to 0 to prevent lax coercion."""
+    """Validator maps bool/str/non-positive outputTokens to 0."""
 
     def test_bool_true_maps_to_zero(self) -> None:
         d = AssistantMessageData.model_validate({"outputTokens": True})
@@ -207,8 +207,18 @@ class TestSanitizeNonNumericTokens:
         d = AssistantMessageData.model_validate({"outputTokens": 373})
         assert d.outputTokens == 373
 
-    def test_zero_int_passes_through(self) -> None:
+    def test_zero_int_maps_to_zero(self) -> None:
         d = AssistantMessageData.model_validate({"outputTokens": 0})
+        assert d.outputTokens == 0
+
+    def test_negative_int_maps_to_zero(self) -> None:
+        """Negative token counts are meaningless and map to ``0``."""
+        d = AssistantMessageData.model_validate({"outputTokens": -1})
+        assert d.outputTokens == 0
+
+    def test_large_negative_maps_to_zero(self) -> None:
+        """Large negative values also map to ``0``."""
+        d = AssistantMessageData.model_validate({"outputTokens": -100_000})
         assert d.outputTokens == 0
 
 

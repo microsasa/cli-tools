@@ -4569,8 +4569,52 @@ class TestExtractOutputTokensParametrized:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests: non-integer outputTokens through full pipeline
+# Cross-check: _extract_output_tokens vs AssistantMessageData equivalence
 # ---------------------------------------------------------------------------
+
+_EQUIVALENCE_CASES: list[tuple[str, object]] = [
+    ("bool_true", True),
+    ("bool_false", False),
+    ("str_numeric", "100"),
+    ("str_alpha", "abc"),
+    ("zero", 0),
+    ("negative", -1),
+    ("positive_int", 1),
+    ("large_positive_int", 1234),
+    ("whole_float", 1234.0),
+    ("fractional_float", 3.14),
+]
+
+
+class TestExtractOutputTokensEquivalence:
+    """Both token-extraction paths must agree on whether a value contributes positive tokens."""
+
+    @pytest.mark.parametrize(
+        ("label", "raw_value"),
+        _EQUIVALENCE_CASES,
+        ids=[c[0] for c in _EQUIVALENCE_CASES],
+    )
+    def test_positive_contribution_agreement(
+        self, label: str, raw_value: object
+    ) -> None:
+        """For each input, both paths agree on whether the value contributes a positive token count."""
+        _ = label
+        fast_path_result = _extract_output_tokens(_make_assistant_event(raw_value))
+
+        # Pydantic rejects non-whole floats with a ValidationError; the model
+        # path treats those as non-contributing, same as the fast path.
+        try:
+            model = AssistantMessageData.model_validate({"outputTokens": raw_value})
+            model_contributes = model.outputTokens > 0
+        except ValidationError:
+            model_contributes = False
+
+        fast_path_contributes = fast_path_result is not None
+        assert fast_path_contributes == model_contributes, (
+            f"Divergence for {raw_value!r}: "
+            f"_extract_output_tokens → {fast_path_result}, "
+            f"AssistantMessageData.outputTokens → rejected/0"
+        )
 
 
 class TestExtractOutputTokensIntegration:
