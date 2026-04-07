@@ -142,10 +142,12 @@ def test_architecture_detect_resume_lists_all_indicators() -> None:
         "assistant.message",
     }
     tracked_activity = "assistant.turn_start"
-    # Extract the _detect_resume() bullet from the pipeline section.
+    # Extract the full _detect_resume() bullet paragraph from the pipeline
+    # section so harmless Markdown line wrapping does not break this test.
     match = re.search(
-        r"`_detect_resume\(\)`: scans events[^\n]+",
+        r"^\s*[-*]\s+`_detect_resume\(\)`:.*?(?=^\s*[-*]\s+`|\Z)",
         _ARCH_MD,
+        re.MULTILINE | re.DOTALL,
     )
     assert match, "Could not find the '_detect_resume()' description in architecture.md"
     description = match.group(0)
