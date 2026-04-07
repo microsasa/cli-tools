@@ -4606,14 +4606,16 @@ class TestExtractOutputTokensEquivalence:
         try:
             model = AssistantMessageData.model_validate({"outputTokens": raw_value})
             model_contributes = model.outputTokens > 0
-        except ValidationError:
+            model_result = repr(model.outputTokens)
+        except ValidationError as exc:
             model_contributes = False
+            model_result = f"ValidationError({exc})"
 
         fast_path_contributes = fast_path_result is not None
         assert fast_path_contributes == model_contributes, (
             f"Divergence for {raw_value!r}: "
             f"_extract_output_tokens → {fast_path_result}, "
-            f"AssistantMessageData.outputTokens → rejected/0"
+            f"AssistantMessageData.outputTokens → {model_result}"
         )
 
 
