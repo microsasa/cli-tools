@@ -5,7 +5,6 @@ Discovers session directories, parses ``events.jsonl`` files into typed
 aggregates.
 """
 
-import contextlib
 import dataclasses
 import os
 from collections import OrderedDict
@@ -456,8 +455,14 @@ def _discover_with_identity(
                 if plan_id is not None:
                     entries[idx] = (events_path, candidate)
                     if current_cache is not None:
-                        with contextlib.suppress(ValueError):
+                        try:
                             current_cache.no_plan_indices.remove(idx)
+                        except ValueError:
+                            current_cache.no_plan_indices = [
+                                i
+                                for i, (_, cached_plan_path) in enumerate(entries)
+                                if cached_plan_path is None
+                            ]
 
         result.append((events_path, events_id, plan_id))
 

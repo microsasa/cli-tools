@@ -1187,15 +1187,15 @@ class TestDiscoverProbeWindowBounded:
         """Probe scan accesses ≤ _MAX_PLAN_PROBES entries per call.
 
         Populates ``_DISCOVERY_CACHE`` with **n = 500** fake session
-        entries where **k = 2** have ``plan_path = None``.  A cache-hit
-        call must access at most ``_MAX_PLAN_PROBES`` entries during
-        the probe scan — verified by wrapping ``entries.__getitem__``
-        to count accesses in the probe-index range.  A second call must
-        advance the cursor past the previously-found entries instead of
-        resetting to 0.
+        entries where **k = 8 > _MAX_PLAN_PROBES** have
+        ``plan_path = None``.  A cache-hit call must access at most
+        ``_MAX_PLAN_PROBES`` indices during the probe scan — verified
+        by wrapping ``no_plan_indices.__getitem__`` to count accesses.
+        A second call must advance the cursor past the previously-probed
+        entries instead of resetting to 0.
         """
         n = 500
-        k = 2  # sessions without plan.md
+        k = 8  # k > _MAX_PLAN_PROBES so cursor rotation is observable
 
         # Build sessions on disk for the initial (cache-populating) call.
         for i in range(n):
@@ -1211,6 +1211,32 @@ class TestDiscoverProbeWindowBounded:
         cached = _DISCOVERY_CACHE[tmp_path]
         assert len(cached.no_plan_indices) == k
 
+        # Wrap no_plan_indices with a spy to count __getitem__ accesses.
+        original_no_plan_indices = list(cached.no_plan_indices)
+
+        class _SpyList(list[int]):
+            """List subclass that counts indexed access to no-plan indices."""
+
+            def __init__(self, data: list[int]) -> None:
+                super().__init__(data)
+                self.no_plan_accesses: int = 0
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
+            @overload
+            def __getitem__(self, index: slice, /) -> list[int]: ...
+            def __getitem__(
+                self,
+                index: SupportsIndex | slice,
+                /,
+            ) -> int | list[int]:
+                if not isinstance(index, slice):
+                    self.no_plan_accesses += 1
+                return super().__getitem__(index)
+
+        spy = _SpyList(original_no_plan_indices)
+        cached.no_plan_indices = spy  # type: ignore[assignment]
+
         # Record the cursor before the first cache-hit call.
         cursor_before = cached.probe_cursor
 
@@ -1218,24 +1244,30 @@ class TestDiscoverProbeWindowBounded:
         _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == n
 
-        # The probe scan should have accessed at most _MAX_PLAN_PROBES
-        # entries from no_plan_indices, which has only k entries.
-        # With the O(_MAX_PLAN_PROBES) fix, probe_indices is built
-        # directly from no_plan_indices, so the scan is bounded.
-        probe_count = min(_MAX_PLAN_PROBES, k)
-        assert probe_count == k  # k=2 < _MAX_PLAN_PROBES=5
+        # The probe scan should access at most _MAX_PLAN_PROBES indices.
+        max_allowed = min(_MAX_PLAN_PROBES, k)
+        assert spy.no_plan_accesses <= max_allowed, (
+            f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
+            f"expected at most {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
+        )
 
         # Cursor must have advanced past the probed entries, not reset to 0.
         cursor_after_first = cached.probe_cursor
+        probe_count = min(_MAX_PLAN_PROBES, k)
         expected_cursor = (cursor_before + probe_count) % k
         assert cursor_after_first == expected_cursor, (
             f"probe_cursor should be {expected_cursor} after probing "
             f"{probe_count} of {k} no-plan entries, got {cursor_after_first}"
         )
 
-        # Second cache-hit call — cursor must advance again.
+        # Reset spy counter for second call.
+        spy.no_plan_accesses = 0
+
+        # Second cache-hit call — cursor must advance again, not wrap to 0.
         _, result3 = _discover_with_identity(tmp_path)
         assert len(result3) == n
+
+        assert spy.no_plan_accesses <= max_allowed
 
         cursor_after_second = cached.probe_cursor
         expected_cursor_2 = (cursor_after_first + probe_count) % k
@@ -1244,6 +1276,9 @@ class TestDiscoverProbeWindowBounded:
             f"got {cursor_after_second} (cursor did not advance)"
         )
 
+        # Restore original no_plan_indices.
+        cached.no_plan_indices = original_no_plan_indices
+
     def test_no_plan_indices_directly_indexed(
         self,
         tmp_path: Path,
@@ -1251,12 +1286,10 @@ class TestDiscoverProbeWindowBounded:
         """Probe scan uses no_plan_indices for O(k) lookups, not O(n) iteration.
 
         Uses a spy list subclass to count ``__getitem__`` accesses on
-        the *entries* list during a cache-hit call.  With ``n = 500``
-        sessions and ``k = 2`` without ``plan.md``, the probe-scan
-        portion must access at most ``_MAX_PLAN_PROBES * ceil(n / k)``
-        entries — but with the proper fix it accesses at most ``k``
-        indices in ``no_plan_indices``, so the *entries* ``__getitem__``
-        calls from the probe scan are bounded by ``min(_MAX_PLAN_PROBES, k)``.
+        the *no_plan_indices* list during a cache-hit call.  With
+        ``n = 500`` sessions and ``k = 2`` without ``plan.md``, the
+        probe scan must access at most ``min(_MAX_PLAN_PROBES, k)``
+        indices in ``no_plan_indices``.
         """
         n = 500
         k = 2
@@ -1272,58 +1305,45 @@ class TestDiscoverProbeWindowBounded:
         cached = _DISCOVERY_CACHE[tmp_path]
         assert len(cached.no_plan_indices) == k
 
-        # Record which indices are no-plan to identify probe accesses.
-        no_plan_set = frozenset(cached.no_plan_indices)
+        original_no_plan_indices = list(cached.no_plan_indices)
 
-        # Wrap entries list with a spy to count __getitem__ calls
-        # on no-plan indices during the probe scan.
-        original_entries = cached.entries
+        class _SpyList(list[int]):
+            """List subclass that counts indexed access to no-plan indices."""
 
-        class _SpyList(list[tuple[Path, Path | None]]):
-            """List subclass that counts __getitem__ calls on no-plan indices."""
-
-            def __init__(self, data: list[tuple[Path, Path | None]]) -> None:
+            def __init__(self, data: list[int]) -> None:
                 super().__init__(data)
                 self.no_plan_accesses: int = 0
 
             @overload
-            def __getitem__(
-                self, index: SupportsIndex, /
-            ) -> tuple[Path, Path | None]: ...
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
             @overload
-            def __getitem__(
-                self, index: slice, /
-            ) -> list[tuple[Path, Path | None]]: ...
+            def __getitem__(self, index: slice, /) -> list[int]: ...
             def __getitem__(
                 self,
                 index: SupportsIndex | slice,
                 /,
-            ) -> tuple[Path, Path | None] | list[tuple[Path, Path | None]]:
+            ) -> int | list[int]:
                 if not isinstance(index, slice):
-                    idx = int(index)
-                    if idx in no_plan_set:
-                        self.no_plan_accesses += 1
+                    self.no_plan_accesses += 1
                 return super().__getitem__(index)
 
-        spy = _SpyList(original_entries)
-        cached.entries = spy  # type: ignore[assignment]
+        spy = _SpyList(original_no_plan_indices)
+        cached.no_plan_indices = spy  # type: ignore[assignment]
 
         # Cache-hit call.
         _, result = _discover_with_identity(tmp_path)
         assert len(result) == n
 
-        # The probe scan should access at most _MAX_PLAN_PROBES entries
-        # from no_plan_indices — not iterate all n entries.
-        # Each probed index is accessed once during the main loop
-        # (idx in probe_indices check + entries[idx] access).
-        max_allowed = _MAX_PLAN_PROBES * ((n + k - 1) // k)
+        # The probe scan should access only the bounded prefix of
+        # no_plan_indices used to build probe_indices.
+        max_allowed = min(_MAX_PLAN_PROBES, k)
         assert spy.no_plan_accesses <= max_allowed, (
-            f"probe scan accessed {spy.no_plan_accesses} no-plan entries, "
-            f"expected at most {max_allowed} (n={n}, k={k})"
+            f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
+            f"expected at most {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
         )
 
-        # Restore original entries to avoid side effects.
-        cached.entries = original_entries
+        # Restore original no_plan_indices to avoid side effects.
+        cached.no_plan_indices = original_no_plan_indices
 
 
 # ---------------------------------------------------------------------------
