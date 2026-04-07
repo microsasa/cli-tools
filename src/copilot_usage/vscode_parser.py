@@ -416,7 +416,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     O(num_models + num_categories + num_dates) :func:`_merge_partial`
     instead of O(requests).
     """
-    global _vscode_summary_cache  # noqa: PLW0603
+    global _vscode_summary_cache
 
     logs = discover_vscode_logs(base_path)
     log_ids: list[tuple[Path, tuple[int, int] | None]] = [

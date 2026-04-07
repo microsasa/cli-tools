@@ -951,7 +951,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     between refreshes while avoiding a redundant file read + JSON parse
     on every invocation.
     """
-    global _config_file_id  # noqa: PLW0603
+    global _config_file_id
     current_id = safe_file_identity(_CONFIG_PATH)
     if current_id != _config_file_id:
         _config_file_id = current_id
