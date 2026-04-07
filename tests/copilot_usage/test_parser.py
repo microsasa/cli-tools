@@ -1034,7 +1034,7 @@ class TestDiscoverWithIdentityCache:
 
 
 # ---------------------------------------------------------------------------
-# _discover_with_identity — no_plan_count probe-loop skip (issue #823)
+# _discover_with_identity — no_plan_indices probe-loop skip (issue #823)
 # ---------------------------------------------------------------------------
 
 
@@ -1045,10 +1045,10 @@ class TestDiscoverWithIdentityNoPlanCount:
         self,
         tmp_path: Path,
     ) -> None:
-        """When all entries have plan.md, no_plan_count is 0 and probe loop is skipped.
+        """When all entries have plan.md, no_plan_indices is empty and probe loop is skipped.
 
         Creates 200 sessions each with ``plan.md``.  After the first
-        (cache-populating) call, ``no_plan_count`` must be 0 and a
+        (cache-populating) call, ``no_plan_indices`` must be empty and a
         second (cache-hit) call must not enter the probe-window scan —
         verified by patching ``builtins.range`` and asserting the
         probe-loop ``range(n)`` call is never made.
@@ -1064,7 +1064,7 @@ class TestDiscoverWithIdentityNoPlanCount:
         assert len(result1) == n
 
         cached = _DISCOVERY_CACHE[tmp_path]
-        assert cached.no_plan_count == 0
+        assert len(cached.no_plan_indices) == 0
 
         # Second call — cache hit.  Spy on builtins.range to verify
         # the probe-window scan is never entered (the only range(n)
@@ -1084,14 +1084,14 @@ class TestDiscoverWithIdentityNoPlanCount:
         assert len(result2) == n
         assert probe_range_calls == [], (
             f"probe-window range({n}) was called {len(probe_range_calls)} "
-            f"time(s) despite no_plan_count == 0"
+            f"time(s) despite no_plan_indices being empty"
         )
 
-    def test_no_plan_count_set_on_fresh_discovery(
+    def test_no_plan_indices_set_on_fresh_discovery(
         self,
         tmp_path: Path,
     ) -> None:
-        """no_plan_count matches the number of entries without plan.md."""
+        """no_plan_indices length matches the number of entries without plan.md."""
         n_total = 10
         n_with_plan = 4
         for i in range(n_total):
@@ -1103,32 +1103,32 @@ class TestDiscoverWithIdentityNoPlanCount:
         _discover_with_identity(tmp_path)
 
         cached = _DISCOVERY_CACHE[tmp_path]
-        assert cached.no_plan_count == n_total - n_with_plan
+        assert len(cached.no_plan_indices) == n_total - n_with_plan
 
-    def test_no_plan_count_decremented_on_probe_success(
+    def test_no_plan_indices_shrinks_on_probe_success(
         self,
         tmp_path: Path,
     ) -> None:
-        """no_plan_count decreases when a probe discovers a new plan.md."""
+        """no_plan_indices shrinks when a probe discovers a new plan.md."""
         sess = tmp_path / "sess-0"
         _write_events(sess / "events.jsonl", _START_EVENT)
 
         # Populate cache — no plan.md.
         _discover_with_identity(tmp_path)
         cached = _DISCOVERY_CACHE[tmp_path]
-        assert cached.no_plan_count == 1
+        assert len(cached.no_plan_indices) == 1
 
         # Create plan.md, trigger cache-hit probe.
         (sess / "plan.md").write_text("# New Plan\n", encoding="utf-8")
         _discover_with_identity(tmp_path)
 
-        assert cached.no_plan_count == 0
+        assert len(cached.no_plan_indices) == 0
 
-    def test_no_plan_count_incremented_on_plan_deletion(
+    def test_no_plan_indices_grows_on_plan_deletion(
         self,
         tmp_path: Path,
     ) -> None:
-        """no_plan_count increases when a previously-present plan.md is deleted."""
+        """no_plan_indices grows when a previously-present plan.md is deleted."""
         sess = tmp_path / "sess-0"
         _write_events(sess / "events.jsonl", _START_EVENT)
         plan = sess / "plan.md"
@@ -1137,22 +1137,23 @@ class TestDiscoverWithIdentityNoPlanCount:
         # Populate cache — plan.md present.
         _discover_with_identity(tmp_path)
         cached = _DISCOVERY_CACHE[tmp_path]
-        assert cached.no_plan_count == 0
+        assert len(cached.no_plan_indices) == 0
 
         # Delete plan.md, trigger cache-hit call.
         plan.unlink()
         _discover_with_identity(tmp_path)
 
-        assert cached.no_plan_count == 1
+        assert len(cached.no_plan_indices) == 1
 
-    def test_no_plan_count_adjusted_on_prune(
+    def test_no_plan_indices_adjusted_on_prune(
         self,
         tmp_path: Path,
     ) -> None:
-        """no_plan_count is adjusted when entries are pruned.
+        """no_plan_indices is rebuilt when entries are pruned.
 
         Deleting ``events.jsonl`` for a session without ``plan.md``
-        must decrement ``no_plan_count`` when the entry is pruned.
+        must remove its index from ``no_plan_indices`` when the entry
+        is pruned.
         """
         for i in range(3):
             sess = tmp_path / f"sess-{i}"
@@ -1162,13 +1163,245 @@ class TestDiscoverWithIdentityNoPlanCount:
 
         _discover_with_identity(tmp_path)
         cached = _DISCOVERY_CACHE[tmp_path]
-        assert cached.no_plan_count == 2
+        assert len(cached.no_plan_indices) == 2
 
         # Delete events.jsonl for a no-plan session.
         (tmp_path / "sess-1" / "events.jsonl").unlink()
         _discover_with_identity(tmp_path)
 
-        assert cached.no_plan_count == 1
+        assert len(cached.no_plan_indices) == 1
+
+
+# ---------------------------------------------------------------------------
+# _discover_with_identity — O(_MAX_PLAN_PROBES) probe scan (issue #843)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverProbeWindowBounded:
+    """Probe-window scan is O(_MAX_PLAN_PROBES), not O(n_sessions)."""
+
+    def test_probe_scan_bounded_and_cursor_advances(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Probe scan accesses ≤ _MAX_PLAN_PROBES entries per call.
+
+        Populates ``_DISCOVERY_CACHE`` with **n = 500** fake session
+        entries where **k = 8 > _MAX_PLAN_PROBES** have
+        ``plan_path = None``.  A cache-hit call must access at most
+        ``_MAX_PLAN_PROBES`` indices during the probe scan — verified
+        by wrapping ``no_plan_indices.__getitem__`` to count accesses.
+        A second call must advance the cursor past the previously-probed
+        entries instead of resetting to 0.
+        """
+        n = 500
+        k = 8  # k > _MAX_PLAN_PROBES so cursor rotation is observable
+
+        # Build sessions on disk for the initial (cache-populating) call.
+        for i in range(n):
+            sess = tmp_path / f"sess-{i:04d}"
+            _write_events(sess / "events.jsonl", _START_EVENT)
+            if i >= k:
+                (sess / "plan.md").write_text(f"# Session {i}\n", encoding="utf-8")
+
+        # Populate cache.
+        _, result1 = _discover_with_identity(tmp_path)
+        assert len(result1) == n
+
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert len(cached.no_plan_indices) == k
+
+        # Wrap no_plan_indices with a spy to count __getitem__ accesses.
+        original_no_plan_indices = list(cached.no_plan_indices)
+
+        class _SpyList(list[int]):
+            """List subclass that counts indexed access to no-plan indices."""
+
+            def __init__(self, data: list[int]) -> None:
+                super().__init__(data)
+                self.no_plan_accesses: int = 0
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
+            @overload
+            def __getitem__(self, index: slice, /) -> list[int]: ...
+            def __getitem__(
+                self,
+                index: SupportsIndex | slice,
+                /,
+            ) -> int | list[int]:
+                if not isinstance(index, slice):
+                    self.no_plan_accesses += 1
+                return super().__getitem__(index)
+
+        spy = _SpyList(original_no_plan_indices)
+        cached.no_plan_indices = spy  # type: ignore[assignment]
+
+        # Record the cursor before the first cache-hit call.
+        cursor_before = cached.probe_cursor
+
+        # First cache-hit call — verify bounded probe scan.
+        _, result2 = _discover_with_identity(tmp_path)
+        assert len(result2) == n
+
+        # The probe scan should access exactly the bounded probe window.
+        max_allowed = min(_MAX_PLAN_PROBES, k)
+        assert spy.no_plan_accesses == max_allowed, (
+            f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
+            f"expected exactly {max_allowed} "
+            f"(_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
+        )
+
+        # Cursor must have advanced past the probed entries, not reset to 0.
+        cursor_after_first = cached.probe_cursor
+        probe_count = min(_MAX_PLAN_PROBES, k)
+        expected_cursor = (cursor_before + probe_count) % k
+        assert cursor_after_first == expected_cursor, (
+            f"probe_cursor should be {expected_cursor} after probing "
+            f"{probe_count} of {k} no-plan entries, got {cursor_after_first}"
+        )
+
+        # Reset spy counter for second call.
+        spy.no_plan_accesses = 0
+
+        # Second cache-hit call — cursor must advance again, not wrap to 0.
+        _, result3 = _discover_with_identity(tmp_path)
+        assert len(result3) == n
+
+        assert spy.no_plan_accesses == max_allowed
+
+        cursor_after_second = cached.probe_cursor
+        expected_cursor_2 = (cursor_after_first + probe_count) % k
+        assert cursor_after_second == expected_cursor_2, (
+            f"probe_cursor should be {expected_cursor_2} after second call, "
+            f"got {cursor_after_second} (cursor did not advance)"
+        )
+
+        # Restore original no_plan_indices.
+        cached.no_plan_indices = original_no_plan_indices
+
+    def test_no_plan_indices_directly_indexed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Probe scan uses no_plan_indices for O(k) lookups, not O(n) iteration.
+
+        Uses a spy list subclass to count ``__getitem__`` accesses on
+        the *no_plan_indices* list during a cache-hit call.  With
+        ``n = 500`` sessions and ``k = 2`` without ``plan.md``, the
+        probe scan must access at most ``min(_MAX_PLAN_PROBES, k)``
+        indices in ``no_plan_indices``.
+        """
+        n = 500
+        k = 2
+
+        for i in range(n):
+            sess = tmp_path / f"sess-{i:04d}"
+            _write_events(sess / "events.jsonl", _START_EVENT)
+            if i >= k:
+                (sess / "plan.md").write_text(f"# Session {i}\n", encoding="utf-8")
+
+        # Populate cache.
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert len(cached.no_plan_indices) == k
+
+        original_no_plan_indices = list(cached.no_plan_indices)
+
+        class _SpyList(list[int]):
+            """List subclass that counts indexed access to no-plan indices."""
+
+            def __init__(self, data: list[int]) -> None:
+                super().__init__(data)
+                self.no_plan_accesses: int = 0
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
+            @overload
+            def __getitem__(self, index: slice, /) -> list[int]: ...
+            def __getitem__(
+                self,
+                index: SupportsIndex | slice,
+                /,
+            ) -> int | list[int]:
+                if not isinstance(index, slice):
+                    self.no_plan_accesses += 1
+                return super().__getitem__(index)
+
+        spy = _SpyList(original_no_plan_indices)
+        cached.no_plan_indices = spy  # type: ignore[assignment]
+
+        # Cache-hit call.
+        _, result = _discover_with_identity(tmp_path)
+        assert len(result) == n
+
+        # The probe scan should access exactly the bounded prefix of
+        # no_plan_indices used to build probe_indices.
+        max_allowed = min(_MAX_PLAN_PROBES, k)
+        assert max_allowed > 0
+        assert spy.no_plan_accesses == max_allowed, (
+            f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
+            f"expected exactly {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
+        )
+
+        # Restore original no_plan_indices to avoid side effects.
+        cached.no_plan_indices = original_no_plan_indices
+
+    def test_no_plan_indices_rebuilt_on_remove_invariant_violation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """except-ValueError recovery rebuilds no_plan_indices from entries.
+
+        Simulates an invariant violation where ``no_plan_indices.remove(idx)``
+        raises ``ValueError`` (idx not in list).  The recovery path must
+        rebuild ``no_plan_indices`` from ``entries`` so subsequent calls
+        stay correct.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md.
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert len(cached.no_plan_indices) == 1
+
+        # Create plan.md so the probe will succeed.
+        (sess / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        # Inject a list subclass whose remove() always raises ValueError,
+        # simulating a stale/inconsistent no_plan_indices state.
+        original_idx = cached.no_plan_indices[0]
+
+        class _FaultyRemoveList(list[int]):
+            """List that raises ValueError on remove to trigger recovery."""
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
+            @overload
+            def __getitem__(self, index: slice, /) -> list[int]: ...
+            def __getitem__(
+                self,
+                index: SupportsIndex | slice,
+                /,
+            ) -> int | list[int]:
+                return super().__getitem__(index)
+
+            def remove(self, value: int, /) -> None:
+                raise ValueError("forced invariant violation")
+
+        faulty = _FaultyRemoveList([original_idx])
+        cached.no_plan_indices = faulty  # type: ignore[assignment]
+
+        # Cache-hit call: probe finds plan.md, remove() raises ValueError,
+        # recovery path rebuilds no_plan_indices from entries.
+        _, result = _discover_with_identity(tmp_path)
+        assert len(result) == 1
+
+        # After recovery, no_plan_indices must reflect actual entry state.
+        # The plan was found, so entries[0] now has a plan_path and
+        # no_plan_indices should be empty (all entries have plan.md).
+        assert cached.no_plan_indices == []
 
 
 # ---------------------------------------------------------------------------

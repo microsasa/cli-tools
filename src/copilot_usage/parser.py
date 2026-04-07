@@ -54,19 +54,22 @@ class _DiscoveryCache:
     calls are issued to detect content changes.
 
     *probe_cursor* tracks where the next ``plan.md`` probe sweep should
-    start so that every session is eventually probed across multiple
-    cache-hit calls rather than always probing the first
-    ``_MAX_PLAN_PROBES`` entries.
+    start within *no_plan_indices* so that every session is eventually
+    probed across multiple cache-hit calls rather than always probing
+    the first ``_MAX_PLAN_PROBES`` entries.
 
-    *no_plan_count* tracks the number of entries where ``plan_path`` is
-    ``None``.  When zero, the O(n) probe-window scan is skipped entirely
-    because there are no entries to probe.
+    *no_plan_indices* stores the indices (into *entries*) of sessions
+    where ``plan_path`` is ``None``.  When empty, the probe scan is
+    skipped entirely because there are no entries to probe.  The list
+    is kept in sync at every mutation site so the probe walk is bounded
+    by ``min(_MAX_PLAN_PROBES, len(no_plan_indices))`` — O(1) amortised
+    regardless of the total number of sessions.
     """
 
     root_id: tuple[int, int] | None
     entries: list[tuple[Path, Path | None]]  # (events_path, plan_path)
     probe_cursor: int = 0
-    no_plan_count: int = 0
+    no_plan_indices: list[int] = dataclasses.field(default_factory=lambda: [])
 
 
 # Module-level discovery cache: root_path → _DiscoveryCache.
@@ -365,9 +368,12 @@ def _discover_with_identity(
     for a newly-created file so that session names appear without a full
     rescan; the probe window rotates via a per-root cursor stored in
     ``_DiscoveryCache.probe_cursor`` so every session is eventually
-    checked across successive cache-hit calls.  When all cached entries
-    already have a ``plan.md`` (``no_plan_count == 0``), the O(n)
-    probe-window scan is skipped entirely.
+    checked across successive cache-hit calls.  The scan walks the
+    explicit ``no_plan_indices`` list rather than iterating all entries,
+    so it is bounded by ``min(_MAX_PLAN_PROBES, len(no_plan_indices))``
+    regardless of ``n_sessions``.  When all cached entries already have
+    a ``plan.md`` (``no_plan_indices`` is empty), the probe scan is
+    skipped entirely.
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
@@ -386,38 +392,33 @@ def _discover_with_identity(
             entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
             return False, []
-        no_plan = sum(1 for _, pp in entries if pp is None)
+        no_plan_idx = [i for i, (_, pp) in enumerate(entries) if pp is None]
         _DISCOVERY_CACHE[root] = _DiscoveryCache(
-            root_id=root_id, entries=entries, no_plan_count=no_plan
+            root_id=root_id, entries=entries, no_plan_indices=no_plan_idx
         )
         is_cache_hit = False
 
     # On cache hits, select which entries to probe for newly-created
     # plan.md, rotating from the stored cursor so every session is
     # eventually checked across successive cache-hit calls.
+    # The scan walks *no_plan_indices* directly, so it is bounded by
+    # min(_MAX_PLAN_PROBES, len(no_plan_indices)) — O(1) amortised
+    # regardless of the total number of sessions.
     probe_indices: frozenset[int] = frozenset()
     current_cache = _DISCOVERY_CACHE.get(root)
     if (
         is_cache_hit
         and include_plan
         and current_cache is not None
-        and current_cache.no_plan_count > 0
+        and len(current_cache.no_plan_indices) > 0
     ):
-        n = len(entries)
-        if n > 0:
-            cursor = current_cache.probe_cursor % n
-            selected: list[int] = []
-            for offset in range(n):
-                i = (cursor + offset) % n
-                if entries[i][1] is None:
-                    selected.append(i)
-                    if len(selected) >= _MAX_PLAN_PROBES:
-                        current_cache.probe_cursor = (i + 1) % n
-                        break
-            else:
-                # All entries scanned; wrap cursor to start.
-                current_cache.probe_cursor = 0
-            probe_indices = frozenset(selected)
+        k = len(current_cache.no_plan_indices)
+        start = current_cache.probe_cursor % k
+        count = min(_MAX_PLAN_PROBES, k)
+        probe_indices = frozenset(
+            current_cache.no_plan_indices[(start + i) % k] for i in range(count)
+        )
+        current_cache.probe_cursor = (start + count) % k
 
     result: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]] = []
     definitively_gone: list[Path] = []
@@ -444,7 +445,7 @@ def _discover_with_identity(
                     # avoid repeated failing syscalls on cache hits.
                     entries[idx] = (events_path, None)
                     if current_cache is not None:
-                        current_cache.no_plan_count += 1
+                        current_cache.no_plan_indices.append(idx)
             elif idx in probe_indices:
                 # Probe for newly-created plan.md not yet in cache.
                 # Bounded to _MAX_PLAN_PROBES per call; cursor rotates
@@ -454,7 +455,14 @@ def _discover_with_identity(
                 if plan_id is not None:
                     entries[idx] = (events_path, candidate)
                     if current_cache is not None:
-                        current_cache.no_plan_count -= 1
+                        try:
+                            current_cache.no_plan_indices.remove(idx)
+                        except ValueError:
+                            current_cache.no_plan_indices = [
+                                i
+                                for i, (_, cached_plan_path) in enumerate(entries)
+                                if cached_plan_path is None
+                            ]
 
         result.append((events_path, events_id, plan_id))
 
@@ -465,13 +473,13 @@ def _discover_with_identity(
         gone_set = frozenset(definitively_gone)
         current = _DISCOVERY_CACHE.get(root)
         if current is not None:
-            removed_no_plan = sum(
-                1 for ep, pp in current.entries if ep in gone_set and pp is None
-            )
             current.entries = [
                 (ep, pp) for ep, pp in current.entries if ep not in gone_set
             ]
-            current.no_plan_count -= removed_no_plan
+            # Rebuild no_plan_indices since entry indices shifted.
+            current.no_plan_indices = [
+                i for i, (_, pp) in enumerate(current.entries) if pp is None
+            ]
         # A cached events.jsonl was deleted without changing the root
         # directory identity.  Signal a non-hit so callers still run
         # their stale-prune scans on _SESSION_CACHE / _EVENTS_CACHE.
