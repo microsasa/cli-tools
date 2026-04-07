@@ -6420,6 +6420,71 @@ class TestSessionCacheMtime:
 
 
 # ---------------------------------------------------------------------------
+# Issue #827 — stale-entry pruning scoped to current base_path
+# ---------------------------------------------------------------------------
+
+
+class TestStalePruningScopedToBasePath:
+    """Stale-entry pruning must not evict entries from other base paths."""
+
+    @staticmethod
+    def _make_session(base: Path, name: str, sid: str) -> Path:
+        """Create a completed session and return the events.jsonl path."""
+        return _make_completed_session(base, name, sid)
+
+    def test_different_base_paths_preserve_each_others_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """Calling get_all_sessions with path_b must not evict path_a entries."""
+        path_a = tmp_path / "root_a"
+        path_b = tmp_path / "root_b"
+        pa = self._make_session(path_a, "sess-a", "a")
+        pb = self._make_session(path_b, "sess-b", "b")
+
+        get_all_sessions(path_a)
+        assert pa in _SESSION_CACHE
+
+        # Calling with a different root must not evict path_a's entries.
+        get_all_sessions(path_b)
+        assert pa in _SESSION_CACHE, "path_a entry evicted by path_b call"
+        assert pb in _SESSION_CACHE
+
+    def test_no_reparse_after_switching_base_paths(self, tmp_path: Path) -> None:
+        """Returning to path_a after path_b must not re-parse (cache hit)."""
+        path_a = tmp_path / "root_a"
+        path_b = tmp_path / "root_b"
+        self._make_session(path_a, "sess-a", "a")
+        self._make_session(path_b, "sess-b", "b")
+
+        get_all_sessions(path_a)
+        get_all_sessions(path_b)
+
+        # Third call back to path_a — parse_events should not be called.
+        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            result = get_all_sessions(path_a)
+            assert len(result) == 1
+            assert spy.call_count == 0
+
+    def test_stale_pruning_still_works_within_same_root(self, tmp_path: Path) -> None:
+        """Deleted sessions under the *same* root are still evicted."""
+        import shutil
+
+        path_a = tmp_path / "root_a"
+        p1 = self._make_session(path_a, "sess-1", "s1")
+        p2 = self._make_session(path_a, "sess-2", "s2")
+
+        get_all_sessions(path_a)
+        assert p1 in _SESSION_CACHE
+        assert p2 in _SESSION_CACHE
+
+        shutil.rmtree(p2.parent)
+
+        get_all_sessions(path_a)
+        assert p1 in _SESSION_CACHE
+        assert p2 not in _SESSION_CACHE, "Deleted session not evicted"
+
+
+# ---------------------------------------------------------------------------
 # Issue #552 — active sessions cached in _SESSION_CACHE
 # ---------------------------------------------------------------------------
 
