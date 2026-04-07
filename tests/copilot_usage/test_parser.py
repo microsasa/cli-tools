@@ -6539,12 +6539,14 @@ class TestStalePruningScopedToBasePath:
 
 
 class TestStalePruneScanSkippedOnCacheHit:
-    """Stale-prune scan in get_all_sessions is skipped on discovery cache hits.
+    """Stale-prune scan in get_all_sessions is skipped on pure cache hits.
 
-    When ``_discover_with_identity`` returns a cache hit the root
-    directory is unchanged, so no sessions can have been added or
-    removed.  The O(cache_size) stale-prune scan is therefore
-    unnecessary and must be skipped.
+    When ``_discover_with_identity`` returns ``is_cache_hit=True`` the
+    root directory is unchanged *and* no cached ``events.jsonl`` was
+    definitively deleted, so no sessions can have been added or removed.
+    The O(cache_size) stale-prune scan is therefore unnecessary and must
+    be skipped.  If deletions *are* detected, ``is_cache_hit`` is
+    flipped to ``False`` and the scan must run.
     """
 
     @staticmethod
@@ -6603,6 +6605,48 @@ class TestStalePruneScanSkippedOnCacheHit:
         assert len(result) == 1
         assert p1 in _SESSION_CACHE
         assert p2 not in _SESSION_CACHE, "Deleted session not evicted on cache miss"
+
+    def test_stale_prune_runs_on_events_jsonl_deletion(self, tmp_path: Path) -> None:
+        """Deleting events.jsonl without changing root dir mtime still prunes.
+
+        When ``events.jsonl`` is removed inside a session directory the
+        root directory's identity may remain unchanged (the session
+        *subdirectory* inode changes, but many filesystems only bump the
+        parent's mtime when a direct child is added/removed).
+        ``_discover_with_identity`` detects the ``FileNotFoundError``
+        and flips ``is_cache_hit`` to ``False`` so that
+        ``get_all_sessions`` still runs its stale-prune scan and evicts
+        the orphaned ``_SESSION_CACHE`` / ``_EVENTS_CACHE`` entries.
+        """
+        p1 = self._make_session(tmp_path, "sess-a", "a")
+        p2 = self._make_session(tmp_path, "sess-b", "b")
+
+        # First call populates all caches (discovery miss).
+        result1 = get_all_sessions(tmp_path)
+        assert len(result1) == 2
+        assert p1 in _SESSION_CACHE
+        assert p2 in _SESSION_CACHE
+
+        # Save root dir identity so we can restore it after deletion.
+        root = tmp_path.resolve()
+        orig_stat = root.stat()
+
+        # Delete only events.jsonl — the session dir still exists so
+        # many filesystems won't update the root dir mtime.
+        p2.unlink()
+
+        # Restore root mtime/atime to guarantee root identity is unchanged.
+        os.utime(root, ns=(orig_stat.st_atime_ns, orig_stat.st_mtime_ns))
+
+        result2 = get_all_sessions(tmp_path)
+        assert len(result2) == 1
+        assert p1 in _SESSION_CACHE
+        assert p2 not in _SESSION_CACHE, (
+            "Stale _SESSION_CACHE entry not pruned after events.jsonl deletion"
+        )
+        assert p2 not in _EVENTS_CACHE, (
+            "Stale _EVENTS_CACHE entry not pruned after events.jsonl deletion"
+        )
 
 
 # ---------------------------------------------------------------------------

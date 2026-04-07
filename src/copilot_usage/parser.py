@@ -322,8 +322,12 @@ def _discover_with_identity(
     """Find session ``events.jsonl`` files paired with their file identities.
 
     Returns a ``(is_cache_hit, entries)`` tuple.  *is_cache_hit* is
-    ``True`` when the root directory's identity was unchanged and no full
-    rescan was necessary.  *entries* is a list of
+    ``True`` when the root directory's identity was unchanged, no full
+    rescan was necessary, **and** no cached ``events.jsonl`` was
+    definitively deleted (``FileNotFoundError``).  If deletions are
+    detected during a root-level cache hit, *is_cache_hit* is set to
+    ``False`` so that callers (e.g. ``get_all_sessions``) still run
+    their stale-prune scans.  *entries* is a list of
     ``(events_path, events_file_id, plan_file_id)`` tuples sorted by
     *events_file_id* (mtime descending, then size as tie-breaker).
 
@@ -459,6 +463,10 @@ def _discover_with_identity(
                 (ep, pp) for ep, pp in current.entries if ep not in gone_set
             ]
             current.no_plan_count -= removed_no_plan
+        # A cached events.jsonl was deleted without changing the root
+        # directory identity.  Signal a non-hit so callers still run
+        # their stale-prune scans on _SESSION_CACHE / _EVENTS_CACHE.
+        is_cache_hit = False
 
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
     return is_cache_hit, result
@@ -1082,9 +1090,12 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Only remove entries rooted under the *current* base_path so that
     # callers using multiple roots in the same process don't evict each
     # other's cached entries.
-    # Skip this scan entirely on discovery cache hits — the root
-    # directory is unchanged so no sessions can have been added or
-    # removed, making the O(cache_size) scan unnecessary.
+    # Skipped on discovery cache hits — when the root directory is
+    # unchanged *and* no cached events.jsonl was deleted, no sessions
+    # can have been added or removed, making the O(cache_size) scan
+    # unnecessary.  _discover_with_identity flips is_cache_hit to
+    # False when it prunes definitively-deleted entries, ensuring the
+    # scan still runs when needed.
     if not is_cache_hit:
         root = (base_path or _DEFAULT_BASE).resolve()
         discovered_paths = {p for p, _, _ in discovered}
