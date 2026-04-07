@@ -211,9 +211,19 @@ class TestSanitizeNonNumericTokens:
         d = AssistantMessageData.model_validate({"outputTokens": 0})
         assert d.outputTokens == 0
 
+    def test_zero_float_maps_to_zero(self) -> None:
+        """Non-positive float token counts also map to ``0``."""
+        d = AssistantMessageData.model_validate({"outputTokens": 0.0})
+        assert d.outputTokens == 0
+
     def test_negative_int_maps_to_zero(self) -> None:
         """Negative token counts are meaningless and map to ``0``."""
         d = AssistantMessageData.model_validate({"outputTokens": -1})
+        assert d.outputTokens == 0
+
+    def test_negative_float_maps_to_zero(self) -> None:
+        """Negative float token counts also map to ``0``."""
+        d = AssistantMessageData.model_validate({"outputTokens": -1.0})
         assert d.outputTokens == 0
 
     def test_large_negative_maps_to_zero(self) -> None:
