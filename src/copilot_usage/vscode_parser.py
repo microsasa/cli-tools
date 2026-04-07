@@ -189,10 +189,17 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     """Return discovered log paths, skipping glob when the root is unchanged.
 
     Each candidate root directory is stat'd and its immediate child
-    directories are scanned.  On a cache hit (same root
-    ``(st_mtime_ns, st_size)`` *and* same child-directory identities),
-    the stored paths are reused without re-running the multi-level glob.
-    On a miss, the glob runs and the cache is updated.
+    directories are scanned via :func:`_scan_child_ids` (one
+    ``os.scandir`` plus one ``DirEntry.stat`` per child).  On a cache
+    hit (same root ``(st_mtime_ns, st_size)`` *and* same child-directory
+    identities), the stored paths are reused without re-running the
+    multi-level glob.  On a miss, the glob runs and the cache is
+    updated.
+
+    Steady-state cost per candidate root is therefore O(children) —
+    one ``stat`` on the root plus one ``scandir`` walk — which is still
+    significantly cheaper than the deep recursive glob it replaces, but
+    not constant-time.
 
     A non-directory candidate is skipped with an empty result, matching
     the behaviour of :func:`discover_vscode_logs`.
@@ -519,7 +526,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     Discovery uses :func:`_cached_discover_vscode_logs` to avoid
     redundant multi-level glob traversals when the candidate root
     directories and their immediate child session directories have not
-    changed on disk.
+    changed on disk.  The steady-state discovery cost is O(children)
+    per candidate root (one ``stat`` on the root plus one ``scandir``
+    walk), not constant-time — but still much cheaper than the deep
+    recursive glob it replaces.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
