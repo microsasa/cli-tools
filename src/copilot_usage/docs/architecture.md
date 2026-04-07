@@ -40,7 +40,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | `render_detail.py` | Session detail rendering — extracted from report.py. Displays event timeline, per-event metadata, and session-level aggregates. |
 | `_formatting.py` | Shared formatting utilities — `format_duration()` and `format_tokens()` with doctest-verified examples. Used by report.py and render_detail.py. |
 | `pricing.py` | Model pricing registry — multiplier lookup, tier categorization. Multipliers are used for `~`-prefixed cost estimates in live/active views (`render_live_sessions`, `render_cost_view`); historical post-shutdown views use exact API-provided numbers exclusively. |
-| `logging_config.py` | Loguru setup — stderr warnings only, no file output. Runtime `import loguru` for pyright to resolve the `"loguru.Record"` string annotation. Called once from CLI entry point. |
+| `logging_config.py` | Loguru setup — stderr warnings only, no file output. Uses a `_PatcherRecord` TypedDict to type-check the emoji-injection patcher without importing the unresolvable `loguru.Record` type at runtime. Called once from CLI entry point. |
 | `vscode_parser.py` | VS Code Copilot Chat log parser — discovers log files per platform (macOS/Windows/Linux), parses `ccreq:` lines with regex, aggregates into `VSCodeLogSummary`. |
 | `vscode_report.py` | Rich rendering for VS Code usage data — totals panel, per-model table, feature breakdown, daily activity. Accepts optional `target_console` for testing. |
 
@@ -51,7 +51,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type. Unknown event types still validate as `SessionEvent`, but normal processing ignores them unless a caller explicitly validates `data` with `GenericEventData`.
 4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
    - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
-   - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`)
+   - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`, `assistant.turn_start`)
    - `_build_completed_summary()`: merges all shutdown cycles (metrics, premium requests, code changes) into a SessionSummary. Sets `is_active=True` if resumed.
    - `_build_active_summary()`: for sessions with no shutdowns — infers model from `tool.execution_complete` events or `~/.copilot/config.json`, builds synthetic metrics from output tokens
    - Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between helpers
