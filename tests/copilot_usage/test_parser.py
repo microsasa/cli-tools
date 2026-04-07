@@ -4274,14 +4274,14 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(42)) == 42
 
     def test_coerces_whole_float_to_int(self) -> None:
-        """Whole-number floats like ``1234.0`` are coerced to int via Pydantic."""
+        """Whole-number floats like ``1234.0`` are coerced to int."""
         assert _extract_output_tokens(_make_assistant_event(1234.0)) == 1234
 
     def test_returns_none_for_fractional_float(self) -> None:
         assert _extract_output_tokens(_make_assistant_event(3.14)) is None
 
     def test_returns_none_for_bool_true(self) -> None:
-        """Boolean True is mapped to 0 by the field validator, not coerced to 1."""
+        """Boolean True is treated as invalid, not coerced to 1."""
         assert _extract_output_tokens(_make_assistant_event(True)) is None
 
     def test_returns_none_for_bool_false(self) -> None:
@@ -4291,11 +4291,11 @@ class TestExtractOutputTokens:
         assert _extract_output_tokens(_make_assistant_event(None)) is None
 
     def test_returns_none_for_string(self) -> None:
-        """Strings are mapped to 0 by the field validator, even numeric ones."""
+        """Strings are treated as invalid, even numeric ones."""
         assert _extract_output_tokens(_make_assistant_event("abc")) is None
 
     def test_returns_none_for_numeric_string(self) -> None:
-        """Numeric strings like ``"100"`` are mapped to 0, not coerced to int."""
+        """Numeric strings like ``"100"`` are treated as invalid, not coerced to int."""
         assert _extract_output_tokens(_make_assistant_event("100")) is None
 
     def test_returns_none_for_zero(self) -> None:
@@ -4314,6 +4314,70 @@ class TestExtractOutputTokens:
             data={"unexpected": "payload", "outputTokens": "not-a-number"},
         )
         assert _extract_output_tokens(ev) is None
+
+    def test_returns_none_for_missing_key(self) -> None:
+        """An event with no outputTokens key yields None."""
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={"messageId": "m1", "content": "hi"},
+            id="ev-test",
+            timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+        )
+        assert _extract_output_tokens(ev) is None
+
+
+_EXTRACT_TOKENS_CASES: list[tuple[str, object, int | None]] = [
+    ("valid_int", 42, 42),
+    ("whole_float", 1234.0, 1234),
+    ("bool_true", True, None),
+    ("str_numeric", "100", None),
+    ("fractional_float", 1.5, None),
+    ("none_value", None, None),
+]
+
+
+class TestExtractOutputTokensParametrized:
+    """Parametrized tests ensuring _extract_output_tokens matches field-validator behaviour."""
+
+    @pytest.mark.parametrize(
+        ("label", "raw_value", "expected"),
+        _EXTRACT_TOKENS_CASES,
+        ids=[c[0] for c in _EXTRACT_TOKENS_CASES],
+    )
+    def test_output_matches_expected(
+        self, label: str, raw_value: object, expected: int | None
+    ) -> None:
+        """Each raw value produces the expected result without Pydantic."""
+        _ = label  # used only as test-case id
+        assert _extract_output_tokens(_make_assistant_event(raw_value)) == expected
+
+    @pytest.mark.parametrize(
+        ("label", "raw_value", "expected"),
+        _EXTRACT_TOKENS_CASES,
+        ids=[c[0] for c in _EXTRACT_TOKENS_CASES],
+    )
+    def test_no_pydantic_model_validate_called(
+        self, label: str, raw_value: object, expected: int | None
+    ) -> None:
+        """AssistantMessageData.model_validate must NOT be called."""
+        _ = label, expected  # used only as test-case id / reference
+        with patch.object(
+            AssistantMessageData, "model_validate", side_effect=AssertionError
+        ):
+            _extract_output_tokens(_make_assistant_event(raw_value))
+
+    def test_missing_key_no_pydantic(self) -> None:
+        """Missing outputTokens key returns None without Pydantic."""
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={"messageId": "m1", "content": "hi"},
+            id="ev-test",
+            timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+        )
+        with patch.object(
+            AssistantMessageData, "model_validate", side_effect=AssertionError
+        ):
+            assert _extract_output_tokens(ev) is None
 
 
 # ---------------------------------------------------------------------------
