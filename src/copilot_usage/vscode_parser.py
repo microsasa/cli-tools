@@ -202,9 +202,18 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     for candidate in candidates:
         try:
             st = candidate.stat()
-        except OSError:
+        except OSError as exc:
+            logger.debug(
+                "Skipping VS Code logs candidate {}: stat() failed: {}",
+                candidate,
+                exc,
+            )
             continue
         if not stat.S_ISDIR(st.st_mode):
+            logger.debug(
+                "Skipping VS Code logs candidate {}: logs directory not found",
+                candidate,
+            )
             continue
         root_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
         child_ids = _scan_child_ids(candidate)

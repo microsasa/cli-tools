@@ -2005,7 +2005,6 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         def _counting_glob(
             self: Path,
             pattern: str,
-            **kwargs: object,  # noqa: N805
         ) -> list[Path]:
             nonlocal glob_call_count
             glob_call_count += 1
@@ -2046,7 +2045,6 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         def _counting_glob(
             self: Path,
             pattern: str,
-            **kwargs: object,  # noqa: N805
         ) -> list[Path]:
             nonlocal glob_call_count
             glob_call_count += 1
@@ -2090,7 +2088,6 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         def _counting_glob(
             self: Path,
             pattern: str,
-            **kwargs: object,  # noqa: N805
         ) -> list[Path]:
             nonlocal glob_call_count
             glob_call_count += 1
@@ -2159,9 +2156,9 @@ class TestScanChildIdsEdgeCases:
         assert "good_dir" in names
         assert "bad_dir" not in names
 
-    def test_scandir_oserror_returns_empty(self) -> None:
+    def test_scandir_oserror_returns_empty(self, tmp_path: Path) -> None:
         """When os.scandir itself raises OSError, return empty frozenset."""
-        missing = Path("/nonexistent/path/that/does/not/exist")
+        missing = tmp_path / "nonexistent_path"
         ids = _scan_child_ids(missing)
         assert ids == frozenset()
 
@@ -2169,9 +2166,9 @@ class TestScanChildIdsEdgeCases:
 class TestCachedDiscoverOsErrors:
     """Cover OSError paths in _cached_discover_vscode_logs."""
 
-    def test_missing_candidate_skipped(self) -> None:
+    def test_missing_candidate_skipped(self, tmp_path: Path) -> None:
         """A candidate whose stat raises OSError produces no results."""
-        missing = Path("/nonexistent/vscode/logs/dir")
+        missing = tmp_path / "nonexistent_vscode_logs"
         result = _cached_discover_vscode_logs(missing)
         assert result == []
         assert missing not in _VSCODE_DISCOVERY_CACHE
