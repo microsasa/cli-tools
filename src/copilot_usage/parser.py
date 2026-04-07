@@ -1076,12 +1076,20 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         _insert_events_entry(ep, fid, evts)
 
     # Prune stale cache entries for sessions no longer on disk.
+    # Only remove entries rooted under the *current* base_path so that
+    # callers using multiple roots in the same process don't evict each
+    # other's cached entries.
+    root = base_path or _DEFAULT_BASE
     discovered_paths = {p for p, _, _ in discovered}
-    stale = [p for p in _SESSION_CACHE if p not in discovered_paths]
+    stale = [
+        p for p in _SESSION_CACHE if p not in discovered_paths and root in p.parents
+    ]
     for p in stale:
         del _SESSION_CACHE[p]
 
-    stale_events = [p for p in _EVENTS_CACHE if p not in discovered_paths]
+    stale_events = [
+        p for p in _EVENTS_CACHE if p not in discovered_paths and root in p.parents
+    ]
     for p in stale_events:
         del _EVENTS_CACHE[p]
 
