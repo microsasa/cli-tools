@@ -5926,6 +5926,113 @@ class TestFirstPassToolModel:
         fp = _first_pass(events)
         assert fp.tool_model == "gpt-5.1"
 
+    def test_tool_model_skips_integer_model(self, tmp_path: Path) -> None:
+        """tool.execution_complete with model=42 (integer) is skipped."""
+        tool_int = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "model": 42, "success": True},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_int)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model is None
+
+    def test_tool_model_skips_boolean_model(self, tmp_path: Path) -> None:
+        """tool.execution_complete with model=true (bool) is skipped; bool is not str."""
+        tool_bool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "model": True, "success": True},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_bool)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model is None
+
+    def test_tool_model_skips_dict_model(self, tmp_path: Path) -> None:
+        """tool.execution_complete with model={...} (dict) is skipped."""
+        tool_dict = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": {"id": "gpt-5"},
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_dict)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model is None
+
+    def test_tool_model_falls_through_to_valid_string_after_bad_type(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-string model in first tool event skipped; second valid string wins."""
+        tool_bad = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "model": 99, "success": True},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        tool_good = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-2",
+                    "model": "claude-sonnet-4",
+                    "success": True,
+                },
+                "id": "ev-t2",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_bad, tool_good)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.tool_model == "claude-sonnet-4"
+
+    def test_build_active_summary_non_string_tool_model_falls_back_to_config(
+        self, tmp_path: Path
+    ) -> None:
+        """Non-string tool model → tool_model=None → config fallback used."""
+        config = tmp_path / "config.json"
+        config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
+
+        tool_int = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc-1", "model": 999, "success": True},
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, tool_int)
+        events = parse_events(p)
+
+        fp = _first_pass(events)
+        assert fp.tool_model is None
+
+        summary = build_session_summary(events, config_path=config)
+        assert summary.model == "gpt-5.1"
+
     def test_active_session_resolves_model_via_first_pass(self, tmp_path: Path) -> None:
         """Active session (no shutdown) resolves model from _first_pass.tool_model."""
         turn_start = json.dumps(
