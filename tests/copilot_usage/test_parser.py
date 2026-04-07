@@ -1050,9 +1050,8 @@ class TestDiscoverWithIdentityNoPlanCount:
         Creates 200 sessions each with ``plan.md``.  After the first
         (cache-populating) call, ``no_plan_count`` must be 0 and a
         second (cache-hit) call must not enter the probe-window scan —
-        verified by ensuring ``range`` is never called for the probe
-        loop body via a spy on the inner ``entries[i][1] is None``
-        comparisons.
+        verified by patching ``builtins.range`` and asserting the
+        probe-loop ``range(n)`` call is never made.
         """
         n = 200
         for i in range(n):
