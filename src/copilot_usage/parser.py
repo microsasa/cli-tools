@@ -318,11 +318,14 @@ def _discover_with_identity(
     base_path: Path | None = None,
     *,
     include_plan: bool = True,
-) -> list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]]:
+) -> tuple[bool, list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]]]:
     """Find session ``events.jsonl`` files paired with their file identities.
 
-    Returns ``(events_path, events_file_id, plan_file_id)`` tuples sorted
-    by *events_file_id* (mtime descending, then size as tie-breaker).
+    Returns a ``(is_cache_hit, entries)`` tuple.  *is_cache_hit* is
+    ``True`` when the root directory's identity was unchanged and no full
+    rescan was necessary.  *entries* is a list of
+    ``(events_path, events_file_id, plan_file_id)`` tuples sorted by
+    *events_file_id* (mtime descending, then size as tie-breaker).
 
     Copilot CLI session directories are typically append-only in normal
     operation: new session directories are created over time and existing
@@ -359,7 +362,7 @@ def _discover_with_identity(
 
     root_id = safe_file_identity(root)
     if root_id is None:
-        return []
+        return False, []
     cached = _DISCOVERY_CACHE.get(root)
 
     if cached is not None and cached.root_id is not None and cached.root_id == root_id:
@@ -369,7 +372,7 @@ def _discover_with_identity(
         try:
             entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
-            return []
+            return False, []
         no_plan = sum(1 for _, pp in entries if pp is None)
         _DISCOVERY_CACHE[root] = _DiscoveryCache(
             root_id=root_id, entries=entries, no_plan_count=no_plan
@@ -458,7 +461,7 @@ def _discover_with_identity(
             current.no_plan_count -= removed_no_plan
 
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
-    return result
+    return is_cache_hit, result
 
 
 def discover_sessions(base_path: Path | None = None) -> list[Path]:
@@ -475,7 +478,7 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     the cache.
     """
     return [
-        p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)
+        p for p, _eid, _pid in _discover_with_identity(base_path, include_plan=False)[1]
     ]
 
 
@@ -982,7 +985,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Pass None explicitly to match the lru_cache key used by
     # build_session_summary (which passes config_path=None by default).
     current_config_model = _read_config_model(None)
-    discovered = _discover_with_identity(base_path)
+    is_cache_hit, discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
     # Deferred cache insertions.  _discover_with_identity returns sessions
     # newest-first; inserting or promoting in that order would leave the
@@ -1079,21 +1082,27 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Only remove entries rooted under the *current* base_path so that
     # callers using multiple roots in the same process don't evict each
     # other's cached entries.
-    root = (base_path or _DEFAULT_BASE).resolve()
-    discovered_paths = {p for p, _, _ in discovered}
-    stale = [
-        p
-        for p in _SESSION_CACHE
-        if p not in discovered_paths and p.is_relative_to(root)
-    ]
-    for p in stale:
-        del _SESSION_CACHE[p]
+    # Skip this scan entirely on discovery cache hits — the root
+    # directory is unchanged so no sessions can have been added or
+    # removed, making the O(cache_size) scan unnecessary.
+    if not is_cache_hit:
+        root = (base_path or _DEFAULT_BASE).resolve()
+        discovered_paths = {p for p, _, _ in discovered}
+        stale = [
+            p
+            for p in _SESSION_CACHE
+            if p not in discovered_paths and p.is_relative_to(root)
+        ]
+        for p in stale:
+            del _SESSION_CACHE[p]
 
-    stale_events = [
-        p for p in _EVENTS_CACHE if p not in discovered_paths and p.is_relative_to(root)
-    ]
-    for p in stale_events:
-        del _EVENTS_CACHE[p]
+        stale_events = [
+            p
+            for p in _EVENTS_CACHE
+            if p not in discovered_paths and p.is_relative_to(root)
+        ]
+        for p in stale_events:
+            del _EVENTS_CACHE[p]
 
     summaries.sort(key=session_sort_key, reverse=True)
     return summaries
