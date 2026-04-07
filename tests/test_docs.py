@@ -134,14 +134,14 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
 
 
 def test_architecture_detect_resume_lists_all_indicators() -> None:
-    """The _detect_resume() description in architecture.md must mention all
-    four resume-indicator event types processed by the implementation."""
-    expected_indicators = {
+    """The _detect_resume() description in architecture.md must mention the
+    three true resume indicators and the separately-tracked turn_start event."""
+    resume_indicators = {
         "session.resume",
         "user.message",
         "assistant.message",
-        "assistant.turn_start",
     }
+    tracked_activity = "assistant.turn_start"
     # Extract the _detect_resume() bullet from the pipeline section.
     match = re.search(
         r"`_detect_resume\(\)`: scans events[^\n]+",
@@ -149,8 +149,12 @@ def test_architecture_detect_resume_lists_all_indicators() -> None:
     )
     assert match, "Could not find the '_detect_resume()' description in architecture.md"
     description = match.group(0)
-    for indicator in sorted(expected_indicators):
+    for indicator in sorted(resume_indicators):
         assert indicator in description, (
             f"Resume indicator '{indicator}' is missing from the "
             f"_detect_resume() description in architecture.md"
         )
+    assert tracked_activity in description, (
+        f"Tracked activity '{tracked_activity}' is missing from the "
+        f"_detect_resume() description in architecture.md"
+    )
