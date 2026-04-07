@@ -1219,14 +1219,19 @@ class TestParseEvents:
         bad_event = json.dumps({"no_type_field": True})
         p = tmp_path / "s" / "events.jsonl"
         _write_events(p, _START_EVENT, bad_event)
+        try:
+            SessionEvent.model_validate_json(bad_event)
+        except ValidationError as exc:
+            expected_error_count = exc.error_count()
+        else:
+            pytest.fail("Expected bad_event to raise ValidationError")
         with patch.object(_parser_module.logger, "warning") as warning_spy:
             events = parse_events(p)
         assert len(events) == 1  # bad event skipped
         warning_spy.assert_called_once()
-        call_str = str(warning_spy.call_args).lower()
-        assert "validation error" in call_str
+        assert "validation error" in warning_spy.call_args.args[0].lower()
         # error_count() must be passed as positional arg after format string
-        assert warning_spy.call_args.args[3] >= 1
+        assert warning_spy.call_args.args[3] == expected_error_count
 
     def test_validation_error_warning_includes_file_and_lineno(
         self, tmp_path: Path
@@ -1354,7 +1359,7 @@ class TestParseEventsModelValidateJson:
         assert events[0].type == EventType.SESSION_START
         assert events[1].type == EventType.USER_MESSAGE
         warning_spy.assert_called_once()
-        assert "json" in str(warning_spy.call_args).lower()
+        assert "json" in warning_spy.call_args.args[0].lower()
 
 
 # ---------------------------------------------------------------------------
