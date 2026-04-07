@@ -1244,11 +1244,12 @@ class TestDiscoverProbeWindowBounded:
         _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == n
 
-        # The probe scan should access at most _MAX_PLAN_PROBES indices.
+        # The probe scan should access exactly the bounded probe window.
         max_allowed = min(_MAX_PLAN_PROBES, k)
-        assert spy.no_plan_accesses <= max_allowed, (
+        assert spy.no_plan_accesses == max_allowed, (
             f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
-            f"expected at most {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
+            f"expected exactly {max_allowed} "
+            f"(_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
         )
 
         # Cursor must have advanced past the probed entries, not reset to 0.
@@ -1267,7 +1268,7 @@ class TestDiscoverProbeWindowBounded:
         _, result3 = _discover_with_identity(tmp_path)
         assert len(result3) == n
 
-        assert spy.no_plan_accesses <= max_allowed
+        assert spy.no_plan_accesses == max_allowed
 
         cursor_after_second = cached.probe_cursor
         expected_cursor_2 = (cursor_after_first + probe_count) % k
@@ -1334,12 +1335,13 @@ class TestDiscoverProbeWindowBounded:
         _, result = _discover_with_identity(tmp_path)
         assert len(result) == n
 
-        # The probe scan should access only the bounded prefix of
+        # The probe scan should access exactly the bounded prefix of
         # no_plan_indices used to build probe_indices.
         max_allowed = min(_MAX_PLAN_PROBES, k)
-        assert spy.no_plan_accesses <= max_allowed, (
+        assert max_allowed > 0
+        assert spy.no_plan_accesses == max_allowed, (
             f"probe scan accessed {spy.no_plan_accesses} no-plan indices, "
-            f"expected at most {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
+            f"expected exactly {max_allowed} (_MAX_PLAN_PROBES={_MAX_PLAN_PROBES}, k={k})"
         )
 
         # Restore original no_plan_indices to avoid side effects.
