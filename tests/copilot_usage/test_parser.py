@@ -6638,6 +6638,13 @@ class TestStalePruneScanSkippedOnCacheHit:
         # Restore root mtime/atime to guarantee root identity is unchanged.
         os.utime(root, ns=(orig_stat.st_atime_ns, orig_stat.st_mtime_ns))
 
+        # Verify root identity is truly unchanged — without this the test
+        # could silently pass via the "root cache miss" path.
+        assert safe_file_identity(root) == (
+            orig_stat.st_mtime_ns,
+            orig_stat.st_size,
+        ), "Root identity changed unexpectedly; edge-case test is invalid"
+
         result2 = get_all_sessions(tmp_path)
         assert len(result2) == 1
         assert p1 in _SESSION_CACHE
