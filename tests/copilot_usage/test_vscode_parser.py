@@ -1363,6 +1363,58 @@ class TestVscodeLogCache:
         assert s1.total_requests == 1
         assert s2.total_requests == 1
 
+    def test_explicit_file_id_skips_safe_file_identity(self, tmp_path: Path) -> None:
+        """Passing an explicit file_id bypasses safe_file_identity entirely."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        # Warm the cache with the default sentinel (safe_file_identity is used).
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # Retrieve the file_id that was cached so we can pass it explicitly.
+        cached_id = _VSCODE_LOG_CACHE[log_file].file_id
+
+        # Patch safe_file_identity to raise — it must never be called.
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=AssertionError("safe_file_identity should not be called"),
+        ):
+            second = _get_cached_vscode_requests(log_file, file_id=cached_id)
+
+        assert second == first
+
+    def test_explicit_file_id_none_cache_hit(self, tmp_path: Path) -> None:
+        """Two calls with file_id=None parse only once (None == None cache hit)."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            first = _get_cached_vscode_requests(log_file, file_id=None)
+            second = _get_cached_vscode_requests(log_file, file_id=None)
+            assert spy.call_count == 1
+
+        assert first == second
+        assert len(first) == 1
+
+    def test_explicit_file_id_mismatch_triggers_reparse(self, tmp_path: Path) -> None:
+        """A different explicit file_id invalidates the cache and re-parses."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            _get_cached_vscode_requests(log_file, file_id=(0, 0))
+            assert spy.call_count == 1
+
+            _get_cached_vscode_requests(log_file, file_id=(1, 1))
+            assert spy.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # _vscode_summary_cache – summary-level caching
