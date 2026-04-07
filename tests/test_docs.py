@@ -131,6 +131,18 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
         "The '↳ Since last shutdown' section in implementation.md must not "
         "claim 'N/A' for Premium Cost."
     )
+    # The code snippet must include the has_active_period_stats guard that
+    # suppresses the row when there is no meaningful post-shutdown activity.
+    assert re.search(
+        r"^\s*if\b[^\n]*\bhas_active_period_stats\s*\(\s*s\s*\)\s*:",
+        section,
+        re.MULTILINE,
+    ), (
+        "The '↳ Since last shutdown' section in implementation.md must "
+        "include the 'if ... has_active_period_stats(s):' guard — the row "
+        "is suppressed when all active counters are 0 and "
+        "last_resume_time is None."
+    )
 
 
 def test_architecture_detect_resume_lists_all_indicators() -> None:

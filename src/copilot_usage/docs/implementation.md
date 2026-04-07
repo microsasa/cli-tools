@@ -318,10 +318,10 @@ The session name and model calls are shown **only on the first model row** — s
 
 ### "↳ Since last shutdown" rows
 
-For active sessions **with shutdown metrics** (i.e., sessions where `has_shutdown_metrics=True`), an extra row is appended (in `report.py`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate. Pure-active sessions (never shut down) do **not** get this sub-row because there is no shutdown baseline to compare against:
+For active sessions **with shutdown metrics** (i.e., sessions where `has_shutdown_metrics=True`) **and meaningful active-period stats** (`has_active_period_stats(s)` returns `True`), an extra row is appended (in `report.py`). The `has_active_period_stats` guard prevents a misleadingly attributed row for sessions that completed a shutdown cycle but have no post-shutdown activity (i.e., `last_resume_time` is `None` and all active counters — `active_model_calls`, `active_user_messages`, `active_output_tokens` — are `0`). The Premium Cost column uses `_estimate_premium_cost()` to show a `~`-prefixed estimate based on the model multiplier, while the Requests column shows `N/A` (no shutdown data for requests). When the model cannot be determined (e.g., no tool events and missing/invalid `~/.copilot/config.json`), `_estimate_premium_cost()` returns `"—"` instead of an estimate. Pure-active sessions (never shut down) do **not** get this sub-row because there is no shutdown baseline to compare against:
 
 ```python
-if s.is_active and s.has_shutdown_metrics:
+if s.is_active and s.has_shutdown_metrics and has_active_period_stats(s):
     cost_stats = _effective_stats(s)
     est = _estimate_premium_cost(s.model, cost_stats.model_calls)
     table.add_row(
