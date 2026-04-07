@@ -23,6 +23,7 @@ from copilot_usage.vscode_parser import (
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
     _merge_partial,  # pyright: ignore[reportPrivateUsage]
+    _scan_child_ids,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
@@ -2077,3 +2078,51 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
         assert len(cached.log_paths) == 1
         assert cached.root_id == safe_file_identity(tmp_path)
+        assert cached.child_ids == _scan_child_ids(tmp_path)
+
+    def test_new_window_under_existing_session_triggers_rediscovery(
+        self, tmp_path: Path
+    ) -> None:
+        """Adding a window dir under an existing session invalidates the cache."""
+        session_dir = tmp_path / "20260313T211400"
+        log_dir = session_dir / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        original_glob = Path.glob
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+            **kwargs: object,  # noqa: N805
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        with patch.object(Path, "glob", _counting_glob):
+            s1 = get_vscode_summary(tmp_path)
+            assert glob_call_count == 1
+            assert s1.total_requests == 1
+
+            # Create a new window directory under the same session.
+            new_log_dir = session_dir / "window2" / "exthost" / "GitHub.copilot-chat"
+            new_log_dir.mkdir(parents=True)
+            (new_log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=1)
+            )
+
+            s2 = get_vscode_summary(tmp_path)
+            assert glob_call_count == 2  # re-globbed due to child change
+            assert s2.total_requests == 2
+
+    def test_non_directory_candidate_skipped(self, tmp_path: Path) -> None:
+        """A file (not a directory) passed as base_path produces an empty summary."""
+        file_path = tmp_path / "not-a-dir.txt"
+        file_path.write_text("hello")
+
+        summary = get_vscode_summary(file_path)
+        assert summary.total_requests == 0
+        assert file_path not in _VSCODE_DISCOVERY_CACHE

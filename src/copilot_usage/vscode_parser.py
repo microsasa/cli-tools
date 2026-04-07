@@ -14,6 +14,10 @@ from loguru import logger
 
 from copilot_usage._fs_utils import lru_insert, safe_file_identity
 
+# Type alias for a frozenset of (child_name, file_identity) tuples used
+# to detect changes in immediate child session directories.
+_ChildIds = frozenset[tuple[str, tuple[int, int] | None]]
+
 __all__: Final[list[str]] = [
     "VSCodeLogSummary",
     "VSCodeRequest",
@@ -73,19 +77,49 @@ _GLOB_PATTERN: Final[str] = (
 # ---------------------------------------------------------------------------
 # Module-level discovery cache: candidate_root → _VSCodeDiscoveryCache.
 # Avoids redundant multi-level glob traversals when the candidate root
-# directory has not changed (no sessions added or removed).
+# directory and its immediate child session directories have not changed
+# (no sessions or window directories added or removed).
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class _VSCodeDiscoveryCache:
-    """Cached result of discover_vscode_logs for a given root directory."""
+    """Cached result of discover_vscode_logs for a given root directory.
+
+    *child_ids* stores the ``(name, file_identity)`` pairs of immediate
+    child directories under the candidate root.  This allows the cache to
+    detect new or modified session sub-directories (e.g. a new ``window*``
+    directory) whose creation would not update the root directory's own
+    mtime.
+    """
 
     root_id: tuple[int, int] | None  # (st_mtime_ns, st_size) of the logs root
+    child_ids: _ChildIds
     log_paths: tuple[Path, ...]
 
 
 _VSCODE_DISCOVERY_CACHE: dict[Path, _VSCodeDiscoveryCache] = {}
+
+
+def _scan_child_ids(root: Path) -> _ChildIds:
+    """Return identities of immediate child directories under *root*.
+
+    Each child is represented as ``(name, (st_mtime_ns, st_size))`` or
+    ``(name, None)`` when the stat fails.  Returns an empty frozenset
+    when *root* cannot be scanned (e.g. it was removed between the
+    ``is_dir`` check and this call).
+    """
+    result: list[tuple[str, tuple[int, int] | None]] = []
+    try:
+        with os.scandir(root) as it:
+            result.extend(
+                (entry.name, safe_file_identity(root / entry.name))
+                for entry in it
+                if entry.is_dir(follow_symlinks=False)
+            )
+    except OSError:
+        pass
+    return frozenset(result)
 
 
 def _default_log_candidates() -> list[Path]:
@@ -146,17 +180,28 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
 def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     """Return discovered log paths, skipping glob when the root is unchanged.
 
-    Each candidate root directory is stat'd and compared to
-    ``_VSCODE_DISCOVERY_CACHE``.  On a cache hit (same ``(st_mtime_ns,
-    st_size)``), the stored paths are reused without re-running the
-    multi-level glob.  On a miss, the glob runs and the cache is updated.
+    Each candidate root directory is stat'd and its immediate child
+    directories are scanned.  On a cache hit (same root
+    ``(st_mtime_ns, st_size)`` *and* same child-directory identities),
+    the stored paths are reused without re-running the multi-level glob.
+    On a miss, the glob runs and the cache is updated.
+
+    A non-directory candidate is skipped with an empty result, matching
+    the behaviour of :func:`discover_vscode_logs`.
     """
     candidates = [base_path] if base_path is not None else _default_log_candidates()
     result: list[Path] = []
     for candidate in candidates:
+        if not candidate.is_dir():
+            continue
         root_id = safe_file_identity(candidate)
+        child_ids = _scan_child_ids(candidate)
         cached = _VSCODE_DISCOVERY_CACHE.get(candidate)
-        if cached is not None and cached.root_id == root_id:
+        if (
+            cached is not None
+            and cached.root_id == root_id
+            and cached.child_ids == child_ids
+        ):
             result.extend(cached.log_paths)
             continue
         # Cache miss — run glob
@@ -165,7 +210,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
         else:
             found = sorted(candidate.glob(_GLOB_PATTERN))
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
-            root_id=root_id, log_paths=tuple(found)
+            root_id=root_id, child_ids=child_ids, log_paths=tuple(found)
         )
         result.extend(found)
     result.sort()
@@ -455,7 +500,8 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
 
     Discovery uses :func:`_cached_discover_vscode_logs` to avoid
     redundant multi-level glob traversals when the candidate root
-    directories have not changed on disk.
+    directories and their immediate child session directories have not
+    changed on disk.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
