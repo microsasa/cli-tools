@@ -2,6 +2,7 @@
 
 import os
 import re
+import stat
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
@@ -13,6 +14,10 @@ from typing import Final, Literal
 from loguru import logger
 
 from copilot_usage._fs_utils import lru_insert, safe_file_identity
+
+# Type alias for a frozenset of (child_name, file_identity) tuples used
+# to detect changes in immediate child session directories.
+_ChildIds = frozenset[tuple[str, tuple[int, int]]]
 
 __all__: Final[list[str]] = [
     "VSCodeLogSummary",
@@ -65,6 +70,66 @@ class VSCodeLogSummary:
     log_files_found: int = 0
 
 
+_GLOB_PATTERN: Final[str] = (
+    "*/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log"
+)
+
+
+# ---------------------------------------------------------------------------
+# Module-level discovery cache: candidate_root → _VSCodeDiscoveryCache.
+# Avoids redundant multi-level glob traversals when the candidate root
+# directory and its immediate child session directories have not changed
+# (no sessions or window directories added or removed).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _VSCodeDiscoveryCache:
+    """Cached result of discover_vscode_logs for a given root directory.
+
+    *child_ids* stores the ``(name, file_identity)`` pairs of immediate
+    child directories under the candidate root.  This allows the cache to
+    detect new or modified session sub-directories (e.g. a new ``window*``
+    directory) whose creation would not update the root directory's own
+    mtime.
+    """
+
+    root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
+    child_ids: _ChildIds
+    log_paths: tuple[Path, ...]
+
+
+_VSCODE_DISCOVERY_CACHE: dict[Path, _VSCodeDiscoveryCache] = {}
+
+
+def _scan_child_ids(root: Path) -> _ChildIds:
+    """Return identities of immediate child directories under *root*.
+
+    Each child is represented as ``(name, (st_mtime_ns, st_size))``.
+    Entries whose stat fails are silently skipped.  Returns an empty
+    frozenset when *root* cannot be scanned (e.g. it was removed between
+    the ``is_dir`` check and this call).
+
+    Uses ``os.DirEntry.stat(follow_symlinks=False)`` once per entry to
+    obtain both the directory check and the file identity, costing at
+    most one stat syscall per child.
+    """
+    result: list[tuple[str, tuple[int, int]]] = []
+    try:
+        with os.scandir(root) as it:
+            for entry in it:
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if not stat.S_ISDIR(st.st_mode):
+                    continue
+                result.append((entry.name, (st.st_mtime_ns, st.st_size)))
+    except OSError:
+        pass
+    return frozenset(result)
+
+
 def _default_log_candidates() -> list[Path]:
     """Return candidate VS Code log directories for both Stable and Insiders."""
     code_dirs: list[str] = ["Code", "Code - Insiders"]
@@ -96,13 +161,11 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     If only one variant exists on disk the behaviour is identical to before.
     When both exist, files from both are returned and sorted together.
     """
-    pattern = "*/window*/exthost/GitHub.copilot-chat/GitHub Copilot Chat.log"
-
     if base_path is not None:
         if not base_path.is_dir():
             logger.debug("VS Code logs directory not found: {}", base_path)
             return []
-        logs = sorted(base_path.glob(pattern))
+        logs = sorted(base_path.glob(_GLOB_PATTERN))
         logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
         return logs
 
@@ -112,7 +175,7 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
         if not candidate.is_dir():
             logger.debug("VS Code logs directory not found: {}", candidate)
             continue
-        all_logs.extend(candidate.glob(pattern))
+        all_logs.extend(candidate.glob(_GLOB_PATTERN))
     all_logs.sort()
     logger.debug(
         "Discovered {} VS Code log file(s) across {} candidate(s)",
@@ -120,6 +183,63 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
         len(candidates),
     )
     return all_logs
+
+
+def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
+    """Return discovered log paths, skipping glob when the root is unchanged.
+
+    Each candidate root directory is stat'd and its immediate child
+    directories are scanned via :func:`_scan_child_ids` (one
+    ``os.scandir`` plus one ``DirEntry.stat`` per child).  On a cache
+    hit (same root ``(st_mtime_ns, st_size)`` *and* same child-directory
+    identities), the stored paths are reused without re-running the
+    multi-level glob.  On a miss, the glob runs and the cache is
+    updated.
+
+    Steady-state cost per candidate root is therefore O(children) —
+    one ``stat`` on the root plus one ``scandir`` walk — which is still
+    significantly cheaper than the deep recursive glob it replaces, but
+    not constant-time.
+
+    A non-directory candidate is skipped with an empty result, matching
+    the behaviour of :func:`discover_vscode_logs`.
+    """
+    candidates = [base_path] if base_path is not None else _default_log_candidates()
+    result: list[Path] = []
+    for candidate in candidates:
+        try:
+            st = candidate.stat()
+        except OSError as exc:
+            logger.debug(
+                "Skipping VS Code logs candidate {}: stat() failed: {}",
+                candidate,
+                exc,
+            )
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            logger.debug(
+                "Skipping VS Code logs candidate {}: logs directory not found",
+                candidate,
+            )
+            continue
+        root_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
+        child_ids = _scan_child_ids(candidate)
+        cached = _VSCODE_DISCOVERY_CACHE.get(candidate)
+        if (
+            cached is not None
+            and cached.root_id == root_id
+            and cached.child_ids == child_ids
+        ):
+            result.extend(cached.log_paths)
+            continue
+        # Cache miss — run glob
+        found = sorted(candidate.glob(_GLOB_PATTERN))
+        _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
+            root_id=root_id, child_ids=child_ids, log_paths=tuple(found)
+        )
+        result.extend(found)
+    result.sort()
+    return result
 
 
 def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
@@ -403,6 +523,14 @@ def build_vscode_summary(
 def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """Discover, parse, and aggregate all VS Code Copilot Chat logs.
 
+    Discovery uses :func:`_cached_discover_vscode_logs` to avoid
+    redundant multi-level glob traversals when the candidate root
+    directories and their immediate child session directories have not
+    changed on disk.  The steady-state discovery cost is O(children)
+    per candidate root (one ``stat`` on the root plus one ``scandir``
+    walk), not constant-time — but still much cheaper than the deep
+    recursive glob it replaces.
+
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
     cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
@@ -418,7 +546,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     """
     global _vscode_summary_cache
 
-    logs = discover_vscode_logs(base_path)
+    logs = _cached_discover_vscode_logs(base_path)
     log_ids: list[tuple[Path, tuple[int, int] | None]] = [
         (p, safe_file_identity(p)) for p in logs
     ]
