@@ -26,7 +26,6 @@ __all__: Final[list[str]] = [
 
 from copilot_usage._fs_utils import lru_insert, safe_file_identity
 from copilot_usage.models import (
-    AssistantMessageData,
     CodeChanges,
     EventType,
     ModelMetrics,
@@ -239,22 +238,28 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 
 
 def _extract_output_tokens(ev: SessionEvent) -> int | None:
-    """Extract ``outputTokens`` from an ``assistant.message`` event via Pydantic validation.
+    """Extract ``outputTokens`` from an ``assistant.message`` event via direct dict access.
 
-    Returns the validated positive integer token count, or ``None`` if the
-    event payload is malformed or the value is zero/negative.  Pydantic
-    lax-mode coercion handles whole-number floats (e.g. ``1234.0 → 1234``)
-    that the raw dict path would silently discard.  Bool and str values are
-    mapped to ``0`` by a field validator so that the rest of the assistant
-    message payload remains parsable.
+    Replicates the :class:`AssistantMessageData` field-validator behaviour
+    without constructing a full Pydantic model:
+
+    - ``bool`` / ``str`` → treated as ``0`` (returns ``None``)
+    - whole-number ``float`` → coerced to ``int`` (Pydantic lax-mode parity)
+    - non-whole ``float`` / other non-numeric → returns ``None``
 
     Callers are responsible for verifying ``ev.type`` before calling; this
-    function validates only the ``data`` payload via
-    :class:`AssistantMessageData`.
+    function reads only the ``outputTokens`` key from the event data dict.
     """
-    try:
-        tokens = AssistantMessageData.model_validate(ev.data).outputTokens
-    except ValidationError:
+    raw = ev.data.get("outputTokens")
+    if raw is None or isinstance(raw, (bool, str)):
+        return None
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            return None
+        tokens = int(raw)
+    elif isinstance(raw, int):
+        tokens = raw
+    else:
         return None
     return tokens if tokens > 0 else None
 
