@@ -184,6 +184,34 @@ def test_assistant_message_data_tool_requests_populated() -> None:
     assert d.toolRequests[0].toolCallId == "t1"
 
 
+class TestSanitizeNonNumericTokens:
+    """Validator maps bool/str outputTokens to 0 to prevent lax coercion."""
+
+    def test_bool_true_maps_to_zero(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": True})
+        assert d.outputTokens == 0
+
+    def test_bool_false_maps_to_zero(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": False})
+        assert d.outputTokens == 0
+
+    def test_numeric_string_maps_to_zero(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": "100"})
+        assert d.outputTokens == 0
+
+    def test_non_numeric_string_maps_to_zero(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": "abc"})
+        assert d.outputTokens == 0
+
+    def test_valid_int_passes_through(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": 373})
+        assert d.outputTokens == 373
+
+    def test_zero_int_passes_through(self) -> None:
+        d = AssistantMessageData.model_validate({"outputTokens": 0})
+        assert d.outputTokens == 0
+
+
 def test_session_shutdown_data() -> None:
     d = SessionShutdownData.model_validate(RAW_SHUTDOWN["data"])
     assert d.totalPremiumRequests == 24
