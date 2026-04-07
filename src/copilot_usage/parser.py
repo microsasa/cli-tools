@@ -355,7 +355,7 @@ def _discover_with_identity(
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
-    root = base_path or _DEFAULT_BASE
+    root = (base_path or _DEFAULT_BASE).resolve()
 
     root_id = safe_file_identity(root)
     if root_id is None:
@@ -1079,16 +1079,18 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Only remove entries rooted under the *current* base_path so that
     # callers using multiple roots in the same process don't evict each
     # other's cached entries.
-    root = base_path or _DEFAULT_BASE
+    root = (base_path or _DEFAULT_BASE).resolve()
     discovered_paths = {p for p, _, _ in discovered}
     stale = [
-        p for p in _SESSION_CACHE if p not in discovered_paths and root in p.parents
+        p
+        for p in _SESSION_CACHE
+        if p not in discovered_paths and p.is_relative_to(root)
     ]
     for p in stale:
         del _SESSION_CACHE[p]
 
     stale_events = [
-        p for p in _EVENTS_CACHE if p not in discovered_paths and root in p.parents
+        p for p in _EVENTS_CACHE if p not in discovered_paths and p.is_relative_to(root)
     ]
     for p in stale_events:
         del _EVENTS_CACHE[p]
