@@ -245,12 +245,21 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 def _extract_output_tokens(ev: SessionEvent) -> int | None:
     """Extract ``outputTokens`` from an ``assistant.message`` event via direct dict access.
 
-    Replicates the :class:`AssistantMessageData` field-validator behaviour
-    without constructing a full Pydantic model:
+    Mirrors the domain intent of :class:`AssistantMessageData`'s
+    ``_sanitize_non_numeric_tokens`` field-validator: only positive numeric
+    values contribute tokens. When ``AssistantMessageData.model_validate(...)``
+    succeeds, both paths agree on whether a value contributes tokens; the
+    representation differs for non-contributing values — this function returns
+    ``None``, whereas the Pydantic model stores ``0``. Inputs rejected by
+    model validation should likewise be treated as non-contributing when
+    comparing behaviors.
 
-    - ``bool`` / ``str`` → treated as ``0`` (returns ``None``)
-    - whole-number ``float`` → coerced to ``int`` (Pydantic lax-mode parity)
-    - non-whole ``float`` / other non-numeric → returns ``None``
+    Specifically:
+
+    - ``bool`` / ``str`` → ``None`` (invalid, not coerced)
+    - zero or negative ``int`` / ``float`` → ``None`` (non-positive)
+    - whole-number positive ``float`` → coerced to ``int``
+    - non-whole ``float`` / other non-numeric → ``None``
 
     Callers are responsible for verifying ``ev.type`` before calling; this
     function reads only the ``outputTokens`` key from the event data dict.
