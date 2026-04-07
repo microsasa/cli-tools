@@ -15,6 +15,7 @@ from copilot_usage.vscode_parser import (
     _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
     _MAX_CACHED_VSCODE_LOGS,  # pyright: ignore[reportPrivateUsage]
     _PER_FILE_SUMMARY_CACHE,  # pyright: ignore[reportPrivateUsage]
+    _VSCODE_DISCOVERY_CACHE,  # pyright: ignore[reportPrivateUsage]
     _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
@@ -58,6 +59,7 @@ def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     """Ensure every test starts with empty VS Code caches."""
     _VSCODE_LOG_CACHE.clear()
     _PER_FILE_SUMMARY_CACHE.clear()
+    _VSCODE_DISCOVERY_CACHE.clear()
     import copilot_usage.vscode_parser as _mod
 
     _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
@@ -632,7 +634,7 @@ class TestGetVscodeSummary:
 
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[file_a, file_b],
             ),
             patch(
@@ -680,7 +682,7 @@ class TestGetVscodeSummary:
 
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[file_a, file_b],
             ),
             patch(
@@ -709,7 +711,7 @@ class TestGetVscodeSummary:
 
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=paths,
             ),
             patch(
@@ -743,7 +745,7 @@ class TestGetVscodeSummary:
 
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[path1, path2],
             ),
             patch(
@@ -1909,7 +1911,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
 
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[file_a, file_b],
             ),
             patch(
@@ -1946,7 +1948,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
         # First call: partial failure — cache stays None.
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[file_a, file_b],
             ),
             patch(
@@ -1961,7 +1963,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
         # Second call: all files succeed — cache should be populated.
         with (
             patch(
-                "copilot_usage.vscode_parser.discover_vscode_logs",
+                "copilot_usage.vscode_parser._cached_discover_vscode_logs",
                 return_value=[file_a, file_b],
             ),
             patch(
@@ -1973,3 +1975,105 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
 
         assert summary2.total_requests == 2
         assert _mod._vscode_summary_cache is not None  # pyright: ignore[reportPrivateUsage]
+
+
+class TestVscodeDiscoveryCacheSkipsGlob:
+    """Verify that _cached_discover_vscode_logs skips glob on repeated calls.
+
+    Uses monkeypatching to spy on Path.glob and assert it is called
+    exactly once when the root directory has not changed — matching the
+    project's deterministic perf-test convention (no wall-clock timing).
+    """
+
+    def test_second_summary_call_skips_glob(self, tmp_path: Path) -> None:
+        """Path.glob is not called on the second get_vscode_summary invocation."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        original_glob = Path.glob
+
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+            **kwargs: object,  # noqa: N805
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        with patch.object(Path, "glob", _counting_glob):
+            s1 = get_vscode_summary(tmp_path)
+            assert glob_call_count == 1  # glob called on first invocation
+            assert s1.total_requests == 1
+
+            s2 = get_vscode_summary(tmp_path)
+            assert glob_call_count == 1  # NOT called again — cached discovery
+            assert s2.total_requests == 1
+
+    def test_cache_invalidated_on_root_mtime_change(self, tmp_path: Path) -> None:
+        """Changing the root directory's identity forces a re-glob."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+
+        # Simulate root directory change by returning a new identity.
+        original_identity = safe_file_identity(tmp_path)
+        new_identity = (
+            (original_identity[0] + 1_000_000_000, original_identity[1])
+            if original_identity is not None
+            else (1, 4096)
+        )
+
+        original_glob = Path.glob
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+            **kwargs: object,  # noqa: N805
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        def _fake_identity(p: Path) -> tuple[int, int] | None:
+            return new_identity if p == tmp_path else safe_file_identity(p)
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.safe_file_identity",
+                side_effect=_fake_identity,
+            ),
+            patch.object(Path, "glob", _counting_glob),
+        ):
+            s2 = get_vscode_summary(tmp_path)
+            assert glob_call_count == 1  # glob called again due to identity change
+
+        assert s2.total_requests == 1
+
+    def test_discovery_cache_populated(self, tmp_path: Path) -> None:
+        """_VSCODE_DISCOVERY_CACHE is populated after first get_vscode_summary call."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        (log_dir / "GitHub Copilot Chat.log").write_text(_make_log_line(req_idx=0))
+
+        assert tmp_path not in _VSCODE_DISCOVERY_CACHE
+        get_vscode_summary(tmp_path)
+        assert tmp_path in _VSCODE_DISCOVERY_CACHE
+        cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
+        assert len(cached.log_paths) == 1
+        assert cached.root_id == safe_file_identity(tmp_path)
