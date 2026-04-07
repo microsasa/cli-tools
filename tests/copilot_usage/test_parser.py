@@ -1345,6 +1345,62 @@ class TestDiscoverProbeWindowBounded:
         # Restore original no_plan_indices to avoid side effects.
         cached.no_plan_indices = original_no_plan_indices
 
+    def test_no_plan_indices_rebuilt_on_remove_invariant_violation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """except-ValueError recovery rebuilds no_plan_indices from entries.
+
+        Simulates an invariant violation where ``no_plan_indices.remove(idx)``
+        raises ``ValueError`` (idx not in list).  The recovery path must
+        rebuild ``no_plan_indices`` from ``entries`` so subsequent calls
+        stay correct.
+        """
+        sess = tmp_path / "sess-0"
+        _write_events(sess / "events.jsonl", _START_EVENT)
+
+        # Populate cache — no plan.md.
+        _discover_with_identity(tmp_path)
+        cached = _DISCOVERY_CACHE[tmp_path]
+        assert len(cached.no_plan_indices) == 1
+
+        # Create plan.md so the probe will succeed.
+        (sess / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        # Inject a list subclass whose remove() always raises ValueError,
+        # simulating a stale/inconsistent no_plan_indices state.
+        original_idx = cached.no_plan_indices[0]
+
+        class _FaultyRemoveList(list[int]):
+            """List that raises ValueError on remove to trigger recovery."""
+
+            @overload
+            def __getitem__(self, index: SupportsIndex, /) -> int: ...
+            @overload
+            def __getitem__(self, index: slice, /) -> list[int]: ...
+            def __getitem__(
+                self,
+                index: SupportsIndex | slice,
+                /,
+            ) -> int | list[int]:
+                return super().__getitem__(index)
+
+            def remove(self, value: int, /) -> None:
+                raise ValueError("forced invariant violation")
+
+        faulty = _FaultyRemoveList([original_idx])
+        cached.no_plan_indices = faulty  # type: ignore[assignment]
+
+        # Cache-hit call: probe finds plan.md, remove() raises ValueError,
+        # recovery path rebuilds no_plan_indices from entries.
+        _, result = _discover_with_identity(tmp_path)
+        assert len(result) == 1
+
+        # After recovery, no_plan_indices must reflect actual entry state.
+        # The plan was found, so entries[0] now has a plan_path and
+        # no_plan_indices should be empty (all entries have plan.md).
+        assert cached.no_plan_indices == []
+
 
 # ---------------------------------------------------------------------------
 # parse_events
