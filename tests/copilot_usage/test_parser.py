@@ -1212,6 +1212,50 @@ class TestParseEvents:
         events = parse_events(p)
         assert len(events) == 1
 
+    def test_validation_error_non_json_invalid_logs_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """Valid JSON failing Pydantic validation emits a validation-error warning."""
+        bad_event = json.dumps({"no_type_field": True})
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, bad_event)
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            events = parse_events(p)
+        assert len(events) == 1  # bad event skipped
+        warning_spy.assert_called_once()
+        call_str = str(warning_spy.call_args).lower()
+        assert "validation error" in call_str
+        # error_count() must be passed as positional arg after format string
+        assert warning_spy.call_args.args[3] >= 1
+
+    def test_validation_error_warning_includes_file_and_lineno(
+        self, tmp_path: Path
+    ) -> None:
+        """Validation-error warning includes the file path and line number."""
+        bad_event = json.dumps({"no_type_field": True})
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, bad_event)
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            parse_events(p)
+        warning_spy.assert_called_once()
+        args = warning_spy.call_args.args
+        assert args[1] == p  # file path
+        assert args[2] == 2  # line number (bad event is the second line)
+
+    def test_multiple_validation_errors_each_warned(self, tmp_path: Path) -> None:
+        """Two bad lines emit two separate warnings with correct line numbers."""
+        bad1 = json.dumps({"no_type_field": True})
+        bad2 = json.dumps({"also_invalid": 42})
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, bad1, bad2)
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            events = parse_events(p)
+        assert len(events) == 1  # only the start event survives
+        assert warning_spy.call_count == 2
+        # Each warning should reference its own line number
+        line_numbers = [call.args[2] for call in warning_spy.call_args_list]
+        assert line_numbers == [2, 3]
+
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
         """events.jsonl with invalid UTF-8 bytes returns what was parsed so far.
 
