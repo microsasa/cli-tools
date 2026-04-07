@@ -133,10 +133,15 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
     )
     # The code snippet must include the has_active_period_stats guard that
     # suppresses the row when there is no meaningful post-shutdown activity.
-    assert "has_active_period_stats" in section, (
+    assert re.search(
+        r"^\s*if\b[^\n]*\bhas_active_period_stats\s*\(\s*s\s*\)\s*:",
+        section,
+        re.MULTILINE,
+    ), (
         "The '↳ Since last shutdown' section in implementation.md must "
-        "mention 'has_active_period_stats' — the row is suppressed when "
-        "all active counters are 0 and last_resume_time is None."
+        "include the 'if ... has_active_period_stats(s):' guard — the row "
+        "is suppressed when all active counters are 0 and "
+        "last_resume_time is None."
     )
 
 
