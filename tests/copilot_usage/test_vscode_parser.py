@@ -18,8 +18,10 @@ from copilot_usage.vscode_parser import (
     _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
     VSCodeLogSummary,
     VSCodeRequest,
+    _copy_summary,  # pyright: ignore[reportPrivateUsage]
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
+    _merge_partial,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
     _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
     build_vscode_summary,
@@ -1720,3 +1722,254 @@ class TestPerFileSummaryCacheLRUEviction:
         )
         # Cache size must match the configured limit after one eviction.
         assert len(_PER_FILE_SUMMARY_CACHE) == limit
+
+
+# ---------------------------------------------------------------------------
+# _copy_summary — mutation isolation and scalar fidelity
+# ---------------------------------------------------------------------------
+
+
+class TestCopySummary:
+    """Verify that _copy_summary produces an independent copy."""
+
+    _SUMMARY: VSCodeLogSummary = VSCodeLogSummary(
+        total_requests=5,
+        total_duration_ms=12000,
+        requests_by_model={"gpt-4o": 3, "claude-sonnet-4": 2},
+        duration_by_model={"gpt-4o": 7000, "claude-sonnet-4": 5000},
+        requests_by_category={"panel": 4, "inline": 1},
+        requests_by_date={"2026-03-13": 3, "2026-03-14": 2},
+        first_timestamp=datetime(2026, 3, 13, 10, 0, 0),
+        last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
+        log_files_parsed=2,
+        log_files_found=2,
+    )
+
+    def test_mutation_isolation_requests_by_model(self) -> None:
+        """Mutating copy.requests_by_model must not affect the original."""
+        original = self._SUMMARY
+        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
+        copy.requests_by_model["gpt-4o"] = 999
+        copy.requests_by_model["injected"] = 1
+        assert original.requests_by_model == {"gpt-4o": 3, "claude-sonnet-4": 2}
+
+    def test_mutation_isolation_duration_by_model(self) -> None:
+        """Mutating copy.duration_by_model must not affect the original."""
+        original = self._SUMMARY
+        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
+        copy.duration_by_model["gpt-4o"] = 0
+        assert original.duration_by_model == {"gpt-4o": 7000, "claude-sonnet-4": 5000}
+
+    def test_mutation_isolation_requests_by_category(self) -> None:
+        """Mutating copy.requests_by_category must not affect the original."""
+        original = self._SUMMARY
+        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
+        copy.requests_by_category["panel"] = 0
+        copy.requests_by_category["new_cat"] = 42
+        assert original.requests_by_category == {"panel": 4, "inline": 1}
+
+    def test_mutation_isolation_requests_by_date(self) -> None:
+        """Mutating copy.requests_by_date must not affect the original."""
+        original = self._SUMMARY
+        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
+        copy.requests_by_date.clear()
+        assert original.requests_by_date == {"2026-03-13": 3, "2026-03-14": 2}
+
+    def test_scalar_fields_copied_correctly(self) -> None:
+        """Scalar and datetime fields are faithfully reproduced in the copy."""
+        original = self._SUMMARY
+        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
+        assert copy.total_requests == original.total_requests
+        assert copy.total_duration_ms == original.total_duration_ms
+        assert copy.first_timestamp == original.first_timestamp
+        assert copy.last_timestamp == original.last_timestamp
+        assert copy.log_files_parsed == original.log_files_parsed
+        assert copy.log_files_found == original.log_files_found
+
+
+# ---------------------------------------------------------------------------
+# _merge_partial — timestamp edge cases and additive counters
+# ---------------------------------------------------------------------------
+
+
+class TestMergePartialTimestamps:
+    """Verify _merge_partial timestamp logic and counter merging."""
+
+    def test_empty_partial_leaves_accumulator_timestamps_unchanged(self) -> None:
+        """Merging a partial with None timestamps must not reset the accumulator."""
+        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
+            first_timestamp=datetime(2026, 3, 13, 10, 0, 0),
+            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
+        )
+        empty_partial = VSCodeLogSummary()  # timestamps default to None
+        _merge_partial(acc, empty_partial)  # pyright: ignore[reportPrivateUsage]
+        assert acc.first_timestamp == datetime(2026, 3, 13, 10, 0, 0)
+        assert acc.last_timestamp == datetime(2026, 3, 14, 18, 0, 0)
+
+    def test_first_partial_into_fresh_accumulator_adopts_timestamps(self) -> None:
+        """Merging the first partial into a fresh acc adopts its timestamps."""
+        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        partial = VSCodeLogSummary(
+            first_timestamp=datetime(2026, 3, 13, 9, 0, 0),
+            last_timestamp=datetime(2026, 3, 13, 17, 0, 0),
+        )
+        _merge_partial(acc, partial)  # pyright: ignore[reportPrivateUsage]
+        assert acc.first_timestamp == datetime(2026, 3, 13, 9, 0, 0)
+        assert acc.last_timestamp == datetime(2026, 3, 13, 17, 0, 0)
+
+    def test_older_partial_updates_first_timestamp(self) -> None:
+        """A partial with an earlier first_timestamp should update the accumulator."""
+        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
+            first_timestamp=datetime(2026, 3, 14, 10, 0, 0),
+            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
+        )
+        older = VSCodeLogSummary(
+            first_timestamp=datetime(2026, 3, 13, 8, 0, 0),
+            last_timestamp=datetime(2026, 3, 13, 12, 0, 0),
+        )
+        _merge_partial(acc, older)  # pyright: ignore[reportPrivateUsage]
+        assert acc.first_timestamp == datetime(2026, 3, 13, 8, 0, 0)
+        # last_timestamp unchanged — the older partial's last is earlier.
+        assert acc.last_timestamp == datetime(2026, 3, 14, 18, 0, 0)
+
+    def test_newer_partial_does_not_update_first_timestamp(self) -> None:
+        """A partial newer than the accumulator must not alter first_timestamp."""
+        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
+            first_timestamp=datetime(2026, 3, 13, 8, 0, 0),
+            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
+        )
+        newer = VSCodeLogSummary(
+            first_timestamp=datetime(2026, 3, 15, 10, 0, 0),
+            last_timestamp=datetime(2026, 3, 15, 20, 0, 0),
+        )
+        _merge_partial(acc, newer)  # pyright: ignore[reportPrivateUsage]
+        assert acc.first_timestamp == datetime(2026, 3, 13, 8, 0, 0)
+        # last_timestamp updated because the newer partial is later.
+        assert acc.last_timestamp == datetime(2026, 3, 15, 20, 0, 0)
+
+    def test_counters_are_additive_not_replaced(self) -> None:
+        """Counter dicts must be summed, not overwritten, by _merge_partial."""
+        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
+            total_requests=10,
+            total_duration_ms=5000,
+        )
+        acc.requests_by_model["gpt-4o"] += 5
+        acc.duration_by_model["gpt-4o"] += 3000
+        acc.requests_by_category["panel"] += 4
+        acc.requests_by_date["2026-03-13"] += 6
+
+        partial = VSCodeLogSummary(
+            total_requests=3,
+            total_duration_ms=2000,
+            requests_by_model={"gpt-4o": 2, "claude-sonnet-4": 1},
+            duration_by_model={"gpt-4o": 1200, "claude-sonnet-4": 800},
+            requests_by_category={"panel": 1, "inline": 2},
+            requests_by_date={"2026-03-13": 1, "2026-03-14": 2},
+        )
+        _merge_partial(acc, partial)  # pyright: ignore[reportPrivateUsage]
+
+        assert acc.total_requests == 13
+        assert acc.total_duration_ms == 7000
+        assert acc.requests_by_model["gpt-4o"] == 7
+        assert acc.requests_by_model["claude-sonnet-4"] == 1
+        assert acc.duration_by_model["gpt-4o"] == 4200
+        assert acc.duration_by_model["claude-sonnet-4"] == 800
+        assert acc.requests_by_category["panel"] == 5
+        assert acc.requests_by_category["inline"] == 2
+        assert acc.requests_by_date["2026-03-13"] == 7
+        assert acc.requests_by_date["2026-03-14"] == 2
+
+
+# ---------------------------------------------------------------------------
+# _vscode_summary_cache — not populated on partial failure
+# ---------------------------------------------------------------------------
+
+
+class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
+    """Verify the summary cache stays None after a partial parse failure."""
+
+    def test_cache_stays_none_on_oserror(self) -> None:
+        """When one file raises OSError, _vscode_summary_cache must remain None."""
+        import copilot_usage.vscode_parser as _mod
+
+        file_a = Path("/fake/log_a.log")
+        file_b = Path("/fake/log_b.log")
+        ok_req = VSCodeRequest(
+            timestamp=datetime(2026, 3, 14, 12, 0, 0),
+            request_id="b1",
+            model="claude-sonnet-4",
+            duration_ms=300,
+            category="inline",
+        )
+
+        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+            if path == file_a:
+                raise OSError("Permission denied")
+            return [ok_req]
+
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fake_parse,
+            ),
+        ):
+            summary = get_vscode_summary()
+
+        assert summary.total_requests == 1
+        assert summary.log_files_found == 2
+        assert summary.log_files_parsed == 1
+        assert _mod._vscode_summary_cache is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_cache_populated_on_full_success_after_failure(self) -> None:
+        """After a failed call, a fully successful call should populate the cache."""
+        import copilot_usage.vscode_parser as _mod
+
+        file_a = Path("/fake/log_a.log")
+        file_b = Path("/fake/log_b.log")
+        ok_req = VSCodeRequest(
+            timestamp=datetime(2026, 3, 14, 12, 0, 0),
+            request_id="b1",
+            model="claude-sonnet-4",
+            duration_ms=300,
+            category="inline",
+        )
+
+        def _fail_a(path: Path) -> list[VSCodeRequest]:
+            if path == file_a:
+                raise OSError("Permission denied")
+            return [ok_req]
+
+        # First call: partial failure — cache stays None.
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                side_effect=_fail_a,
+            ),
+        ):
+            get_vscode_summary()
+
+        assert _mod._vscode_summary_cache is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call: all files succeed — cache should be populated.
+        with (
+            patch(
+                "copilot_usage.vscode_parser.discover_vscode_logs",
+                return_value=[file_a, file_b],
+            ),
+            patch(
+                "copilot_usage.vscode_parser.parse_vscode_log",
+                return_value=[ok_req],
+            ),
+        ):
+            summary2 = get_vscode_summary()
+
+        assert summary2.total_requests == 2
+        assert _mod._vscode_summary_cache is not None  # pyright: ignore[reportPrivateUsage]
