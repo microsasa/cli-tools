@@ -4,9 +4,10 @@ import os
 import re
 import stat
 import sys
+import types
 from collections import OrderedDict, defaultdict
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Final, Literal
@@ -58,10 +59,10 @@ class VSCodeLogSummary:
 
     total_requests: int = 0
     total_duration_ms: int = 0
-    requests_by_model: dict[str, int] = field(default_factory=lambda: {})
-    duration_by_model: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_category: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_date: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_model: Mapping[str, int] = field(default_factory=lambda: {})
+    duration_by_model: Mapping[str, int] = field(default_factory=lambda: {})
+    requests_by_category: Mapping[str, int] = field(default_factory=lambda: {})
+    requests_by_date: Mapping[str, int] = field(default_factory=lambda: {})
     # Earliest timestamp seen across all requests.
     first_timestamp: datetime | None = None
     # Latest timestamp seen across all requests.
@@ -466,34 +467,20 @@ def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
         acc.last_timestamp = partial.last_timestamp
 
 
-def _copy_summary(summary: VSCodeLogSummary) -> VSCodeLogSummary:
-    """Return a shallow copy with independent dict fields.
-
-    ``VSCodeLogSummary`` is a frozen dataclass, so scalar and datetime
-    fields are already immutable.  The four ``dict[str, int]`` fields,
-    however, are mutable containers — callers receiving a cached instance
-    could inadvertently mutate the module-level cache.  This helper
-    creates a new instance with copied dicts to preserve per-call
-    isolation.
-    """
-    return replace(
-        summary,
-        requests_by_model=dict(summary.requests_by_model),
-        duration_by_model=dict(summary.duration_by_model),
-        requests_by_category=dict(summary.requests_by_category),
-        requests_by_date=dict(summary.requests_by_date),
-    )
-
-
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
-    """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``."""
+    """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``.
+
+    Dict fields are wrapped in ``MappingProxyType`` to make them
+    immutable, allowing the summary to be shared safely from the
+    module-level cache without defensive copies.
+    """
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
-        requests_by_model=dict(acc.requests_by_model),
-        duration_by_model=dict(acc.duration_by_model),
-        requests_by_category=dict(acc.requests_by_category),
-        requests_by_date=dict(acc.requests_by_date),
+        requests_by_model=types.MappingProxyType(dict(acc.requests_by_model)),
+        duration_by_model=types.MappingProxyType(dict(acc.duration_by_model)),
+        requests_by_category=types.MappingProxyType(dict(acc.requests_by_category)),
+        requests_by_date=types.MappingProxyType(dict(acc.requests_by_date)),
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,
@@ -556,7 +543,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
         _vscode_summary_cache is not None
         and _vscode_summary_cache.file_ids == current_ids
     ):
-        return _copy_summary(_vscode_summary_cache.summary)
+        return _vscode_summary_cache.summary
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path, file_id in log_ids:
@@ -587,6 +574,6 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     # transient read failures should not produce a permanently stale cache.
     if summary.log_files_parsed == summary.log_files_found:
         _vscode_summary_cache = _CachedVSCodeSummary(
-            file_ids=current_ids, summary=_copy_summary(summary)
+            file_ids=current_ids, summary=summary
         )
     return summary

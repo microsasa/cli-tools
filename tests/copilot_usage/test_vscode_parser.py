@@ -21,7 +21,6 @@ from copilot_usage.vscode_parser import (
     VSCodeLogSummary,
     VSCodeRequest,
     _cached_discover_vscode_logs,  # pyright: ignore[reportPrivateUsage]
-    _copy_summary,  # pyright: ignore[reportPrivateUsage]
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
     _merge_partial,  # pyright: ignore[reportPrivateUsage]
@@ -956,13 +955,15 @@ class TestBuildVscodeSummaryBulk:
         # 10 distinct dates (0..999 // 100 → 0..9)
         assert len(summary.requests_by_date) == 10
 
-    def test_finalized_summary_uses_plain_dict(self) -> None:
-        """_finalize_summary converts defaultdict to plain dict."""
+    def test_finalized_summary_uses_mapping_proxy(self) -> None:
+        """_finalize_summary wraps dicts in MappingProxyType for immutability."""
+        import types
+
         summary = build_vscode_summary(_make_bulk_requests())
-        assert type(summary.requests_by_model) is dict
-        assert type(summary.duration_by_model) is dict
-        assert type(summary.requests_by_category) is dict
-        assert type(summary.requests_by_date) is dict
+        assert type(summary.requests_by_model) is types.MappingProxyType
+        assert type(summary.duration_by_model) is types.MappingProxyType
+        assert type(summary.requests_by_category) is types.MappingProxyType
+        assert type(summary.requests_by_date) is types.MappingProxyType
 
 
 # ---------------------------------------------------------------------------
@@ -1559,7 +1560,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             assert spy.call_count == 1
 
     def test_cached_return_is_mutation_safe(self, tmp_path: Path) -> None:
-        """Mutating dict fields on a cached return does not corrupt the cache."""
+        """Dict fields on a cached return are immutable (MappingProxyType)."""
         log_dir = (
             tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
         )
@@ -1570,14 +1571,13 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         s1 = get_vscode_summary(tmp_path)
         assert s1.requests_by_model == {"gpt-4o-mini": 1}
 
-        # Mutate the dict on the returned summary.
-        s1.requests_by_model["gpt-4o-mini"] = 9999
-        s1.requests_by_model["injected"] = 1
+        # Attempting to mutate the immutable dict field raises TypeError.
+        with pytest.raises(TypeError):
+            s1.requests_by_model["gpt-4o-mini"] = 9999  # type: ignore[index]
 
-        # Second call should return a clean copy, unaffected by the mutation.
+        # Second call returns the exact same cached object.
         s2 = get_vscode_summary(tmp_path)
-        assert s2.requests_by_model == {"gpt-4o-mini": 1}
-        assert "injected" not in s2.requests_by_model
+        assert s1 is s2
 
 
 # ---------------------------------------------------------------------------
@@ -1783,66 +1783,94 @@ class TestPerFileSummaryCacheLRUEviction:
 
 
 # ---------------------------------------------------------------------------
-# _copy_summary — mutation isolation and scalar fidelity
+# Immutable dict fields — MappingProxyType protection
 # ---------------------------------------------------------------------------
 
 
-class TestCopySummary:
-    """Verify that _copy_summary produces an independent copy."""
+class TestImmutableSummaryFields:
+    """Verify that VSCodeLogSummary dict fields produced by _finalize_summary
+    are immutable MappingProxyType instances, and that cache hits return the
+    same object without defensive copies.
+    """
 
-    _SUMMARY: VSCodeLogSummary = VSCodeLogSummary(
-        total_requests=5,
-        total_duration_ms=12000,
-        requests_by_model={"gpt-4o": 3, "claude-sonnet-4": 2},
-        duration_by_model={"gpt-4o": 7000, "claude-sonnet-4": 5000},
-        requests_by_category={"panel": 4, "inline": 1},
-        requests_by_date={"2026-03-13": 3, "2026-03-14": 2},
-        first_timestamp=datetime(2026, 3, 13, 10, 0, 0),
-        last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
-        log_files_parsed=2,
-        log_files_found=2,
-    )
+    def test_cache_hit_returns_same_object(self, tmp_path: Path) -> None:
+        """Two get_vscode_summary() calls with no changes return the same object."""
+        log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS + "\n")
 
-    def test_mutation_isolation_requests_by_model(self) -> None:
-        """Mutating copy.requests_by_model must not affect the original."""
-        original = self._SUMMARY
-        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
-        copy.requests_by_model["gpt-4o"] = 999
-        copy.requests_by_model["injected"] = 1
-        assert original.requests_by_model == {"gpt-4o": 3, "claude-sonnet-4": 2}
+        first = get_vscode_summary(tmp_path)
+        second = get_vscode_summary(tmp_path)
+        assert first is second
 
-    def test_mutation_isolation_duration_by_model(self) -> None:
-        """Mutating copy.duration_by_model must not affect the original."""
-        original = self._SUMMARY
-        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
-        copy.duration_by_model["gpt-4o"] = 0
-        assert original.duration_by_model == {"gpt-4o": 7000, "claude-sonnet-4": 5000}
+    def test_mutation_raises_requests_by_model(self, tmp_path: Path) -> None:
+        """Attempting to mutate requests_by_model raises TypeError."""
+        log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS + "\n")
 
-    def test_mutation_isolation_requests_by_category(self) -> None:
-        """Mutating copy.requests_by_category must not affect the original."""
-        original = self._SUMMARY
-        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
-        copy.requests_by_category["panel"] = 0
-        copy.requests_by_category["new_cat"] = 42
-        assert original.requests_by_category == {"panel": 4, "inline": 1}
+        summary = get_vscode_summary(tmp_path)
+        with pytest.raises(TypeError):
+            summary.requests_by_model["x"] = 1  # type: ignore[index]
 
-    def test_mutation_isolation_requests_by_date(self) -> None:
-        """Mutating copy.requests_by_date must not affect the original."""
-        original = self._SUMMARY
-        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
-        copy.requests_by_date.clear()
-        assert original.requests_by_date == {"2026-03-13": 3, "2026-03-14": 2}
+    def test_mutation_raises_duration_by_model(self, tmp_path: Path) -> None:
+        """Attempting to mutate duration_by_model raises TypeError."""
+        log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS + "\n")
 
-    def test_scalar_fields_copied_correctly(self) -> None:
-        """Scalar and datetime fields are faithfully reproduced in the copy."""
-        original = self._SUMMARY
-        copy = _copy_summary(original)  # pyright: ignore[reportPrivateUsage]
-        assert copy.total_requests == original.total_requests
-        assert copy.total_duration_ms == original.total_duration_ms
-        assert copy.first_timestamp == original.first_timestamp
-        assert copy.last_timestamp == original.last_timestamp
-        assert copy.log_files_parsed == original.log_files_parsed
-        assert copy.log_files_found == original.log_files_found
+        summary = get_vscode_summary(tmp_path)
+        with pytest.raises(TypeError):
+            summary.duration_by_model["x"] = 1  # type: ignore[index]
+
+    def test_mutation_raises_requests_by_category(self, tmp_path: Path) -> None:
+        """Attempting to mutate requests_by_category raises TypeError."""
+        log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS + "\n")
+
+        summary = get_vscode_summary(tmp_path)
+        with pytest.raises(TypeError):
+            summary.requests_by_category["x"] = 1  # type: ignore[index]
+
+    def test_mutation_raises_requests_by_date(self, tmp_path: Path) -> None:
+        """Attempting to mutate requests_by_date raises TypeError."""
+        log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS + "\n")
+
+        summary = get_vscode_summary(tmp_path)
+        with pytest.raises(TypeError):
+            summary.requests_by_date["x"] = 1  # type: ignore[index]
+
+    def test_build_vscode_summary_returns_immutable_fields(self) -> None:
+        """build_vscode_summary also wraps dict fields in MappingProxyType."""
+        summary = build_vscode_summary(
+            [
+                VSCodeRequest(
+                    timestamp=datetime(2026, 3, 13, 22, 10, 24),
+                    request_id="abc",
+                    model="gpt-4o",
+                    duration_ms=500,
+                    category="panel",
+                ),
+            ],
+            log_files_parsed=1,
+            log_files_found=1,
+        )
+        with pytest.raises(TypeError):
+            summary.requests_by_model["x"] = 1  # type: ignore[index]
+        with pytest.raises(TypeError):
+            summary.duration_by_model["x"] = 1  # type: ignore[index]
+        with pytest.raises(TypeError):
+            summary.requests_by_category["x"] = 1  # type: ignore[index]
+        with pytest.raises(TypeError):
+            summary.requests_by_date["x"] = 1  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
