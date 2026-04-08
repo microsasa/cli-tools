@@ -73,6 +73,7 @@ def _reset_all_caches() -> None:
     _DISCOVERY_CACHE.clear()
     _read_config_model.cache_clear()
     _parser_module._config_file_id = None
+    _parser_module._sorted_sessions_cache = None
 
 
 @pytest.fixture(autouse=True)
@@ -8663,3 +8664,128 @@ class TestDetectResumeElifShortCircuit:
         assert result.post_shutdown_user_messages == 1
         assert result.post_shutdown_turn_starts == 1
         assert result.post_shutdown_output_tokens == 42
+
+
+# ---------------------------------------------------------------------------
+# Issue #847 — skip redundant O(n log n) re-sort on full cache hits
+# ---------------------------------------------------------------------------
+
+
+class TestSortedSessionsCacheSkipsRedundantSort:
+    """``get_all_sessions`` skips re-sort when the session set is unchanged."""
+
+    def test_sort_skipped_on_warm_cache_hit(self, tmp_path: Path) -> None:
+        """``session_sort_key`` is invoked on the first call but not the second.
+
+        Creates a temp directory with a few session stubs, calls
+        ``get_all_sessions`` twice, and asserts that the sort key is
+        never evaluated on the second (warm-cache) call.
+        """
+        older_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-old",
+                    "version": 1,
+                    "startTime": "2026-01-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e1",
+                "timestamp": "2026-01-01T00:00:00.000Z",
+            }
+        )
+        newer_start = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-new",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", older_start)
+        _write_events(tmp_path / "b" / "events.jsonl", newer_start)
+
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with patch.object(_parser_module, "session_sort_key", tracking_key):
+            first_result = get_all_sessions(tmp_path)
+
+        assert len(sort_key_calls) > 0, (
+            "session_sort_key should be called on the first invocation"
+        )
+        assert len(first_result) == 2
+        assert first_result[0].session_id == "s-new"
+
+        sort_key_calls.clear()
+
+        with patch.object(_parser_module, "session_sort_key", tracking_key):
+            second_result = get_all_sessions(tmp_path)
+
+        assert len(sort_key_calls) == 0, (
+            "session_sort_key should NOT be called on the second invocation (warm cache)"
+        )
+        assert second_result == first_result
+
+    def test_sort_runs_after_new_session_added(self, tmp_path: Path) -> None:
+        """Sort runs again when a new session is discovered after cache hit."""
+        start1 = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s1",
+                    "version": 1,
+                    "startTime": "2026-01-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e1",
+                "timestamp": "2026-01-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", start1)
+
+        # First call — populates cache.
+        get_all_sessions(tmp_path)
+
+        # Add a new session.
+        start2 = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s2",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "b" / "events.jsonl", start2)
+
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with patch.object(_parser_module, "session_sort_key", tracking_key):
+            result = get_all_sessions(tmp_path)
+
+        assert len(sort_key_calls) > 0, (
+            "session_sort_key must be called when the session set changes"
+        )
+        assert len(result) == 2
+        assert result[0].session_id == "s2"

@@ -146,6 +146,22 @@ _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 _config_file_id: tuple[int, int] | None = None
 
 
+@dataclasses.dataclass(slots=True)
+class _SortedSessionsCache:
+    """Cached sorted result from ``get_all_sessions``.
+
+    Stores a fingerprint of the discovered session set (path + file identity
+    pairs) so that the O(n log n) sort can be skipped when the session set
+    is completely unchanged.
+    """
+
+    fingerprint: frozenset[tuple[Path, tuple[int, int] | None]]
+    summaries: list[SessionSummary]
+
+
+_sorted_sessions_cache: _SortedSessionsCache | None = None
+
+
 def _insert_events_entry(
     events_path: Path,
     file_id: tuple[int, int] | None,
@@ -1131,5 +1147,15 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         for p in stale_events:
             del _EVENTS_CACHE[p]
 
+    global _sorted_sessions_cache
+    current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
+    if (
+        _sorted_sessions_cache is not None
+        and _sorted_sessions_cache.fingerprint == current_fingerprint
+        and not deferred_sessions
+    ):
+        return list(_sorted_sessions_cache.summaries)
+
     summaries.sort(key=session_sort_key, reverse=True)
+    _sorted_sessions_cache = _SortedSessionsCache(current_fingerprint, list(summaries))
     return summaries
