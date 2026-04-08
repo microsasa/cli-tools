@@ -182,6 +182,32 @@ class TestRenderVscodeSummaryPerModelTable:
         # format_duration(389_114) -> "6m 29s"
         assert "6m 29s" in output
 
+    def test_per_model_table_absent_duration_defaults_to_zero_avg(self) -> None:
+        """Model in requests_by_model but absent from duration_by_model → 0ms avg."""
+        summary = _make_summary(
+            total_requests=3,
+            requests_by_model={"claude-opus-4.6": 3},
+            duration_by_model={},
+        )
+        output = _capture(summary)
+        assert "claude-opus-4.6" in output
+        assert "0ms" in output
+
+    def test_per_model_table_partial_duration_dict(self) -> None:
+        """Only one of two models has a duration entry; the other defaults to 0ms."""
+        summary = _make_summary(
+            total_requests=5,
+            requests_by_model={"gpt-4o-mini": 3, "claude-opus-4.6": 2},
+            duration_by_model={"gpt-4o-mini": 1500},
+        )
+        output = _capture(summary)
+        assert "gpt-4o-mini" in output
+        assert "claude-opus-4.6" in output
+        # gpt-4o-mini avg = 1500 // 3 = 500ms
+        assert "500ms" in output
+        # claude-opus-4.6 has no duration entry → 0ms avg
+        assert "0ms" in output
+
     def test_empty_requests_by_model_table_absent(self) -> None:
         summary = _make_summary(total_requests=5, requests_by_model={})
         output = _capture(summary)
