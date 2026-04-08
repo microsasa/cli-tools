@@ -43,6 +43,7 @@ from copilot_usage.parser import (
     _MAX_CACHED_SESSIONS,
     _MAX_PLAN_PROBES,
     _SESSION_CACHE,
+    DEFAULT_SESSION_PATH,
     _build_active_summary,
     _build_completed_summary,
     _CachedEvents,
@@ -8789,3 +8790,18 @@ class TestSortedSessionsCacheSkipsRedundantSort:
         )
         assert len(result) == 2
         assert result[0].session_id == "s2"
+
+
+# -- DEFAULT_SESSION_PATH constant -----------------------------------------
+
+
+class TestDefaultSessionPath:
+    """Guards for the public DEFAULT_SESSION_PATH constant."""
+
+    def test_value_matches_expected(self) -> None:
+        """DEFAULT_SESSION_PATH equals ``~/.copilot/session-state``."""
+        assert Path.home() / ".copilot" / "session-state" == DEFAULT_SESSION_PATH
+
+    def test_exported_in_all(self) -> None:
+        """DEFAULT_SESSION_PATH is listed in ``parser.__all__``."""
+        assert "DEFAULT_SESSION_PATH" in _parser_module.__all__

@@ -22,6 +22,7 @@ from copilot_usage import __version__
 from copilot_usage.logging_config import setup_logging
 from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
 from copilot_usage.parser import (
+    DEFAULT_SESSION_PATH,
     get_all_sessions,
     get_cached_events,
 )
@@ -260,7 +261,7 @@ def _build_session_index(sessions: list[SessionSummary]) -> dict[str, int]:
 def _interactive_loop(path: Path | None) -> None:
     """Run the interactive Rich session loop with auto-refresh on file changes."""
     console = Console()
-    session_path = path or Path.home() / ".copilot" / "session-state"
+    session_path = path or DEFAULT_SESSION_PATH
 
     # File watcher for auto-refresh
     change_event = threading.Event()
