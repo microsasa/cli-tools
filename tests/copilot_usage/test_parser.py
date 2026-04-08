@@ -8793,33 +8793,33 @@ class TestSortedSessionsCacheSkipsRedundantSort:
 
 
 # ---------------------------------------------------------------------------
-# Issue #859 — skip O(n) frozenset construction on discovery-cache-hit
+# Issue #859 — fingerprint-validated fast path for sorted-sessions cache
 # ---------------------------------------------------------------------------
 
 
 class TestSortedSessionsCacheFastPath:
-    """Early-return in get_all_sessions skips frozenset when cache is warm.
+    """Early-return in get_all_sessions skips sort when fingerprint matches.
 
-    When ``is_cache_hit=True`` (root directory identity unchanged) and
-    ``deferred_sessions`` is empty (no re-parses or plan.md name updates),
-    the sorted-sessions cache is guaranteed valid.  The fast path returns
-    immediately without building the O(n) ``frozenset`` fingerprint.
+    When ``is_cache_hit=True`` (root directory identity unchanged),
+    ``deferred_sessions`` is empty, and the fingerprint of the discovered
+    session set matches the cached fingerprint, the fast path returns
+    immediately without re-sorting or re-creating the cache entry.
     """
 
     @staticmethod
     def _make_session(base: Path, name: str, sid: str) -> Path:
         return _make_completed_session(base, name, sid)
 
-    def test_frozenset_not_built_on_warm_cache_hit(
+    def test_sort_and_cache_skipped_on_warm_cache_hit(
         self,
         tmp_path: Path,
     ) -> None:
-        """Fingerprint frozenset is NOT built on a warm discovery-cache hit.
+        """Sort and cache construction are skipped on a warm cache hit.
 
-        Wraps ``_SortedSessionsCache`` with a counting callable to verify
-        that the fast path skips both the O(n) frozenset construction and
-        the cache-entry creation when the discovery cache hits and no
-        sessions were re-parsed.
+        Spies on both ``session_sort_key`` (to verify the O(n log n) sort
+        is skipped) and ``_SortedSessionsCache`` (to verify the cache
+        object is not re-created) when the discovery cache hits, no
+        sessions were re-parsed, and the fingerprint matches.
         """
         self._make_session(tmp_path, "sess-a", "a")
         self._make_session(tmp_path, "sess-b", "b")
@@ -8838,7 +8838,18 @@ class TestSortedSessionsCacheFastPath:
             init_calls += 1
             return _Orig(*args, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(_parser_module, "_SortedSessionsCache", _counting_factory):
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with (
+            patch.object(_parser_module, "_SortedSessionsCache", _counting_factory),
+            patch.object(_parser_module, "session_sort_key", tracking_key),
+        ):
             # Second call — discovery cache hit, no deferred sessions.
             second = get_all_sessions(tmp_path)
 
@@ -8846,13 +8857,16 @@ class TestSortedSessionsCacheFastPath:
             f"Expected 0 _SortedSessionsCache constructions on warm cache hit, "
             f"got {init_calls}"
         )
+        assert len(sort_key_calls) == 0, (
+            "session_sort_key should NOT be called on warm cache hit"
+        )
         assert [s.model_dump() for s in first] == [s.model_dump() for s in second]
 
-    def test_frozenset_built_when_session_added(
+    def test_sort_and_cache_run_when_session_added(
         self,
         tmp_path: Path,
     ) -> None:
-        """Fingerprint frozenset IS built when the session set changes."""
+        """Sort and cache construction run when the session set changes."""
         self._make_session(tmp_path, "sess-a", "a")
 
         # Populate caches.
@@ -8871,12 +8885,26 @@ class TestSortedSessionsCacheFastPath:
             init_calls += 1
             return _Orig(*args, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(_parser_module, "_SortedSessionsCache", _counting_factory):
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with (
+            patch.object(_parser_module, "_SortedSessionsCache", _counting_factory),
+            patch.object(_parser_module, "session_sort_key", tracking_key),
+        ):
             result = get_all_sessions(tmp_path)
 
         assert init_calls == 1, (
             f"Expected 1 _SortedSessionsCache construction on cache miss, "
             f"got {init_calls}"
+        )
+        assert len(sort_key_calls) > 0, (
+            "session_sort_key must be called when the session set changes"
         )
         assert len(result) == 2
 

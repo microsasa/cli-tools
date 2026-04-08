@@ -153,8 +153,8 @@ class _SortedSessionsCache:
 
     Stores a fingerprint of the discovered session set (path + file identity
     pairs) so that the O(n log n) sort can be skipped when the session set
-    is completely unchanged.  The *root* field records which resolved
-    base path the cache was built for, preventing cross-path false hits.
+    is completely unchanged.  The *root* field records which resolved base
+    path the cache was built for.
     """
 
     root: Path
@@ -1153,21 +1153,18 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         for p in stale_events:
             del _EVENTS_CACHE[p]
 
-    # Fast path: root unchanged + no re-parses/name-updates → sorted order
-    # cannot have changed; skip the O(n) frozenset construction entirely.
+    current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
+
+    # Fast path: when discovery cache hits and there are no deferred sessions,
+    # sorted order cannot have changed *for the same discovered session set*.
+    # Validate the fingerprint before reusing the process-global cache so
+    # calls with different base paths in the same process cannot return the
+    # previous root's cached summaries.
     if (
         is_cache_hit
         and not deferred_sessions
         and _sorted_sessions_cache is not None
-        and _sorted_sessions_cache.root == resolved_root
-    ):
-        return list(_sorted_sessions_cache.summaries)
-
-    current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
-    if (
-        _sorted_sessions_cache is not None
         and _sorted_sessions_cache.fingerprint == current_fingerprint
-        and not deferred_sessions
     ):
         return list(_sorted_sessions_cache.summaries)
 
