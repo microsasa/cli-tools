@@ -128,6 +128,10 @@ def _build_event_details(ev: SessionEvent) -> str:
                 parts.append(f"tokens={data.outputTokens}")
             if data.content:
                 parts.append(_truncate(data.content, 60))
+            if data.toolRequests:
+                names = ", ".join(r.name for r in data.toolRequests if r.name)
+                label = "tool" if len(data.toolRequests) == 1 else "tools"
+                parts.append(_truncate(f"{label}: {names}", 60))
             return "  ".join(parts)
 
         case EventType.TOOL_EXECUTION_COMPLETE:
