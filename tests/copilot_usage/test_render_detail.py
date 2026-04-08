@@ -443,6 +443,129 @@ class TestRenderRecentEventsNonPositiveMax:
         assert "hi" not in buf.getvalue()  # content must NOT appear
 
 
+# ---------------------------------------------------------------------------
+# Issue #849 — tool-calling assistant messages show tool names
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetailsToolRequests:
+    """_build_event_details must surface tool names from toolRequests."""
+
+    def test_tool_only_turn_shows_tool_names(self) -> None:
+        """ASSISTANT_MESSAGE with content='', outputTokens=0, and two
+        toolRequests must render both tool names."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": [
+                    {"name": "bash", "toolCallId": "t1"},
+                    {"name": "view", "toolCallId": "t2"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "bash" in detail
+        assert "view" in detail
+        assert detail.startswith("tools:")
+
+    def test_mixed_turn_shows_tokens_and_tool(self) -> None:
+        """ASSISTANT_MESSAGE with content, outputTokens, and one
+        toolRequest must render token info and the tool name."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "ok",
+                "outputTokens": 100,
+                "toolRequests": [
+                    {"name": "edit", "toolCallId": "t3"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tokens=100" in detail
+        assert "ok" in detail
+        assert "tool: edit" in detail
+
+    def test_no_tools_unchanged(self) -> None:
+        """ASSISTANT_MESSAGE without toolRequests must behave as before."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "hello",
+                "outputTokens": 50,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tokens=50" in detail
+        assert "hello" in detail
+        assert "tool" not in detail
+
+    def test_truncation_applied_to_long_tool_list(self) -> None:
+        """When the joined tool names exceed 60 chars, truncation applies."""
+        from copilot_usage.render_detail import _build_event_details
+
+        long_names = [
+            {"name": f"very_long_tool_name_{i}", "toolCallId": f"t{i}"}
+            for i in range(10)
+        ]
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": long_names,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert len(detail) <= 60
+        assert detail.endswith("…")
+
+    def test_empty_names_show_unknown(self) -> None:
+        """toolRequests present but all names empty must show '(unknown)'."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": [
+                    {"name": "", "toolCallId": "t1"},
+                    {"name": "", "toolCallId": "t2"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tools: (unknown)" in detail
+
+    def test_singular_label_based_on_displayed_names(self) -> None:
+        """When two toolRequests exist but only one has a name, use 'tool'."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": [
+                    {"name": "bash", "toolCallId": "t1"},
+                    {"name": "", "toolCallId": "t2"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tool: bash" in detail
+        assert not detail.startswith("tools:")
+
+
 class TestRenderSessionDetailMultiModelShutdown:
     """Multi-model shutdown totals must propagate through
     render_session_detail end-to-end."""
