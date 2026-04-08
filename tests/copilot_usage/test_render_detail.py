@@ -617,16 +617,20 @@ class TestRenderSessionDetailMultiModelShutdown:
 
 class TestBuildEventDetailsUntestedBranches:
     """Cover the two branches in _build_event_details that had zero test
-    coverage: SESSION_SHUTDOWN with falsy shutdownType and
+    coverage: SESSION_SHUTDOWN with empty shutdownType and
     TOOL_EXECUTION_COMPLETE with a non-None model field."""
 
-    def test_session_shutdown_none_shutdown_type_returns_empty(self) -> None:
-        """SESSION_SHUTDOWN with shutdownType=None must return ''."""
+    def test_session_shutdown_empty_shutdown_type_returns_empty(self) -> None:
+        """SESSION_SHUTDOWN with shutdownType='' must return ''."""
         from copilot_usage.render_detail import _build_event_details
 
         ev = SessionEvent(
             type=EventType.SESSION_SHUTDOWN,
-            data={"totalPremiumRequests": 0, "totalApiDurationMs": 0},
+            data={
+                "shutdownType": "",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+            },
         )
         detail = _build_event_details(ev)
         assert detail == ""
