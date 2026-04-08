@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import SupportsIndex, overload
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -624,6 +624,55 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             return original_scandir(path)
 
         with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
+            _, result = _discover_with_identity(tmp_path)
+
+        assert len(result) == 1
+        assert result[0][0].parent.name == "sess-good"
+
+    def test_full_scandir_is_dir_oserror_skips_entry(self, tmp_path: Path) -> None:
+        """Skip a root-level entry whose ``is_dir()`` raises ``OSError``.
+
+        Simulates a broken symlink or ``EACCES`` on ``lstat`` by wrapping
+        ``os.scandir`` so that one entry's ``is_dir()`` raises ``OSError``.
+        The faulting entry must be silently skipped, not crash discovery.
+        """
+        good = tmp_path / "sess-good"
+        _write_events(good / "events.jsonl", _START_EVENT)
+        bad = tmp_path / "sess-bad"
+        _write_events(bad / "events.jsonl", _START_EVENT)
+
+        original_scandir = os.scandir
+
+        def _patched_scandir(
+            path: str | os.PathLike[str],
+        ) -> Iterator[os.DirEntry[str]]:
+            ctx = original_scandir(path)
+            if str(path) != str(tmp_path):
+                return ctx  # type: ignore[return-value]
+
+            class _WrappedCtx:
+                """Context manager that wraps scandir entries."""
+
+                def __enter__(self) -> Iterator[os.DirEntry[str]]:
+                    entries: list[os.DirEntry[str]] = list(original_scandir(path))
+                    wrapped: list[os.DirEntry[str]] = []
+                    for e in entries:
+                        if e.name == "sess-bad":
+                            m = MagicMock(spec=os.DirEntry)
+                            m.name = e.name
+                            m.path = e.path
+                            m.is_dir.side_effect = OSError("lstat failed")
+                            wrapped.append(m)
+                        else:
+                            wrapped.append(e)
+                    return iter(wrapped)
+
+                def __exit__(self, *a: object) -> None:
+                    pass
+
+            return _WrappedCtx()  # type: ignore[return-value]
+
+        with patch("copilot_usage.parser.os.scandir", side_effect=_patched_scandir):
             _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == 1
