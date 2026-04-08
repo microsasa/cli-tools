@@ -49,9 +49,17 @@ class VSCodeRequest:
     category: str
 
 
+_EMPTY_MAPPING: Final[types.MappingProxyType[str, int]] = types.MappingProxyType({})
+
+
 @dataclass(frozen=True, slots=True)
 class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs.
+
+    All four mapping fields are guaranteed to be ``MappingProxyType``
+    instances — ``__post_init__`` wraps any plain ``dict`` provided by
+    the caller, so the immutability contract holds regardless of how the
+    dataclass is constructed.
 
     ``first_timestamp`` and ``last_timestamp`` are derived from a per-request
     min/max scan, so input order does not matter.
@@ -59,16 +67,30 @@ class VSCodeLogSummary:
 
     total_requests: int = 0
     total_duration_ms: int = 0
-    requests_by_model: Mapping[str, int] = field(default_factory=lambda: {})
-    duration_by_model: Mapping[str, int] = field(default_factory=lambda: {})
-    requests_by_category: Mapping[str, int] = field(default_factory=lambda: {})
-    requests_by_date: Mapping[str, int] = field(default_factory=lambda: {})
+    requests_by_model: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
+    duration_by_model: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
+    requests_by_category: Mapping[str, int] = field(
+        default_factory=lambda: _EMPTY_MAPPING
+    )
+    requests_by_date: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
     # Earliest timestamp seen across all requests.
     first_timestamp: datetime | None = None
     # Latest timestamp seen across all requests.
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
     log_files_found: int = 0
+
+    def __post_init__(self) -> None:
+        _wrap = types.MappingProxyType
+        for attr in (
+            "requests_by_model",
+            "duration_by_model",
+            "requests_by_category",
+            "requests_by_date",
+        ):
+            val = object.__getattribute__(self, attr)
+            if type(val) is not _wrap:
+                object.__setattr__(self, attr, _wrap(dict(val)))
 
 
 _GLOB_PATTERN: Final[str] = (
@@ -470,17 +492,16 @@ def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``.
 
-    Dict fields are wrapped in ``MappingProxyType`` to make them
-    immutable, allowing the summary to be shared safely from the
-    module-level cache without defensive copies.
+    Plain ``dict`` values are passed to the constructor;
+    ``VSCodeLogSummary.__post_init__`` wraps them in ``MappingProxyType``.
     """
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
-        requests_by_model=types.MappingProxyType(dict(acc.requests_by_model)),
-        duration_by_model=types.MappingProxyType(dict(acc.duration_by_model)),
-        requests_by_category=types.MappingProxyType(dict(acc.requests_by_category)),
-        requests_by_date=types.MappingProxyType(dict(acc.requests_by_date)),
+        requests_by_model=dict(acc.requests_by_model),
+        duration_by_model=dict(acc.duration_by_model),
+        requests_by_category=dict(acc.requests_by_category),
+        requests_by_date=dict(acc.requests_by_date),
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,

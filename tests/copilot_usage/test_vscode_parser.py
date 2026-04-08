@@ -1788,9 +1788,9 @@ class TestPerFileSummaryCacheLRUEviction:
 
 
 class TestImmutableSummaryFields:
-    """Verify that VSCodeLogSummary dict fields produced by _finalize_summary
-    are immutable MappingProxyType instances, and that cache hits return the
-    same object without defensive copies.
+    """Verify that VSCodeLogSummary dict fields are always immutable
+    MappingProxyType instances — whether produced by _finalize_summary,
+    build_vscode_summary, or direct construction with plain dicts.
     """
 
     def test_cache_hit_returns_same_object(self, tmp_path: Path) -> None:
@@ -1871,6 +1871,37 @@ class TestImmutableSummaryFields:
             summary.requests_by_category["x"] = 1  # type: ignore[index]
         with pytest.raises(TypeError):
             summary.requests_by_date["x"] = 1  # type: ignore[index]
+
+    def test_constructor_wraps_plain_dicts(self) -> None:
+        """Passing plain dicts to the constructor produces MappingProxyType."""
+        import types
+
+        mutable = {"gpt-4o": 3}
+        summary = VSCodeLogSummary(
+            requests_by_model=mutable,
+            duration_by_model={"gpt-4o": 7000},
+            requests_by_category={"panel": 4},
+            requests_by_date={"2026-03-13": 3},
+        )
+        # Caller's mutable dict must not alias the frozen field.
+        mutable["injected"] = 1
+        assert "injected" not in summary.requests_by_model
+        assert type(summary.requests_by_model) is types.MappingProxyType
+        assert type(summary.duration_by_model) is types.MappingProxyType
+        assert type(summary.requests_by_category) is types.MappingProxyType
+        assert type(summary.requests_by_date) is types.MappingProxyType
+
+    def test_default_constructor_produces_immutable_fields(self) -> None:
+        """VSCodeLogSummary() with no args has immutable empty mappings."""
+        import types
+
+        summary = VSCodeLogSummary()
+        assert type(summary.requests_by_model) is types.MappingProxyType
+        assert type(summary.duration_by_model) is types.MappingProxyType
+        assert type(summary.requests_by_category) is types.MappingProxyType
+        assert type(summary.requests_by_date) is types.MappingProxyType
+        with pytest.raises(TypeError):
+            summary.requests_by_model["x"] = 1  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
