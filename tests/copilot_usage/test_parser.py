@@ -8,6 +8,7 @@ import json
 import os
 import time
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import SupportsIndex, cast, overload
@@ -645,9 +646,9 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
 
         def _patched_scandir(
             path: str | os.PathLike[str],
-        ) -> Iterator[os.DirEntry[str]]:
+        ) -> AbstractContextManager[Iterator[os.DirEntry[str]]]:
             if str(path) != str(tmp_path):
-                return original_scandir(path)  # type: ignore[return-value]
+                return original_scandir(path)
 
             class _WrappedCtx:
                 """Context manager keeping the scandir iterator open."""
@@ -677,7 +678,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
                         self._it.close()  # type: ignore[union-attr]
                         self._it = None
 
-            return _WrappedCtx()  # type: ignore[return-value]
+            return _WrappedCtx()
 
         with patch("copilot_usage.parser.os.scandir", side_effect=_patched_scandir):
             _, result = _discover_with_identity(tmp_path)
