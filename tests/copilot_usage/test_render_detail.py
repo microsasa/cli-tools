@@ -617,7 +617,20 @@ class TestRenderSessionDetailMultiModelShutdown:
 
 
 class TestBuildEventDetailsUntestedBranches:
-    """Cover the TOOL_EXECUTION_COMPLETE truthy-model branch in _build_event_details."""
+    """Cover untested branches in _build_event_details:
+
+    1. SESSION_SHUTDOWN with falsy shutdownType → returns "".
+    2. TOOL_EXECUTION_COMPLETE with truthy model → includes model=<value>.
+    """
+
+    def test_session_shutdown_with_falsy_shutdown_type(self) -> None:
+        """SESSION_SHUTDOWN with shutdownType='' returns empty string."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            data={"totalPremiumRequests": 5},
+        )
+        detail = _build_event_details(ev)
+        assert detail == ""
 
     def test_tool_execution_complete_with_model(self) -> None:
         """TOOL_EXECUTION_COMPLETE with model field includes model=<value> in detail."""
