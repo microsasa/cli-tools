@@ -616,19 +616,15 @@ class TestRenderSessionDetailMultiModelShutdown:
 
 
 class TestBuildEventDetailsUntestedBranches:
-    """Cover the remaining _build_event_details branch unique to this module."""
+    """Cover the SESSION_SHUTDOWN falsy-shutdownType branch in _build_event_details."""
 
-    def test_tool_execution_complete_with_model(self) -> None:
-        """TOOL_EXECUTION_COMPLETE with model set must include 'model=...'."""
+    def test_session_shutdown_falsy_shutdown_type(self) -> None:
+        """SESSION_SHUTDOWN with no shutdownType returns empty string."""
         from copilot_usage.render_detail import _build_event_details
 
         ev = SessionEvent(
-            type=EventType.TOOL_EXECUTION_COMPLETE,
-            data={
-                "toolCallId": "tc1",
-                "model": "claude-sonnet-4",
-                "success": True,
-            },
+            type=EventType.SESSION_SHUTDOWN,
+            data={},
         )
         detail = _build_event_details(ev)
-        assert "model=claude-sonnet-4" in detail
+        assert detail == ""
