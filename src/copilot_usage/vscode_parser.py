@@ -4,9 +4,10 @@ import os
 import re
 import stat
 import sys
+import types
 from collections import OrderedDict, defaultdict
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Final, Literal
@@ -48,9 +49,18 @@ class VSCodeRequest:
     category: str
 
 
+_EMPTY_MAPPING: Final[Mapping[str, int]] = types.MappingProxyType({})
+
+
 @dataclass(frozen=True, slots=True)
 class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs.
+
+    All four mapping fields are guaranteed to be ``MappingProxyType``
+    instances — ``__post_init__`` snapshots any value into a fresh
+    ``MappingProxyType(dict(val))``, so the immutability contract holds
+    regardless of how the dataclass is constructed or whether the caller
+    retains the original dict.
 
     ``first_timestamp`` and ``last_timestamp`` are derived from a per-request
     min/max scan, so input order does not matter.
@@ -58,16 +68,33 @@ class VSCodeLogSummary:
 
     total_requests: int = 0
     total_duration_ms: int = 0
-    requests_by_model: dict[str, int] = field(default_factory=lambda: {})
-    duration_by_model: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_category: dict[str, int] = field(default_factory=lambda: {})
-    requests_by_date: dict[str, int] = field(default_factory=lambda: {})
+    requests_by_model: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
+    duration_by_model: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
+    requests_by_category: Mapping[str, int] = field(
+        default_factory=lambda: _EMPTY_MAPPING
+    )
+    requests_by_date: Mapping[str, int] = field(default_factory=lambda: _EMPTY_MAPPING)
     # Earliest timestamp seen across all requests.
     first_timestamp: datetime | None = None
     # Latest timestamp seen across all requests.
     last_timestamp: datetime | None = None
     log_files_parsed: int = 0
     log_files_found: int = 0
+
+    def __post_init__(self) -> None:
+        _wrap = types.MappingProxyType
+        for attr in (
+            "requests_by_model",
+            "duration_by_model",
+            "requests_by_category",
+            "requests_by_date",
+        ):
+            val = object.__getattribute__(self, attr)
+            if val is _EMPTY_MAPPING:
+                continue
+            # Always snapshot into a new MappingProxyType so the caller
+            # cannot mutate the summary through a retained dict reference.
+            object.__setattr__(self, attr, _wrap(dict(val)))
 
 
 _GLOB_PATTERN: Final[str] = (
@@ -466,27 +493,12 @@ def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
         acc.last_timestamp = partial.last_timestamp
 
 
-def _copy_summary(summary: VSCodeLogSummary) -> VSCodeLogSummary:
-    """Return a shallow copy with independent dict fields.
-
-    ``VSCodeLogSummary`` is a frozen dataclass, so scalar and datetime
-    fields are already immutable.  The four ``dict[str, int]`` fields,
-    however, are mutable containers — callers receiving a cached instance
-    could inadvertently mutate the module-level cache.  This helper
-    creates a new instance with copied dicts to preserve per-call
-    isolation.
-    """
-    return replace(
-        summary,
-        requests_by_model=dict(summary.requests_by_model),
-        duration_by_model=dict(summary.duration_by_model),
-        requests_by_category=dict(summary.requests_by_category),
-        requests_by_date=dict(summary.requests_by_date),
-    )
-
-
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
-    """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``."""
+    """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``.
+
+    Plain ``dict`` values are passed to the constructor;
+    ``VSCodeLogSummary.__post_init__`` wraps them in ``MappingProxyType``.
+    """
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
@@ -556,7 +568,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
         _vscode_summary_cache is not None
         and _vscode_summary_cache.file_ids == current_ids
     ):
-        return _copy_summary(_vscode_summary_cache.summary)
+        return _vscode_summary_cache.summary
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
     for log_path, file_id in log_ids:
@@ -587,6 +599,6 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     # transient read failures should not produce a permanently stale cache.
     if summary.log_files_parsed == summary.log_files_found:
         _vscode_summary_cache = _CachedVSCodeSummary(
-            file_ids=current_ids, summary=_copy_summary(summary)
+            file_ids=current_ids, summary=summary
         )
     return summary
