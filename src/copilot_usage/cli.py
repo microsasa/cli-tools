@@ -40,11 +40,11 @@ from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
 
+# (format_string, has_explicit_time) pairs — single source of truth.
 _FORMAT_SPECS: Final[list[tuple[str, bool]]] = [
     ("%Y-%m-%d", False),
     ("%Y-%m-%dT%H:%M:%S", True),
 ]
-"""(format_string, has_explicit_time) pairs — single source of truth."""
 
 _DATE_FORMATS: Final[list[str]] = [fmt for fmt, _ in _FORMAT_SPECS]
 
@@ -69,7 +69,7 @@ class _DateTimeOrDate(click.ParamType):
     Returns a :class:`_ParsedDateArg`.
     """
 
-    name: str = "datetime"
+    name: str = "datetime-or-date"
 
     def convert(  # noqa: RET503
         self,
@@ -498,7 +498,7 @@ def main(ctx: click.Context, path: Path | None) -> None:
     "--until",
     type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting before or at this timestamp (date-only values are treated as end-of-day).",
+    help="Show sessions starting before or at this timestamp cutoff (date-only values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -594,7 +594,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     "--until",
     type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting before this timestamp cutoff (date-only values are expanded to end-of-day).",
+    help="Show sessions starting before or at this timestamp cutoff (date-only values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
