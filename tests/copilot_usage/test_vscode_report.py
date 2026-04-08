@@ -166,11 +166,15 @@ class TestRenderVscodeSummaryPerModelTable:
         """A model with count=0 in duration_by_model produces avg_ms=0."""
         summary = _make_summary(
             total_requests=0,
+            total_duration_ms=1_000,
             requests_by_model={"some-model": 0},
             duration_by_model={"some-model": 100},
         )
         output = _capture(summary)
-        assert "0ms" in output
+        model_line = _strip_ansi(
+            next(line for line in output.splitlines() if "some-model" in line)
+        )
+        assert "0ms" in model_line
 
     def test_total_duration_formatted(self) -> None:
         summary = _make_summary(
@@ -186,27 +190,36 @@ class TestRenderVscodeSummaryPerModelTable:
         """Model in requests_by_model but absent from duration_by_model → 0ms avg."""
         summary = _make_summary(
             total_requests=3,
+            total_duration_ms=1_000,
             requests_by_model={"claude-opus-4.6": 3},
             duration_by_model={},
         )
         output = _capture(summary)
-        assert "claude-opus-4.6" in output
-        assert "0ms" in output
+        model_line = _strip_ansi(
+            next(line for line in output.splitlines() if "claude-opus-4.6" in line)
+        )
+        assert "claude-opus-4.6" in model_line
+        assert model_line.count("0ms") == 2
 
     def test_per_model_table_partial_duration_dict(self) -> None:
         """Only one of two models has a duration entry; the other defaults to 0ms."""
         summary = _make_summary(
             total_requests=5,
+            total_duration_ms=1_500,
             requests_by_model={"gpt-4o-mini": 3, "claude-opus-4.6": 2},
             duration_by_model={"gpt-4o-mini": 1500},
         )
         output = _capture(summary)
-        assert "gpt-4o-mini" in output
-        assert "claude-opus-4.6" in output
+        gpt_line = _strip_ansi(
+            next(line for line in output.splitlines() if "gpt-4o-mini" in line)
+        )
+        opus_line = _strip_ansi(
+            next(line for line in output.splitlines() if "claude-opus-4.6" in line)
+        )
         # gpt-4o-mini avg = 1500 // 3 = 500ms
-        assert "500ms" in output
-        # claude-opus-4.6 has no duration entry → 0ms avg
-        assert "0ms" in output
+        assert "500ms" in gpt_line
+        # claude-opus-4.6 has no duration entry → 0ms avg and 0ms total
+        assert opus_line.count("0ms") == 2
 
     def test_empty_requests_by_model_table_absent(self) -> None:
         summary = _make_summary(total_requests=5, requests_by_model={})
