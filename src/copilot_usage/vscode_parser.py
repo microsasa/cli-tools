@@ -49,7 +49,7 @@ class VSCodeRequest:
     category: str
 
 
-_EMPTY_MAPPING: Final[types.MappingProxyType[str, int]] = types.MappingProxyType({})
+_EMPTY_MAPPING: Final[Mapping[str, int]] = types.MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +57,10 @@ class VSCodeLogSummary:
     """Aggregated stats from VS Code Copilot Chat logs.
 
     All four mapping fields are guaranteed to be ``MappingProxyType``
-    instances — ``__post_init__`` wraps any plain ``dict`` provided by
-    the caller, so the immutability contract holds regardless of how the
-    dataclass is constructed.
+    instances — ``__post_init__`` snapshots any value into a fresh
+    ``MappingProxyType(dict(val))``, so the immutability contract holds
+    regardless of how the dataclass is constructed or whether the caller
+    retains the original dict.
 
     ``first_timestamp`` and ``last_timestamp`` are derived from a per-request
     min/max scan, so input order does not matter.
@@ -89,8 +90,11 @@ class VSCodeLogSummary:
             "requests_by_date",
         ):
             val = object.__getattribute__(self, attr)
-            if type(val) is not _wrap:
-                object.__setattr__(self, attr, _wrap(dict(val)))
+            if val is _EMPTY_MAPPING:
+                continue
+            # Always snapshot into a new MappingProxyType so the caller
+            # cannot mutate the summary through a retained dict reference.
+            object.__setattr__(self, attr, _wrap(dict(val)))
 
 
 _GLOB_PATTERN: Final[str] = (
