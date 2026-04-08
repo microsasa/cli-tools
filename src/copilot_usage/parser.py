@@ -17,6 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 __all__: Final[list[str]] = [
+    "DEFAULT_SESSION_PATH",
     "build_session_summary",
     "discover_sessions",
     "get_all_sessions",
@@ -38,7 +39,7 @@ from copilot_usage.models import (
     session_sort_key,
 )
 
-_DEFAULT_BASE: Final[Path] = Path.home() / ".copilot" / "session-state"
+DEFAULT_SESSION_PATH: Final[Path] = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Final[Path] = Path.home() / ".copilot" / "config.json"
 
 
@@ -393,7 +394,7 @@ def _discover_with_identity(
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
     """
-    root = (base_path or _DEFAULT_BASE).resolve()
+    root = (base_path or DEFAULT_SESSION_PATH).resolve()
 
     root_id = safe_file_identity(root)
     if root_id is None:
@@ -1129,7 +1130,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # False when it prunes definitively-deleted entries, ensuring the
     # scan still runs when needed.
     if not is_cache_hit:
-        root = (base_path or _DEFAULT_BASE).resolve()
+        root = (base_path or DEFAULT_SESSION_PATH).resolve()
         discovered_paths = {p for p, _, _ in discovered}
         stale = [
             p

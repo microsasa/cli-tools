@@ -2213,14 +2213,15 @@ def test_interactive_loop_nonexistent_session_path(
 
     # Use a non-existent path as the default session-state directory.
     # Monkeypatch Path.home so the derived session_path doesn't exist,
-    # and also patch parser._DEFAULT_BASE so get_all_sessions(None)
+    # and also patch parser.DEFAULT_SESSION_PATH so get_all_sessions(None)
     # doesn't discover sessions from the real home directory.
     fake_home = tmp_path / "fake_home"
     fake_home.mkdir()
     missing_session_state = fake_home / ".copilot" / "session-state"
     # Intentionally do NOT create .copilot/session-state inside fake_home.
     monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
-    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+    monkeypatch.setattr(parser_mod, "DEFAULT_SESSION_PATH", missing_session_state)
+    monkeypatch.setattr(cli_mod, "DEFAULT_SESSION_PATH", missing_session_state)
 
     # _start_observer should never be called when session_path.exists() is False.
     start_observer_calls: list[Path] = []
@@ -2277,7 +2278,8 @@ def test_interactive_loop_observer_none_no_auto_refresh(
     fake_home.mkdir()
     missing_session_state = fake_home / ".copilot" / "session-state"
     monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
-    monkeypatch.setattr(parser_mod, "_DEFAULT_BASE", missing_session_state)
+    monkeypatch.setattr(parser_mod, "DEFAULT_SESSION_PATH", missing_session_state)
+    monkeypatch.setattr(cli_mod, "DEFAULT_SESSION_PATH", missing_session_state)
 
     # Track _start_observer to verify it is never called.
     start_observer_calls: list[Path] = []
