@@ -2930,7 +2930,7 @@ class TestDateTimeOrDateParamType:
 
 
 class TestNormalizeUntilParametrised:
-    """Parametrised tests covering the four key cases from issue #870."""
+    """Parametrised tests covering the three key cases from issue #870."""
 
     @pytest.mark.parametrize(
         ("raw_input", "expect_expanded"),

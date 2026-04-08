@@ -40,7 +40,13 @@ from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
 
-_DATE_FORMATS: Final[list[str]] = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
+_FORMAT_SPECS: Final[list[tuple[str, bool]]] = [
+    ("%Y-%m-%d", False),
+    ("%Y-%m-%dT%H:%M:%S", True),
+]
+"""(format_string, has_explicit_time) pairs — single source of truth."""
+
+_DATE_FORMATS: Final[list[str]] = [fmt for fmt, _ in _FORMAT_SPECS]
 
 _WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
@@ -89,7 +95,7 @@ class _DateTimeOrDate(click.ParamType):
     @staticmethod
     def _try_parse(value: str) -> _ParsedDateArg | None:
         """Attempt date-only then datetime parsing; return ``None`` on failure."""
-        for fmt, explicit in (("%Y-%m-%d", False), ("%Y-%m-%dT%H:%M:%S", True)):
+        for fmt, explicit in _FORMAT_SPECS:
             try:
                 return _ParsedDateArg(
                     value=datetime.strptime(value, fmt),
@@ -492,7 +498,7 @@ def main(ctx: click.Context, path: Path | None) -> None:
     "--until",
     type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting on or before this date (date-only values are expanded to end-of-day).",
+    help="Show sessions starting before or at this timestamp (date-only values are treated as end-of-day).",
 )
 @click.option(
     "--path",
@@ -588,7 +594,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     "--until",
     type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting on or before this date (date-only values are expanded to end-of-day).",
+    help="Show sessions starting before this timestamp cutoff (date-only values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
