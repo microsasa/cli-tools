@@ -611,29 +611,12 @@ class TestRenderSessionDetailMultiModelShutdown:
 
 
 # ---------------------------------------------------------------------------
-# Issue #860 — untested branches in _build_event_details
+# Issue #860 — untested branch in _build_event_details
 # ---------------------------------------------------------------------------
 
 
 class TestBuildEventDetailsUntestedBranches:
-    """Cover the two branches in _build_event_details that had zero test
-    coverage: SESSION_SHUTDOWN with empty shutdownType and
-    TOOL_EXECUTION_COMPLETE with a non-None model field."""
-
-    def test_session_shutdown_empty_shutdown_type_returns_empty(self) -> None:
-        """SESSION_SHUTDOWN with shutdownType='' must return ''."""
-        from copilot_usage.render_detail import _build_event_details
-
-        ev = SessionEvent(
-            type=EventType.SESSION_SHUTDOWN,
-            data={
-                "shutdownType": "",
-                "totalPremiumRequests": 0,
-                "totalApiDurationMs": 0,
-            },
-        )
-        detail = _build_event_details(ev)
-        assert detail == ""
+    """Cover the remaining _build_event_details branch unique to this module."""
 
     def test_tool_execution_complete_with_model(self) -> None:
         """TOOL_EXECUTION_COMPLETE with model set must include 'model=...'."""
