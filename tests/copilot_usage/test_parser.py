@@ -8792,6 +8792,95 @@ class TestSortedSessionsCacheSkipsRedundantSort:
         assert result[0].session_id == "s2"
 
 
+# ---------------------------------------------------------------------------
+# Issue #859 — skip O(n) frozenset construction on discovery-cache-hit
+# ---------------------------------------------------------------------------
+
+
+class TestSortedSessionsCacheFastPath:
+    """Early-return in get_all_sessions skips frozenset when cache is warm.
+
+    When ``is_cache_hit=True`` (root directory identity unchanged) and
+    ``deferred_sessions`` is empty (no re-parses or plan.md name updates),
+    the sorted-sessions cache is guaranteed valid.  The fast path returns
+    immediately without building the O(n) ``frozenset`` fingerprint.
+    """
+
+    @staticmethod
+    def _make_session(base: Path, name: str, sid: str) -> Path:
+        return _make_completed_session(base, name, sid)
+
+    def test_frozenset_not_built_on_warm_cache_hit(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Fingerprint frozenset is NOT built on a warm discovery-cache hit.
+
+        Wraps ``_SortedSessionsCache`` with a counting callable to verify
+        that the fast path skips both the O(n) frozenset construction and
+        the cache-entry creation when the discovery cache hits and no
+        sessions were re-parsed.
+        """
+        self._make_session(tmp_path, "sess-a", "a")
+        self._make_session(tmp_path, "sess-b", "b")
+
+        # First call — populates all caches (discovery, session, sorted).
+        first = get_all_sessions(tmp_path)
+        assert len(first) == 2
+
+        init_calls = 0
+        _Orig = _parser_module._SortedSessionsCache
+
+        def _counting_factory(
+            *args: object, **kwargs: object
+        ) -> _parser_module._SortedSessionsCache:
+            nonlocal init_calls
+            init_calls += 1
+            return _Orig(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(_parser_module, "_SortedSessionsCache", _counting_factory):
+            # Second call — discovery cache hit, no deferred sessions.
+            second = get_all_sessions(tmp_path)
+
+        assert init_calls == 0, (
+            f"Expected 0 _SortedSessionsCache constructions on warm cache hit, "
+            f"got {init_calls}"
+        )
+        assert [s.model_dump() for s in first] == [s.model_dump() for s in second]
+
+    def test_frozenset_built_when_session_added(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Fingerprint frozenset IS built when the session set changes."""
+        self._make_session(tmp_path, "sess-a", "a")
+
+        # Populate caches.
+        get_all_sessions(tmp_path)
+
+        # Add a new session — forces discovery cache miss.
+        self._make_session(tmp_path, "sess-b", "b")
+
+        init_calls = 0
+        _Orig = _parser_module._SortedSessionsCache
+
+        def _counting_factory(
+            *args: object, **kwargs: object
+        ) -> _parser_module._SortedSessionsCache:
+            nonlocal init_calls
+            init_calls += 1
+            return _Orig(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(_parser_module, "_SortedSessionsCache", _counting_factory):
+            result = get_all_sessions(tmp_path)
+
+        assert init_calls == 1, (
+            f"Expected 1 _SortedSessionsCache construction on cache miss, "
+            f"got {init_calls}"
+        )
+        assert len(result) == 2
+
+
 # -- DEFAULT_SESSION_PATH constant -----------------------------------------
 
 

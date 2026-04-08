@@ -1149,6 +1149,12 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             del _EVENTS_CACHE[p]
 
     global _sorted_sessions_cache
+
+    # Fast path: root unchanged + no re-parses/name-updates → sorted order
+    # cannot have changed; skip the O(n) frozenset construction entirely.
+    if is_cache_hit and not deferred_sessions and _sorted_sessions_cache is not None:
+        return list(_sorted_sessions_cache.summaries)
+
     current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
     if (
         _sorted_sessions_cache is not None
