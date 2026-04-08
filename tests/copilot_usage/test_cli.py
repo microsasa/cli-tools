@@ -3139,6 +3139,32 @@ class TestVscodeCommand:
         assert re.search(r"Requests:\s*2\b", clean), f"Expected 2 requests in: {clean}"
         assert "claude-sonnet-4" in result.output
 
+    def test_vscode_command_all_files_unreadable_prints_specific_error(
+        self, tmp_path: Path
+    ) -> None:
+        """All discovered log files raise OSError → specific 'could not be read' error."""
+        _make_vscode_log(tmp_path, "session_1", _VSCODE_LOG_LINE)
+
+        original_open = Path.open
+
+        def _open_always_fails(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self.name == "GitHub Copilot Chat.log":
+                raise OSError("simulated read failure")
+            return original_open(self, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
+
+        runner = CliRunner()
+        with patch.object(
+            Path,
+            "open",
+            autospec=True,
+            side_effect=_open_always_fails,
+        ):
+            result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
+
+        assert result.exit_code == 1
+        assert "log files were found but could not be read" in result.output
+        assert "No VS Code Copilot Chat requests found" not in result.output
+
 
 # ---------------------------------------------------------------------------
 # Lazy watchdog import
