@@ -8,6 +8,7 @@ import select
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Final, Literal, Protocol, cast
@@ -39,36 +40,94 @@ from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
 
-_DATE_FORMATS: Final[list[str]] = ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"]
+# (format_string, has_explicit_time) pairs — single source of truth.
+_FORMAT_SPECS: Final[list[tuple[str, bool]]] = [
+    ("%Y-%m-%d", False),
+    ("%Y-%m-%dT%H:%M:%S", True),
+]
+
+_DATE_FORMATS: Final[list[str]] = [fmt for fmt, _ in _FORMAT_SPECS]
 
 _WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ParsedDateArg:
+    """Carries a parsed datetime together with whether the user supplied a time."""
+
+    value: datetime
+    has_explicit_time: bool
+
+
+class _DateTimeOrDate(click.ParamType):
+    """Click parameter type that distinguishes date-only from datetime inputs.
+
+    Parses ``%Y-%m-%d`` as date-only (``has_explicit_time=False``) and
+    ``%Y-%m-%dT%H:%M:%S`` as datetime (``has_explicit_time=True``).
+    Returns a :class:`_ParsedDateArg`.
+    """
+
+    name: str = "datetime-or-date"
+
+    def convert(  # noqa: RET503
+        self,
+        value: str | datetime,
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> _ParsedDateArg:
+        """Parse *value* into a ``_ParsedDateArg``."""
+        if isinstance(value, datetime):
+            # Already parsed (e.g. default value) — treat as explicit time.
+            return _ParsedDateArg(value=value, has_explicit_time=True)
+
+        result = self._try_parse(value)
+        if result is not None:
+            return result
+
+        msg = (
+            f"invalid datetime format: {value!r}. "
+            "Expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+        )
+        self.fail(msg, param, ctx)
+
+    @staticmethod
+    def _try_parse(value: str) -> _ParsedDateArg | None:
+        """Attempt date-only then datetime parsing; return ``None`` on failure."""
+        for fmt, explicit in _FORMAT_SPECS:
+            try:
+                return _ParsedDateArg(
+                    value=datetime.strptime(value, fmt),
+                    has_explicit_time=explicit,
+                )
+            except ValueError:
+                continue
+        return None
+
+
 console: Final[Console] = Console()
 
 
-def _normalize_until(dt: datetime | None) -> datetime | None:
-    """Extend an ``--until`` timestamp at midnight to end-of-day (23:59:59.999999).
+def _normalize_until(arg: _ParsedDateArg | None) -> datetime | None:
+    """Extend a date-only ``--until`` value to end-of-day (23:59:59.999999).
 
-    Because :class:`click.DateTime` discards the original string format, we
-    cannot distinguish ``--until 2026-03-07`` from an explicit
-    ``--until 2026-03-07T00:00:00``.  Both are treated as "include the
-    entire day" and expanded to 23:59:59.999999 in the **same timezone**
-    as the input (naive inputs are made UTC-aware via :func:`ensure_aware`).
+    Only expands to end-of-day when the user supplied a date without a time
+    component (``has_explicit_time is False``).  An explicit
+    ``--until 2026-03-07T00:00:00`` is left as-is, giving strict
+    before-midnight semantics.
     """
-    if dt is None:
+    if arg is None:
         return None
-    aware = ensure_aware(dt)
-    if aware.time() == dt_time(0, 0, 0):
+    aware = ensure_aware(arg.value)
+    if not arg.has_explicit_time and aware.time() == dt_time(0, 0, 0):
         return aware.replace(hour=23, minute=59, second=59, microsecond=999999)
     return aware
 
 
 def _validate_since_until(
     since: datetime | None,
-    until: datetime | None,
+    until: _ParsedDateArg | None,
 ) -> tuple[datetime | None, datetime | None]:
     """Normalize and validate --since/--until, raising on reversed range."""
     aware_since = ensure_aware_opt(since)
@@ -437,9 +496,9 @@ def main(ctx: click.Context, path: Path | None) -> None:
 )
 @click.option(
     "--until",
-    type=click.DateTime(formats=_DATE_FORMATS),
+    type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
+    help="Show sessions starting before or at this timestamp cutoff (date-only values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -451,7 +510,7 @@ def main(ctx: click.Context, path: Path | None) -> None:
 def summary(
     ctx: click.Context,
     since: datetime | None,
-    until: datetime | None,
+    until: _ParsedDateArg | None,
     path: Path | None,
 ) -> None:
     """Show usage summary across all sessions."""
@@ -533,9 +592,9 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
 )
 @click.option(
     "--until",
-    type=click.DateTime(formats=_DATE_FORMATS),
+    type=_DateTimeOrDate(),
     default=None,
-    help="Show sessions starting on or before this date (midnight values are expanded to end-of-day).",
+    help="Show sessions starting before or at this timestamp cutoff (date-only values are expanded to end-of-day).",
 )
 @click.option(
     "--path",
@@ -547,7 +606,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
 def cost(
     ctx: click.Context,
     since: datetime | None,
-    until: datetime | None,
+    until: _ParsedDateArg | None,
     path: Path | None,
 ) -> None:
     """Show premium request costs from shutdown data."""

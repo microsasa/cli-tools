@@ -20,7 +20,9 @@ from rich.console import Console
 from copilot_usage import __version__
 from copilot_usage.cli import (
     _build_session_index,  # pyright: ignore[reportPrivateUsage]
+    _DateTimeOrDate,  # pyright: ignore[reportPrivateUsage]
     _normalize_until,  # pyright: ignore[reportPrivateUsage]
+    _ParsedDateArg,  # pyright: ignore[reportPrivateUsage]
     _print_version_header,  # pyright: ignore[reportPrivateUsage]
     _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
     _render_session_list,  # pyright: ignore[reportPrivateUsage]
@@ -2815,14 +2817,15 @@ class TestRenderSessionList:
 
 
 class TestNormalizeUntil:
-    """Verify _normalize_until extends midnight to end-of-day."""
+    """Verify _normalize_until extends date-only midnight to end-of-day."""
 
     def test_none_returns_none(self) -> None:
         assert _normalize_until(None) is None
 
-    def test_midnight_becomes_end_of_day(self) -> None:
+    def test_date_only_midnight_becomes_end_of_day(self) -> None:
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
-        result = _normalize_until(midnight)
+        arg = _ParsedDateArg(value=midnight, has_explicit_time=False)
+        result = _normalize_until(arg)
         assert result is not None
         assert result.hour == 23
         assert result.minute == 59
@@ -2830,26 +2833,37 @@ class TestNormalizeUntil:
         assert result.microsecond == 999999
         assert result.date() == midnight.date()
 
+    def test_explicit_midnight_unchanged(self) -> None:
+        """Explicit T00:00:00 is NOT expanded — new behaviour from issue #870."""
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        arg = _ParsedDateArg(value=midnight, has_explicit_time=True)
+        result = _normalize_until(arg)
+        assert result is not None
+        assert result == midnight
+
     def test_non_midnight_unchanged(self) -> None:
         dt = datetime(2026, 3, 7, 10, 30, 0, tzinfo=UTC)
-        result = _normalize_until(dt)
+        arg = _ParsedDateArg(value=dt, has_explicit_time=True)
+        result = _normalize_until(arg)
         assert result == dt
 
-    def test_naive_midnight_becomes_aware_end_of_day(self) -> None:
+    def test_naive_date_only_midnight_becomes_aware_end_of_day(self) -> None:
         naive = datetime(2026, 3, 7, 0, 0, 0)
-        result = _normalize_until(naive)
+        arg = _ParsedDateArg(value=naive, has_explicit_time=False)
+        result = _normalize_until(arg)
         assert result is not None
         assert result.tzinfo is not None
         assert result.hour == 23
 
 
 class TestNormalizeUntilNonUtcTimezone:
-    """_normalize_until preserves non-UTC timezone offsets when expanding midnight."""
+    """_normalize_until preserves non-UTC timezone offsets when expanding date-only."""
 
-    def test_aware_midnight_non_utc_expanded_in_same_tz(self) -> None:
+    def test_aware_date_only_midnight_non_utc_expanded_in_same_tz(self) -> None:
         tz_plus5 = timezone(timedelta(hours=5))
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=tz_plus5)
-        result = _normalize_until(midnight)
+        arg = _ParsedDateArg(value=midnight, has_explicit_time=False)
+        result = _normalize_until(arg)
         assert result is not None
         assert result.tzinfo == tz_plus5
         assert result.hour == 23
@@ -2861,8 +2875,86 @@ class TestNormalizeUntilNonUtcTimezone:
     def test_aware_non_midnight_non_utc_unchanged(self) -> None:
         tz_minus8 = timezone(timedelta(hours=-8))
         dt = datetime(2026, 3, 7, 14, 30, 0, tzinfo=tz_minus8)
-        result = _normalize_until(dt)
+        arg = _ParsedDateArg(value=dt, has_explicit_time=True)
+        result = _normalize_until(arg)
         assert result == dt
+
+
+# ---------------------------------------------------------------------------
+# Issue #870 — _DateTimeOrDate custom param type
+# ---------------------------------------------------------------------------
+
+
+class TestDateTimeOrDateParamType:
+    """Unit tests for the _DateTimeOrDate Click param type."""
+
+    def test_date_only_parsed_without_explicit_time(self) -> None:
+        """'2025-01-15' → has_explicit_time=False."""
+        ptype = _DateTimeOrDate()
+        result = ptype.convert("2025-01-15", None, None)
+        assert result.value == datetime(2025, 1, 15, 0, 0, 0)
+        assert result.has_explicit_time is False
+
+    def test_full_datetime_parsed_with_explicit_time(self) -> None:
+        """'2025-01-15T12:30:00' → has_explicit_time=True."""
+        ptype = _DateTimeOrDate()
+        result = ptype.convert("2025-01-15T12:30:00", None, None)
+        assert result.value == datetime(2025, 1, 15, 12, 30, 0)
+        assert result.has_explicit_time is True
+
+    def test_explicit_midnight_parsed_with_explicit_time(self) -> None:
+        """'2025-01-15T00:00:00' → has_explicit_time=True."""
+        ptype = _DateTimeOrDate()
+        result = ptype.convert("2025-01-15T00:00:00", None, None)
+        assert result.value == datetime(2025, 1, 15, 0, 0, 0)
+        assert result.has_explicit_time is True
+
+    def test_invalid_format_raises_bad_parameter(self) -> None:
+        """Unparseable input raises click.exceptions.BadParameter."""
+        ptype = _DateTimeOrDate()
+        with pytest.raises(click.exceptions.BadParameter):
+            ptype.convert("not-a-date", None, None)
+
+    def test_datetime_passthrough_marked_explicit(self) -> None:
+        """An already-parsed datetime is wrapped with has_explicit_time=True."""
+        ptype = _DateTimeOrDate()
+        dt = datetime(2025, 6, 1, 0, 0, 0)
+        result = ptype.convert(dt, None, None)
+        assert result.value == dt
+        assert result.has_explicit_time is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #870 — parametrised _normalize_until
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUntilParametrised:
+    """Parametrised tests covering the three key cases from issue #870."""
+
+    @pytest.mark.parametrize(
+        ("raw_input", "expect_expanded"),
+        [
+            pytest.param("2025-01-15", True, id="date-only-expanded"),
+            pytest.param(
+                "2025-01-15T00:00:00", False, id="explicit-midnight-not-expanded"
+            ),
+            pytest.param("2025-01-15T12:30:00", False, id="non-midnight-unchanged"),
+        ],
+    )
+    def test_expansion_behaviour(self, raw_input: str, expect_expanded: bool) -> None:
+        """Verify end-of-day expansion depends on has_explicit_time."""
+        ptype = _DateTimeOrDate()
+        parsed = ptype.convert(raw_input, None, None)
+        result = _normalize_until(parsed)
+        assert result is not None
+        if expect_expanded:
+            assert result.hour == 23
+            assert result.minute == 59
+            assert result.second == 59
+            assert result.microsecond == 999999
+        else:
+            assert result == ensure_aware_opt(parsed.value)
 
 
 class TestSummaryUntilDateOnly:
@@ -2907,6 +2999,119 @@ class TestSummaryUntilDateOnly:
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
         assert "No sessions" in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #870 — CLI-level regression: explicit midnight not expanded
+# ---------------------------------------------------------------------------
+
+
+class TestIssue870ExplicitMidnight:
+    """CLI-level regression tests for issue #870.
+
+    Verifies that ``--until 2025-01-15T00:00:00`` (explicit midnight) excludes
+    sessions on the boundary date, while ``--until 2025-01-15`` (date-only)
+    includes them.  Both ``summary`` and ``cost`` commands are covered.
+    """
+
+    def test_summary_explicit_midnight_excludes_boundary(self, tmp_path: Path) -> None:
+        """summary --until ...T00:00:00 excludes sessions starting on that day."""
+        _write_session(
+            tmp_path,
+            "cc001111-0000-0000-0000-000000000000",
+            name="BoundarySession",
+            start_time="2025-01-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "summary",
+                "--path",
+                str(tmp_path),
+                "--until",
+                "2025-01-15T00:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "No sessions" in output
+
+    def test_summary_date_only_includes_boundary(self, tmp_path: Path) -> None:
+        """summary --until 2025-01-15 (date-only) includes sessions on that day."""
+        _write_session(
+            tmp_path,
+            "cc002222-0000-0000-0000-000000000000",
+            name="BoundarySession",
+            start_time="2025-01-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["summary", "--path", str(tmp_path), "--until", "2025-01-15"],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Boundary" in output
+        assert "1 session" in output
+
+    def test_cost_explicit_midnight_excludes_boundary(self, tmp_path: Path) -> None:
+        """cost --until ...T00:00:00 excludes sessions starting on that day."""
+        _write_session(
+            tmp_path,
+            "cc003333-0000-0000-0000-000000000000",
+            name="BoundarySession",
+            start_time="2025-01-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "cost",
+                "--path",
+                str(tmp_path),
+                "--until",
+                "2025-01-15T00:00:00",
+            ],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "No sessions" in output
+
+    def test_cost_date_only_includes_boundary(self, tmp_path: Path) -> None:
+        """cost --until 2025-01-15 (date-only) includes sessions on that day."""
+        _write_session(
+            tmp_path,
+            "cc004444-0000-0000-0000-000000000000",
+            name="BoundarySession",
+            start_time="2025-01-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["cost", "--path", str(tmp_path), "--until", "2025-01-15"],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Boundary" in output
+
+    def test_since_unaffected_by_change(self, tmp_path: Path) -> None:
+        """--since 2025-01-15 is unaffected — sanity check per issue spec."""
+        _write_session(
+            tmp_path,
+            "cc005555-0000-0000-0000-000000000000",
+            name="SinceSession",
+            start_time="2025-01-15T10:00:00Z",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["summary", "--path", str(tmp_path), "--since", "2025-01-15"],
+        )
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Since" in output
+        assert "1 session" in output
 
 
 # ---------------------------------------------------------------------------
@@ -2988,10 +3193,11 @@ class TestValidateSinceUntil:
         assert aware_since.tzinfo == UTC
         assert aware_since.replace(tzinfo=None) == naive_since
 
-    def test_midnight_until_expanded_to_end_of_day(self) -> None:
-        """Midnight until is expanded to 23:59:59.999999 — regression guard."""
+    def test_date_only_midnight_until_expanded_to_end_of_day(self) -> None:
+        """Date-only midnight until is expanded to 23:59:59.999999."""
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
-        aware_since, aware_until = _validate_since_until(None, midnight)  # pyright: ignore[reportPrivateUsage]
+        arg = _ParsedDateArg(value=midnight, has_explicit_time=False)
+        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
         assert aware_since is None
         assert aware_until is not None
         assert aware_until.hour == 23
@@ -3001,10 +3207,19 @@ class TestValidateSinceUntil:
         assert aware_until.date() == midnight.date()
         assert aware_until.tzinfo == UTC
 
+    def test_explicit_midnight_until_not_expanded(self) -> None:
+        """Explicit T00:00:00 until is NOT expanded — issue #870 fix."""
+        midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
+        arg = _ParsedDateArg(value=midnight, has_explicit_time=True)
+        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
+        assert aware_since is None
+        assert aware_until == midnight
+
     def test_non_midnight_until_unchanged(self) -> None:
         """Non-midnight until is returned as-is (already aware)."""
         non_midnight = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
-        aware_since, aware_until = _validate_since_until(None, non_midnight)  # pyright: ignore[reportPrivateUsage]
+        arg = _ParsedDateArg(value=non_midnight, has_explicit_time=True)
+        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
         assert aware_since is None
         assert aware_until == non_midnight
 
@@ -3012,7 +3227,8 @@ class TestValidateSinceUntil:
         """since < until → both returned without error."""
         dt_before = datetime(2026, 3, 1, 0, 0, 0, tzinfo=UTC)
         dt_after = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
-        aware_since, aware_until = _validate_since_until(dt_before, dt_after)  # pyright: ignore[reportPrivateUsage]
+        arg = _ParsedDateArg(value=dt_after, has_explicit_time=True)
+        aware_since, aware_until = _validate_since_until(dt_before, arg)  # pyright: ignore[reportPrivateUsage]
         assert aware_since is not None
         assert aware_until is not None
         assert aware_since <= aware_until
@@ -3021,8 +3237,9 @@ class TestValidateSinceUntil:
         """since > until → click.UsageError with --since, after, and isoformat timestamps."""
         dt_after = datetime(2026, 12, 31, 0, 0, 0, tzinfo=UTC)
         dt_before = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        arg = _ParsedDateArg(value=dt_before, has_explicit_time=True)
         with pytest.raises(click.UsageError, match="--since") as exc_info:
-            _validate_since_until(dt_after, dt_before)  # pyright: ignore[reportPrivateUsage]
+            _validate_since_until(dt_after, arg)  # pyright: ignore[reportPrivateUsage]
         msg = str(exc_info.value)
         assert "after" in msg
         # Verify isoformat timestamps with sep=' ' and timespec='seconds'
