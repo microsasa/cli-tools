@@ -174,7 +174,7 @@ class TestRenderVscodeSummaryPerModelTable:
         model_line = _strip_ansi(
             next(line for line in output.splitlines() if "some-model" in line)
         )
-        assert "0ms" in model_line
+        assert re.search(r"(?<!\d)0ms(?!\d)", model_line)
 
     def test_total_duration_formatted(self) -> None:
         summary = _make_summary(
@@ -216,8 +216,9 @@ class TestRenderVscodeSummaryPerModelTable:
         opus_line = _strip_ansi(
             next(line for line in output.splitlines() if "claude-opus-4.6" in line)
         )
-        # gpt-4o-mini avg = 1500 // 3 = 500ms
-        assert "500ms" in gpt_line
+        # gpt-4o-mini avg = 1500 // 3 = 500ms; total = "1s 500ms"
+        # "500ms" appears once for avg and once inside the total format.
+        assert gpt_line.count("500ms") == 2
         # claude-opus-4.6 has no duration entry → 0ms avg and 0ms total
         assert opus_line.count("0ms") == 2
 
