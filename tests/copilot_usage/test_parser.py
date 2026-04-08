@@ -10,7 +10,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import SupportsIndex, overload
+from typing import SupportsIndex, cast, overload
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -662,7 +662,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
                             m.name = e.name
                             m.path = e.path
                             m.is_dir.side_effect = OSError("lstat failed")
-                            wrapped.append(m)
+                            wrapped.append(cast(os.DirEntry[str], m))
                         else:
                             wrapped.append(e)
                     return iter(wrapped)
