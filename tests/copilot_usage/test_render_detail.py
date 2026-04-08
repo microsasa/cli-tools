@@ -528,6 +528,43 @@ class TestBuildEventDetailsToolRequests:
         assert len(detail) <= 60
         assert detail.endswith("…")
 
+    def test_empty_names_show_unknown(self) -> None:
+        """toolRequests present but all names empty must show '(unknown)'."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": [
+                    {"name": "", "toolCallId": "t1"},
+                    {"name": "", "toolCallId": "t2"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tools: (unknown)" in detail
+
+    def test_singular_label_based_on_displayed_names(self) -> None:
+        """When two toolRequests exist but only one has a name, use 'tool'."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.ASSISTANT_MESSAGE,
+            data={
+                "content": "",
+                "outputTokens": 0,
+                "toolRequests": [
+                    {"name": "bash", "toolCallId": "t1"},
+                    {"name": "", "toolCallId": "t2"},
+                ],
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "tool: bash" in detail
+        assert not detail.startswith("tools:")
+
 
 class TestRenderSessionDetailMultiModelShutdown:
     """Multi-model shutdown totals must propagate through

@@ -129,9 +129,13 @@ def _build_event_details(ev: SessionEvent) -> str:
             if data.content:
                 parts.append(_truncate(data.content, 60))
             if data.toolRequests:
-                names = ", ".join(r.name for r in data.toolRequests if r.name)
-                label = "tool" if len(data.toolRequests) == 1 else "tools"
-                parts.append(_truncate(f"{label}: {names}", 60))
+                names_list = [r.name for r in data.toolRequests if r.name]
+                if names_list:
+                    names = ", ".join(names_list)
+                    label = "tool" if len(names_list) == 1 else "tools"
+                    parts.append(_truncate(f"{label}: {names}", 60))
+                else:
+                    parts.append(_truncate("tools: (unknown)", 60))
             return "  ".join(parts)
 
         case EventType.TOOL_EXECUTION_COMPLETE:
