@@ -8837,6 +8837,69 @@ class TestSortedSessionsCacheSkipsRedundantSort:
             f"but it was called {len(fingerprint_calls)} time(s)"
         )
 
+    def test_fingerprint_built_when_session_added(self, tmp_path: Path) -> None:
+        """``_build_fingerprint`` is called when the session set changes.
+
+        When a new session appears between calls, the discovery cache
+        misses and the fingerprint path must run to detect the change.
+        """
+        _write_events(
+            tmp_path / "a" / "events.jsonl",
+            json.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": "s1",
+                        "version": 1,
+                        "startTime": "2026-01-01T00:00:00.000Z",
+                        "context": {},
+                    },
+                    "id": "e1",
+                    "timestamp": "2026-01-01T00:00:00.000Z",
+                }
+            ),
+        )
+
+        # First call — populates all caches.
+        get_all_sessions(tmp_path)
+
+        # Add a new session so that the discovery cache misses.
+        _write_events(
+            tmp_path / "b" / "events.jsonl",
+            json.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": "s2",
+                        "version": 1,
+                        "startTime": "2026-06-01T00:00:00.000Z",
+                        "context": {},
+                    },
+                    "id": "e2",
+                    "timestamp": "2026-06-01T00:00:00.000Z",
+                }
+            ),
+        )
+
+        fingerprint_calls: list[int] = []
+        _orig_build = _parser_module._build_fingerprint
+
+        def _counting_build(
+            discovered: list[
+                tuple[Path, tuple[int, int] | None, tuple[int, int] | None]
+            ],
+        ) -> frozenset[tuple[Path, tuple[int, int] | None]]:
+            fingerprint_calls.append(1)
+            return _orig_build(discovered)
+
+        with patch.object(_parser_module, "_build_fingerprint", _counting_build):
+            result = get_all_sessions(tmp_path)
+
+        assert len(fingerprint_calls) > 0, (
+            "Expected _build_fingerprint to be called when sessions change"
+        )
+        assert len(result) == 2
+
 
 # -- DEFAULT_SESSION_PATH constant -----------------------------------------
 

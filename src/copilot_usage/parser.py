@@ -1162,12 +1162,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             del _EVENTS_CACHE[p]
 
     # Cheap fast path: when the discovery cache hits, no sessions were
-    # re-parsed, and the cache was built for the same root, the sorted
-    # order cannot have changed.  Return immediately without building
-    # the O(n) fingerprint frozenset.
+    # re-parsed, no discovered sessions were skipped, and the cache was
+    # built for the same root, the sorted order cannot have changed.
+    # Return immediately without building the O(n) fingerprint
+    # frozenset.
     if (
         is_cache_hit
         and not deferred_sessions
+        and len(summaries) == len(discovered)
         and _sorted_sessions_cache is not None
         and _sorted_sessions_cache.root == resolved_root
     ):
