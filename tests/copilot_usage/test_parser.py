@@ -650,25 +650,32 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
                 return original_scandir(path)  # type: ignore[return-value]
 
             class _WrappedCtx:
-                """Context manager that wraps scandir entries."""
+                """Context manager keeping the scandir iterator open."""
 
-                def __enter__(self) -> Iterator[os.DirEntry[str]]:
-                    with original_scandir(path) as it:
-                        entries: list[os.DirEntry[str]] = list(it)
-                    wrapped: list[os.DirEntry[str]] = []
-                    for e in entries:
+                def __init__(self) -> None:
+                    self._it: Iterator[os.DirEntry[str]] | None = None
+
+                def _iter_wrapped_entries(self) -> Iterator[os.DirEntry[str]]:
+                    if self._it is None:
+                        return
+                    for e in self._it:
                         if e.name == "sess-bad":
                             m = MagicMock(spec=os.DirEntry)
                             m.name = e.name
                             m.path = e.path
                             m.is_dir.side_effect = OSError("lstat failed")
-                            wrapped.append(cast(os.DirEntry[str], m))
+                            yield cast(os.DirEntry[str], m)
                         else:
-                            wrapped.append(e)
-                    return iter(wrapped)
+                            yield e
+
+                def __enter__(self) -> Iterator[os.DirEntry[str]]:
+                    self._it = original_scandir(path)
+                    return self._iter_wrapped_entries()
 
                 def __exit__(self, *a: object) -> None:
-                    pass
+                    if self._it is not None:
+                        self._it.close()  # type: ignore[union-attr]
+                        self._it = None
 
             return _WrappedCtx()  # type: ignore[return-value]
 
