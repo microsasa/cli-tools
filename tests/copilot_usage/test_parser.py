@@ -646,15 +646,15 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         def _patched_scandir(
             path: str | os.PathLike[str],
         ) -> Iterator[os.DirEntry[str]]:
-            ctx = original_scandir(path)
             if str(path) != str(tmp_path):
-                return ctx  # type: ignore[return-value]
+                return original_scandir(path)  # type: ignore[return-value]
 
             class _WrappedCtx:
                 """Context manager that wraps scandir entries."""
 
                 def __enter__(self) -> Iterator[os.DirEntry[str]]:
-                    entries: list[os.DirEntry[str]] = list(original_scandir(path))
+                    with original_scandir(path) as it:
+                        entries: list[os.DirEntry[str]] = list(it)
                     wrapped: list[os.DirEntry[str]] = []
                     for e in entries:
                         if e.name == "sess-bad":
