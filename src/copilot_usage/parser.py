@@ -357,16 +357,21 @@ def _discover_with_identity(
     base_path: Path | None = None,
     *,
     include_plan: bool = True,
-) -> tuple[bool, list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]]]:
+) -> tuple[
+    bool, Path, list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]]
+]:
     """Find session ``events.jsonl`` files paired with their file identities.
 
-    Returns a ``(is_cache_hit, entries)`` tuple.  *is_cache_hit* is
-    ``True`` when the root directory's identity was unchanged, no full
-    rescan was necessary, **and** no cached ``events.jsonl`` was
-    definitively deleted (``FileNotFoundError``).  If deletions are
-    detected during a root-level cache hit, *is_cache_hit* is set to
-    ``False`` so that callers (e.g. ``get_all_sessions``) still run
-    their stale-prune scans.  *entries* is a list of
+    Returns a ``(is_cache_hit, resolved_root, entries)`` tuple.
+    *is_cache_hit* is ``True`` when the root directory's identity was
+    unchanged, no full rescan was necessary, **and** no cached
+    ``events.jsonl`` was definitively deleted (``FileNotFoundError``).
+    If deletions are detected during a root-level cache hit,
+    *is_cache_hit* is set to ``False`` so that callers (e.g.
+    ``get_all_sessions``) still run their stale-prune scans.
+    *resolved_root* is the resolved base path used for discovery —
+    callers can reuse it instead of calling ``.resolve()`` again.
+    *entries* is a list of
     ``(events_path, events_file_id, plan_file_id)`` tuples sorted by
     *events_file_id* (mtime descending, then size as tie-breaker).
 
@@ -408,7 +413,7 @@ def _discover_with_identity(
 
     root_id = safe_file_identity(root)
     if root_id is None:
-        return False, []
+        return False, root, []
     cached = _DISCOVERY_CACHE.get(root)
 
     if cached is not None and cached.root_id is not None and cached.root_id == root_id:
@@ -418,7 +423,7 @@ def _discover_with_identity(
         try:
             entries = _full_scandir_discovery(root, include_plan=True)
         except OSError:
-            return False, []
+            return False, root, []
         no_plan_idx = [i for i, (_, pp) in enumerate(entries) if pp is None]
         _DISCOVERY_CACHE[root] = _DiscoveryCache(
             root_id=root_id, entries=entries, no_plan_indices=no_plan_idx
@@ -513,7 +518,7 @@ def _discover_with_identity(
         is_cache_hit = False
 
     result.sort(key=lambda t: t[1] if t[1] is not None else (0, 0), reverse=True)
-    return is_cache_hit, result
+    return is_cache_hit, root, result
 
 
 def discover_sessions(base_path: Path | None = None) -> list[Path]:
@@ -529,7 +534,7 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
     cache; transiently unreadable sessions are skipped but retained in
     the cache.
     """
-    _, entries = _discover_with_identity(base_path, include_plan=False)
+    _, _, entries = _discover_with_identity(base_path, include_plan=False)
     return [p for p, _eid, _pid in entries]
 
 
@@ -1036,7 +1041,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Pass None explicitly to match the lru_cache key used by
     # build_session_summary (which passes config_path=None by default).
     current_config_model = _read_config_model(None)
-    is_cache_hit, discovered = _discover_with_identity(base_path)
+    is_cache_hit, resolved_root, discovered = _discover_with_identity(base_path)
     summaries: list[SessionSummary] = []
     # Deferred cache insertions.  _discover_with_identity returns sessions
     # newest-first; inserting or promoting in that order would leave the
@@ -1140,8 +1145,6 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # False when it prunes definitively-deleted entries, ensuring the
     # scan still runs when needed.
     global _sorted_sessions_cache
-
-    resolved_root = (base_path or DEFAULT_SESSION_PATH).resolve()
 
     if not is_cache_hit:
         discovered_paths = {p for p, _, _ in discovered}

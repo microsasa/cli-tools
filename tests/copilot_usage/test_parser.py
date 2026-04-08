@@ -554,7 +554,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         with patch(
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
-            _, result = _discover_with_identity(tmp_path)
+            _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == n_total
         # 1 call for root directory + n_with_plan for existing plan.md.
@@ -570,7 +570,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         # Add plan.md to only the first session
         (tmp_path / "sess-0" / "plan.md").write_text("# Plan\n", encoding="utf-8")
 
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
         plans = {p.parent.name: pid for p, _eid, pid in result}
 
         assert plans["sess-0"] is not None
@@ -586,7 +586,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
         with patch(
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
-            _, result = _discover_with_identity(tmp_path, include_plan=False)
+            _, _, result = _discover_with_identity(tmp_path, include_plan=False)
 
         assert len(result) == 1
         assert result[0][2] is None  # plan_id is None
@@ -607,7 +607,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             return original_scandir(path)
 
         with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
-            _, result = _discover_with_identity(tmp_path)
+            _, _, result = _discover_with_identity(tmp_path)
 
         assert result == []
 
@@ -626,7 +626,7 @@ class TestDiscoverWithIdentityNoAbsentPlanStat:
             return original_scandir(path)
 
         with patch("copilot_usage.parser.os.scandir", side_effect=_bomb):
-            _, result = _discover_with_identity(tmp_path)
+            _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == 1
         assert result[0][0].parent.name == "sess-good"
@@ -661,7 +661,7 @@ class TestDiscoverWithIdentityLinearScan:
                     f"# Session {i}\n", encoding="utf-8"
                 )
 
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == n_total
 
@@ -682,7 +682,7 @@ class TestDiscoverWithIdentityLinearScan:
         for i in range(5):
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
 
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == 5
         for _path, _eid, plan_id in result:
@@ -696,7 +696,7 @@ class TestDiscoverWithIdentityLinearScan:
         empty.mkdir()
         (empty / "plan.md").write_text("# Plan\n", encoding="utf-8")
 
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == 1
         assert result[0][0].parent.name == "sess-good"
@@ -724,7 +724,7 @@ class TestDiscoverWithIdentityCache:
             _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
 
         # First call — full discovery.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == k
 
         original_scandir = os.scandir
@@ -738,7 +738,7 @@ class TestDiscoverWithIdentityCache:
 
         # Second call — root unchanged, cache should be used.
         with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
-            _, result2 = _discover_with_identity(tmp_path)
+            _, _, result2 = _discover_with_identity(tmp_path)
 
         assert len(result2) == k
         # No os.scandir calls at all — the cached entries list is reused.
@@ -758,7 +758,7 @@ class TestDiscoverWithIdentityCache:
         for i in range(k):
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
 
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == k
         ids1 = {p.parent.name: eid for p, eid, _ in result1}
 
@@ -766,7 +766,7 @@ class TestDiscoverWithIdentityCache:
         target = tmp_path / "sess-2" / "events.jsonl"
         target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
 
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         ids2 = {p.parent.name: eid for p, eid, _ in result2}
 
         assert len(result2) == k
@@ -781,13 +781,13 @@ class TestDiscoverWithIdentityCache:
         for i in range(3):
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
 
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == 3
 
         # Add a new session — this changes the root directory mtime.
         _write_events(tmp_path / "sess-new" / "events.jsonl", _START_EVENT)
 
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == 4
         names = {p.parent.name for p, _, _ in result2}
         assert "sess-new" in names
@@ -813,7 +813,7 @@ class TestDiscoverWithIdentityCache:
             return original_scandir(path)
 
         with patch("copilot_usage.parser.os.scandir", side_effect=_tracking_scandir):
-            _, result = _discover_with_identity(tmp_path)
+            _, _, result = _discover_with_identity(tmp_path)
 
         assert len(result) == 4
         # Full rescan: root + inner per-session calls.
@@ -835,13 +835,13 @@ class TestDiscoverWithIdentityCache:
         plan.write_text("# My Session\n", encoding="utf-8")
 
         # First call with include_plan=False — populates cache.
-        _, result1 = _discover_with_identity(tmp_path, include_plan=False)
+        _, _, result1 = _discover_with_identity(tmp_path, include_plan=False)
         assert len(result1) == 1
         assert result1[0][2] is None  # plan_id omitted when include_plan=False
 
         # Second call with include_plan=True — must use cached entries
         # but still produce a valid plan_id.
-        _, result2 = _discover_with_identity(tmp_path, include_plan=True)
+        _, _, result2 = _discover_with_identity(tmp_path, include_plan=True)
         assert len(result2) == 1
         assert result2[0][2] is not None  # plan_id must be present
 
@@ -861,21 +861,21 @@ class TestDiscoverWithIdentityCache:
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
 
         # Populate discovery cache.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == 3
 
         # Delete one session's events.jsonl without changing root mtime.
         target = tmp_path / "sess-1" / "events.jsonl"
         target.unlink()
 
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         names2 = {p.parent.name for p, _, _ in result2}
         assert len(result2) == 2
         assert "sess-1" not in names2
 
         # The stale entry must be pruned from the cache so a third call
         # also returns only 2 sessions (no repeated stat warnings).
-        _, result3 = _discover_with_identity(tmp_path)
+        _, _, result3 = _discover_with_identity(tmp_path)
         assert len(result3) == 2
         assert _DISCOVERY_CACHE[tmp_path] is not None
         cached_paths = {ep for ep, _ in _DISCOVERY_CACHE[tmp_path].entries}
@@ -895,7 +895,7 @@ class TestDiscoverWithIdentityCache:
         for i in range(3):
             _write_events(tmp_path / f"sess-{i}" / "events.jsonl", _START_EVENT)
 
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == 3
 
         target = tmp_path / "sess-1" / "events.jsonl"
@@ -908,7 +908,7 @@ class TestDiscoverWithIdentityCache:
 
         # Simulate transient PermissionError on one session.
         with patch.object(Path, "stat", _permission_bomb):
-            _, result2 = _discover_with_identity(tmp_path)
+            _, _, result2 = _discover_with_identity(tmp_path)
 
         assert len(result2) == 2
         names2 = {p.parent.name for p, _, _ in result2}
@@ -919,7 +919,7 @@ class TestDiscoverWithIdentityCache:
         assert target in cached_paths
 
         # Once readable again, the session reappears.
-        _, result3 = _discover_with_identity(tmp_path)
+        _, _, result3 = _discover_with_identity(tmp_path)
         assert len(result3) == 3
 
     def test_deleted_plan_clears_cached_path(
@@ -937,14 +937,14 @@ class TestDiscoverWithIdentityCache:
         plan = sess / "plan.md"
         plan.write_text("# My Session\n", encoding="utf-8")
 
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == 1
         assert result1[0][2] is not None  # plan_id present
 
         # Delete plan.md without changing root mtime.
         plan.unlink()
 
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == 1
         assert result2[0][2] is None  # plan_id gone
 
@@ -967,7 +967,7 @@ class TestDiscoverWithIdentityCache:
         _write_events(sess / "events.jsonl", _START_EVENT)
 
         # Populate cache — no plan.md exists.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == 1
         assert result1[0][2] is None  # no plan_id
 
@@ -976,7 +976,7 @@ class TestDiscoverWithIdentityCache:
         plan.write_text("# My Session\n", encoding="utf-8")
 
         # Cache hit must detect the new plan.md.
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == 1
         assert result2[0][2] is not None  # plan_id detected
 
@@ -1001,7 +1001,7 @@ class TestDiscoverWithIdentityCache:
             _write_events(tmp_path / f"sess-{i:04d}" / "events.jsonl", _START_EVENT)
 
         # Populate cache — no plan.md in any session.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == n
         for _, _, pid in result1:
             assert pid is None
@@ -1021,7 +1021,7 @@ class TestDiscoverWithIdentityCache:
         max_calls = (n + _MAX_PLAN_PROBES - 1) // _MAX_PLAN_PROBES
         detected = False
         for _ in range(max_calls):
-            _, result = _discover_with_identity(tmp_path)
+            _, _, result = _discover_with_identity(tmp_path)
             for path, _, pid in result:
                 if path == last_events_path and pid is not None:
                     detected = True
@@ -1062,7 +1062,7 @@ class TestDiscoverWithIdentityNoPlanCount:
             (sess / "plan.md").write_text(f"# Session {i}\n", encoding="utf-8")
 
         # First call — populates the cache.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == n
 
         cached = _DISCOVERY_CACHE[tmp_path]
@@ -1081,7 +1081,7 @@ class TestDiscoverWithIdentityNoPlanCount:
             return original_range(*args)
 
         with patch("builtins.range", side_effect=_spy_range):
-            _, result2 = _discover_with_identity(tmp_path)
+            _, _, result2 = _discover_with_identity(tmp_path)
 
         assert len(result2) == n
         assert probe_range_calls == [], (
@@ -1207,7 +1207,7 @@ class TestDiscoverProbeWindowBounded:
                 (sess / "plan.md").write_text(f"# Session {i}\n", encoding="utf-8")
 
         # Populate cache.
-        _, result1 = _discover_with_identity(tmp_path)
+        _, _, result1 = _discover_with_identity(tmp_path)
         assert len(result1) == n
 
         cached = _DISCOVERY_CACHE[tmp_path]
@@ -1243,7 +1243,7 @@ class TestDiscoverProbeWindowBounded:
         cursor_before = cached.probe_cursor
 
         # First cache-hit call — verify bounded probe scan.
-        _, result2 = _discover_with_identity(tmp_path)
+        _, _, result2 = _discover_with_identity(tmp_path)
         assert len(result2) == n
 
         # The probe scan should access exactly the bounded probe window.
@@ -1267,7 +1267,7 @@ class TestDiscoverProbeWindowBounded:
         spy.no_plan_accesses = 0
 
         # Second cache-hit call — cursor must advance again, not wrap to 0.
-        _, result3 = _discover_with_identity(tmp_path)
+        _, _, result3 = _discover_with_identity(tmp_path)
         assert len(result3) == n
 
         assert spy.no_plan_accesses == max_allowed
@@ -1334,7 +1334,7 @@ class TestDiscoverProbeWindowBounded:
         cached.no_plan_indices = spy  # type: ignore[assignment]
 
         # Cache-hit call.
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
         assert len(result) == n
 
         # The probe scan should access exactly the bounded prefix of
@@ -1397,7 +1397,7 @@ class TestDiscoverProbeWindowBounded:
 
         # Cache-hit call: probe finds plan.md, remove() raises ValueError,
         # recovery path rebuilds no_plan_indices from entries.
-        _, result = _discover_with_identity(tmp_path)
+        _, _, result = _discover_with_identity(tmp_path)
         assert len(result) == 1
 
         # After recovery, no_plan_indices must reflect actual entry state.
