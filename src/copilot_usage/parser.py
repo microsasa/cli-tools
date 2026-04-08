@@ -153,9 +153,11 @@ class _SortedSessionsCache:
 
     Stores a fingerprint of the discovered session set (path + file identity
     pairs) so that the O(n log n) sort can be skipped when the session set
-    is completely unchanged.
+    is completely unchanged.  The *root* field records which resolved
+    base path the cache was built for, preventing cross-path false hits.
     """
 
+    root: Path
     fingerprint: frozenset[tuple[Path, tuple[int, int] | None]]
     summaries: list[SessionSummary]
 
@@ -1129,13 +1131,16 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # unnecessary.  _discover_with_identity flips is_cache_hit to
     # False when it prunes definitively-deleted entries, ensuring the
     # scan still runs when needed.
+    global _sorted_sessions_cache
+
+    resolved_root = (base_path or DEFAULT_SESSION_PATH).resolve()
+
     if not is_cache_hit:
-        root = (base_path or DEFAULT_SESSION_PATH).resolve()
         discovered_paths = {p for p, _, _ in discovered}
         stale = [
             p
             for p in _SESSION_CACHE
-            if p not in discovered_paths and p.is_relative_to(root)
+            if p not in discovered_paths and p.is_relative_to(resolved_root)
         ]
         for p in stale:
             del _SESSION_CACHE[p]
@@ -1143,16 +1148,19 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         stale_events = [
             p
             for p in _EVENTS_CACHE
-            if p not in discovered_paths and p.is_relative_to(root)
+            if p not in discovered_paths and p.is_relative_to(resolved_root)
         ]
         for p in stale_events:
             del _EVENTS_CACHE[p]
 
-    global _sorted_sessions_cache
-
     # Fast path: root unchanged + no re-parses/name-updates → sorted order
     # cannot have changed; skip the O(n) frozenset construction entirely.
-    if is_cache_hit and not deferred_sessions and _sorted_sessions_cache is not None:
+    if (
+        is_cache_hit
+        and not deferred_sessions
+        and _sorted_sessions_cache is not None
+        and _sorted_sessions_cache.root == resolved_root
+    ):
         return list(_sorted_sessions_cache.summaries)
 
     current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
@@ -1164,5 +1172,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         return list(_sorted_sessions_cache.summaries)
 
     summaries.sort(key=session_sort_key, reverse=True)
-    _sorted_sessions_cache = _SortedSessionsCache(current_fingerprint, list(summaries))
+    _sorted_sessions_cache = _SortedSessionsCache(
+        resolved_root, current_fingerprint, list(summaries)
+    )
     return summaries
