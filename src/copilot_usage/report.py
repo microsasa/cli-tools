@@ -155,7 +155,7 @@ def _format_session_running_time(session: SessionSummary) -> str:
 
     Returns ``"—"`` when the session has no ``start_time``.
     """
-    if not session.start_time:
+    if session.start_time is None:
         return "—"
     return _format_elapsed_since(session.last_resume_time or session.start_time)
 

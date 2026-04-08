@@ -181,7 +181,9 @@ def _render_header(
 
     status = "[green]active[/green]" if summary.is_active else "[dim]completed[/dim]"
     start_str = (
-        summary.start_time.strftime("%Y-%m-%d %H:%M:%S") if summary.start_time else "—"
+        summary.start_time.strftime("%Y-%m-%d %H:%M:%S")
+        if summary.start_time is not None
+        else "—"
     )
     duration = _format_detail_duration(summary.start_time, summary.end_time)
     name = summary.name or "unnamed"
@@ -381,10 +383,10 @@ def render_session_detail(
 
     session_start = (
         ensure_aware(summary.start_time)
-        if summary.start_time
+        if summary.start_time is not None
         else (
             ensure_aware(events[0].timestamp)
-            if events and events[0].timestamp
+            if events and events[0].timestamp is not None
             else datetime.now(tz=UTC)
         )
     )
