@@ -238,15 +238,69 @@ class TestRenderShutdownCyclesEmptyModelMetrics:
 
 
 # ---------------------------------------------------------------------------
+# Issue #863 — "API Requests" column header in shutdown-cycles table
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownCyclesColumnHeader:
+    """The shutdown-cycles table must show 'API Requests' (not 'Model Calls')
+    to distinguish from the summary table's turn-start-based 'Model Calls'."""
+
+    def test_api_requests_header_present(self) -> None:
+        """Shutdown-cycles table must contain 'API Requests' column header."""
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=1,
+            totalApiDurationMs=500,
+            modelMetrics={
+                "test-model": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=1),
+                    usage=TokenUsage(outputTokens=100),
+                ),
+            },
+        )
+        summary = SessionSummary(
+            session_id="header-check",
+            shutdown_cycles=[(datetime(2025, 6, 1, tzinfo=UTC), sd)],
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "API Requests" in output
+
+    def test_model_calls_header_absent(self) -> None:
+        """Shutdown-cycles table must NOT contain 'Model Calls' header."""
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=1,
+            totalApiDurationMs=500,
+            modelMetrics={
+                "test-model": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=1),
+                    usage=TokenUsage(outputTokens=100),
+                ),
+            },
+        )
+        summary = SessionSummary(
+            session_id="header-absent",
+            shutdown_cycles=[(datetime(2025, 6, 1, tzinfo=UTC), sd)],
+        )
+        buf, console = _buf_console()
+        _render_shutdown_cycles(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Model Calls" not in output
+
+
+# ---------------------------------------------------------------------------
 # Gap 1 — _render_shutdown_cycles multi-model per-cycle aggregation (#622)
 # ---------------------------------------------------------------------------
 
 
 class TestRenderShutdownCyclesMultiModelAggregation:
-    """Multi-model modelMetrics must be summed for Model Calls and
+    """Multi-model modelMetrics must be summed for API Requests and
     Output Tokens columns in the Shutdown Cycles table."""
 
-    def test_multi_model_sums_model_calls_and_output_tokens(self) -> None:
+    def test_multi_model_sums_api_requests_and_output_tokens(self) -> None:
         """Two models in one shutdown event → totals are summed."""
         sd = SessionShutdownData(
             shutdownType="normal",
@@ -273,7 +327,7 @@ class TestRenderShutdownCyclesMultiModelAggregation:
         assert "Shutdown Cycles" in output
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 00:00" in line)
-        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b7\b", row)  # total API requests = 3 + 4
         assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
 
 
@@ -606,5 +660,5 @@ class TestRenderSessionDetailMultiModelShutdown:
         assert "Shutdown Cycles" in output
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
-        assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
+        assert re.search(r"\b7\b", row)  # total API requests = 3 + 4
         assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300

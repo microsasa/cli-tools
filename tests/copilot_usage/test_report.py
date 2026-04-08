@@ -741,7 +741,7 @@ class TestRenderSessionDetail:
         # Assert against the shutdown-cycle row (contains timestamp)
         row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
         assert re.search(r"\b5\b", row)  # premium requests
-        assert re.search(r"\b3\b", row)  # model calls
+        assert re.search(r"\b3\b", row)  # API requests
         assert re.search(r"\b800\b", row)  # output tokens
 
     def test_renders_recent_events_title(self) -> None:
