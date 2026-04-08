@@ -22,6 +22,7 @@ from copilot_usage.models import (
     ToolTelemetry,
 )
 from copilot_usage.render_detail import (
+    _build_event_details,
     _extract_tool_name,
     _render_code_changes,
     _render_recent_events,
@@ -616,15 +617,20 @@ class TestRenderSessionDetailMultiModelShutdown:
 
 
 class TestBuildEventDetailsUntestedBranches:
-    """Cover the SESSION_SHUTDOWN falsy-shutdownType branch in _build_event_details."""
+    """Cover the TOOL_EXECUTION_COMPLETE truthy-model branch in _build_event_details."""
 
-    def test_session_shutdown_falsy_shutdown_type(self) -> None:
-        """SESSION_SHUTDOWN with no shutdownType returns empty string."""
-        from copilot_usage.render_detail import _build_event_details
-
+    def test_tool_execution_complete_with_model(self) -> None:
+        """TOOL_EXECUTION_COMPLETE with model field includes model=<value> in detail."""
         ev = SessionEvent(
-            type=EventType.SESSION_SHUTDOWN,
-            data={},
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "t1",
+                "success": True,
+                "model": "claude-sonnet-4",
+                "toolTelemetry": {"properties": {"tool_name": "bash"}},
+            },
         )
         detail = _build_event_details(ev)
-        assert detail == ""
+        assert "model=claude-sonnet-4" in detail
+        assert "bash" in detail
+        assert "✓" in detail
