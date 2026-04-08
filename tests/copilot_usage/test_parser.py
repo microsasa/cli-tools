@@ -8900,6 +8900,142 @@ class TestSortedSessionsCacheSkipsRedundantSort:
         )
         assert len(result) == 2
 
+    def test_sort_runs_after_plan_change(self, tmp_path: Path) -> None:
+        """Sort reruns when a session's ``plan.md`` changes (``deferred_sessions`` non-empty).
+
+        When ``plan.md`` is added to a session directory, the
+        ``events.jsonl`` ``file_id`` is unchanged so the fingerprint
+        matches, but ``plan_id`` differs → the session enters
+        ``deferred_sessions`` → the ``not deferred_sessions`` guard
+        forces a fresh sort.  The returned summary must carry the
+        fresh session name extracted from the new ``plan.md``.
+        """
+        start_a = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-alpha",
+                    "version": 1,
+                    "startTime": "2026-01-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e1",
+                "timestamp": "2026-01-01T00:00:00.000Z",
+            }
+        )
+        start_b = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-beta",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", start_a)
+        _write_events(tmp_path / "b" / "events.jsonl", start_b)
+
+        # First call — populates all caches.
+        first_result = get_all_sessions(tmp_path)
+        assert len(first_result) == 2
+
+        # Add plan.md to session "a" (events.jsonl is untouched).
+        plan_path = tmp_path / "a" / "plan.md"
+        plan_path.write_text("# My Plan Name\n", encoding="utf-8")
+
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with patch.object(_parser_module, "session_sort_key", tracking_key):
+            result = get_all_sessions(tmp_path)
+
+        assert len(sort_key_calls) > 0, (
+            "session_sort_key must be called when plan.md changes "
+            "(deferred_sessions is non-empty)"
+        )
+
+        # The session with the new plan.md should carry the extracted name.
+        alpha = [s for s in result if s.session_id == "s-alpha"][0]
+        assert alpha.name == "My Plan Name"
+
+    def test_sort_skipped_after_plan_change_then_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        """Sort is skipped on a follow-up call after a plan.md change settles.
+
+        After a ``plan.md`` change triggers a fresh sort and updates
+        the caches, a subsequent call with no further file changes
+        should hit the warm sorted-sessions cache and skip the sort.
+        """
+        start_a = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-alpha",
+                    "version": 1,
+                    "startTime": "2026-01-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e1",
+                "timestamp": "2026-01-01T00:00:00.000Z",
+            }
+        )
+        start_b = json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": "s-beta",
+                    "version": 1,
+                    "startTime": "2026-06-01T00:00:00.000Z",
+                    "context": {},
+                },
+                "id": "e2",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+            }
+        )
+        _write_events(tmp_path / "a" / "events.jsonl", start_a)
+        _write_events(tmp_path / "b" / "events.jsonl", start_b)
+
+        # Populate caches with initial call.
+        get_all_sessions(tmp_path)
+
+        # Add plan.md — triggers deferred_sessions path.
+        plan_path = tmp_path / "a" / "plan.md"
+        plan_path.write_text("# Settled Plan\n", encoding="utf-8")
+
+        # Call to pick up the plan.md change (sort runs here).
+        after_plan = get_all_sessions(tmp_path)
+        alpha = [s for s in after_plan if s.session_id == "s-alpha"][0]
+        assert alpha.name == "Settled Plan"
+
+        # Now call again with nothing changed — sort should be skipped.
+        from copilot_usage.models import session_sort_key as _real_sort_key
+
+        sort_key_calls: list[int] = []
+
+        def tracking_key(session: SessionSummary) -> datetime:
+            sort_key_calls.append(1)
+            return _real_sort_key(session)
+
+        with patch.object(_parser_module, "session_sort_key", tracking_key):
+            settled_result = get_all_sessions(tmp_path)
+
+        assert len(sort_key_calls) == 0, (
+            "session_sort_key should NOT be called when nothing changed "
+            "after a plan.md update (cache should be warm)"
+        )
+        settled_alpha = [s for s in settled_result if s.session_id == "s-alpha"][0]
+        assert settled_alpha.name == "Settled Plan"
+
 
 # -- DEFAULT_SESSION_PATH constant -----------------------------------------
 
