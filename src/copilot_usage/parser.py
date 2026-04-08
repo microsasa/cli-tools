@@ -154,12 +154,20 @@ class _SortedSessionsCache:
     Stores a fingerprint of the discovered session set (path + file identity
     pairs) so that the O(n log n) sort can be skipped when the session set
     is completely unchanged.  The *root* field records which resolved base
-    path the cache was built for.
+    path the cache was built for so that the cheap early-return fast path
+    can avoid rebuilding the O(n) fingerprint frozenset.
     """
 
     root: Path
     fingerprint: frozenset[tuple[Path, tuple[int, int] | None]]
     summaries: list[SessionSummary]
+
+
+def _build_fingerprint(
+    discovered: list[tuple[Path, tuple[int, int] | None, tuple[int, int] | None]],
+) -> frozenset[tuple[Path, tuple[int, int] | None]]:
+    """Build a fingerprint frozenset from discovered session entries."""
+    return frozenset((p, fid) for p, fid, _ in discovered)
 
 
 _sorted_sessions_cache: _SortedSessionsCache | None = None
@@ -1153,18 +1161,25 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         for p in stale_events:
             del _EVENTS_CACHE[p]
 
-    current_fingerprint = frozenset((p, fid) for p, fid, _ in discovered)
-
-    # Fast path: when discovery cache hits and there are no deferred sessions,
-    # sorted order cannot have changed *for the same discovered session set*.
-    # Validate the fingerprint before reusing the process-global cache so
-    # calls with different base paths in the same process cannot return the
-    # previous root's cached summaries.
+    # Cheap fast path: when the discovery cache hits, no sessions were
+    # re-parsed, and the cache was built for the same root, the sorted
+    # order cannot have changed.  Return immediately without building
+    # the O(n) fingerprint frozenset.
     if (
         is_cache_hit
         and not deferred_sessions
         and _sorted_sessions_cache is not None
+        and _sorted_sessions_cache.root == resolved_root
+    ):
+        return list(_sorted_sessions_cache.summaries)
+
+    # Fingerprint fallback: when the discovery cache missed but the
+    # discovered session set is identical, skip the O(n log n) sort.
+    current_fingerprint = _build_fingerprint(discovered)
+    if (
+        _sorted_sessions_cache is not None
         and _sorted_sessions_cache.fingerprint == current_fingerprint
+        and not deferred_sessions
     ):
         return list(_sorted_sessions_cache.summaries)
 
