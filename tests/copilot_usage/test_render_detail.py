@@ -608,3 +608,40 @@ class TestRenderSessionDetailMultiModelShutdown:
         row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
         assert re.search(r"\b7\b", row)  # total model calls = 3 + 4
         assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
+
+
+# ---------------------------------------------------------------------------
+# Issue #860 — untested branches in _build_event_details
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetailsUntestedBranches:
+    """Cover the two branches in _build_event_details that had zero test
+    coverage: SESSION_SHUTDOWN with falsy shutdownType and
+    TOOL_EXECUTION_COMPLETE with a non-None model field."""
+
+    def test_session_shutdown_none_shutdown_type_returns_empty(self) -> None:
+        """SESSION_SHUTDOWN with shutdownType=None must return ''."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            data={"totalPremiumRequests": 0, "totalApiDurationMs": 0},
+        )
+        detail = _build_event_details(ev)
+        assert detail == ""
+
+    def test_tool_execution_complete_with_model(self) -> None:
+        """TOOL_EXECUTION_COMPLETE with model set must include 'model=...'."""
+        from copilot_usage.render_detail import _build_event_details
+
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc1",
+                "model": "claude-sonnet-4",
+                "success": True,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "model=claude-sonnet-4" in detail
