@@ -234,7 +234,7 @@ def _render_shutdown_cycles(
     table = Table(title="Shutdown Cycles", border_style="cyan")
     table.add_column("Date", style="cyan")
     table.add_column("Premium Req", justify="right", style="green")
-    table.add_column("Model Calls", justify="right")
+    table.add_column("API Requests", justify="right")
     table.add_column("Output Tokens", justify="right")
     table.add_column("API Duration", justify="right")
 
