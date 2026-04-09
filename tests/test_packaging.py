@@ -111,17 +111,22 @@ def test_cli_does_not_import_vscode_modules_at_module_level() -> None:
     """
     import sys
 
-    # Purge any previously imported copilot_usage modules so we get a
-    # clean import of cli.
-    for mod_name in list(sys.modules):
-        if "copilot_usage" in mod_name:
-            del sys.modules[mod_name]
+    original_sys_modules = sys.modules.copy()
+    try:
+        # Purge any previously imported copilot_usage modules so we get a
+        # clean import of cli.
+        for mod_name in list(sys.modules):
+            if mod_name == "copilot_usage" or mod_name.startswith("copilot_usage."):
+                del sys.modules[mod_name]
 
-    importlib.import_module("copilot_usage.cli")
+        importlib.import_module("copilot_usage.cli")
 
-    assert "copilot_usage.vscode_parser" not in sys.modules, (
-        "vscode_parser must not be imported at cli module level"
-    )
-    assert "copilot_usage.vscode_report" not in sys.modules, (
-        "vscode_report must not be imported at cli module level"
-    )
+        assert "copilot_usage.vscode_parser" not in sys.modules, (
+            "vscode_parser must not be imported at cli module level"
+        )
+        assert "copilot_usage.vscode_report" not in sys.modules, (
+            "vscode_report must not be imported at cli module level"
+        )
+    finally:
+        sys.modules.clear()
+        sys.modules.update(original_sys_modules)
