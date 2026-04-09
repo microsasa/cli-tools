@@ -859,7 +859,10 @@ class TestVscodeCliCommand:
         summary = VSCodeLogSummary(
             log_files_found=2, log_files_parsed=0, total_requests=0
         )
-        with patch("copilot_usage.cli.get_vscode_summary", return_value=summary):
+        with patch(
+            "copilot_usage.vscode_parser.get_vscode_summary",
+            return_value=summary,
+        ):
             runner = CliRunner()
             result = runner.invoke(main, ["vscode"])
         assert result.exit_code == 1
@@ -870,7 +873,10 @@ class TestVscodeCliCommand:
         summary = VSCodeLogSummary(
             log_files_found=0, log_files_parsed=0, total_requests=0
         )
-        with patch("copilot_usage.cli.get_vscode_summary", return_value=summary):
+        with patch(
+            "copilot_usage.vscode_parser.get_vscode_summary",
+            return_value=summary,
+        ):
             runner = CliRunner()
             result = runner.invoke(main, ["vscode"])
         assert result.exit_code == 1
