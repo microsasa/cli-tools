@@ -83,18 +83,24 @@ class VSCodeLogSummary:
 
     def __post_init__(self) -> None:
         _wrap = types.MappingProxyType
-        for attr in (
-            "requests_by_model",
-            "duration_by_model",
-            "requests_by_category",
-            "requests_by_date",
-        ):
-            val = object.__getattribute__(self, attr)
-            if val is _EMPTY_MAPPING:
-                continue
-            # Always snapshot into a new MappingProxyType so the caller
-            # cannot mutate the summary through a retained dict reference.
-            object.__setattr__(self, attr, _wrap(dict(val)))
+        # Always snapshot into a new MappingProxyType so the caller
+        # cannot mutate the summary through a retained dict reference.
+        if self.requests_by_model is not _EMPTY_MAPPING:
+            object.__setattr__(
+                self, "requests_by_model", _wrap(dict(self.requests_by_model))
+            )
+        if self.duration_by_model is not _EMPTY_MAPPING:
+            object.__setattr__(
+                self, "duration_by_model", _wrap(dict(self.duration_by_model))
+            )
+        if self.requests_by_category is not _EMPTY_MAPPING:
+            object.__setattr__(
+                self, "requests_by_category", _wrap(dict(self.requests_by_category))
+            )
+        if self.requests_by_date is not _EMPTY_MAPPING:
+            object.__setattr__(
+                self, "requests_by_date", _wrap(dict(self.requests_by_date))
+            )
 
 
 _GLOB_PATTERN: Final[str] = (
