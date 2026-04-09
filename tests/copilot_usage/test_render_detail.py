@@ -710,11 +710,10 @@ class TestRenderActivePeriod:
         )
         buf, console = _buf_console()
         _render_active_period(summary, target_console=console)
-        output = buf.getvalue()
+        output = _strip_ansi(buf.getvalue())
         assert "Active Period" in output
-        assert "3" in output  # model calls
-        assert "2" in output  # user messages
-        assert "1.0K" in output  # output tokens (format_tokens renders 1000 as "1.0K")
+        assert "3 model calls" in output
+        assert "2 user messages" in output
 
     def test_inactive_session_produces_no_output(self) -> None:
         """Inactive session → returns immediately, no output."""
@@ -748,7 +747,7 @@ class TestRenderSessionDetailActivePeriod:
         )
         buf, console = _buf_console()
         render_session_detail([ev], summary, target_console=console)
-        output = buf.getvalue()
+        output = _strip_ansi(buf.getvalue())
         assert "Active Period" in output
 
 
@@ -758,8 +757,8 @@ class TestRenderSessionDetailActivePeriod:
 
 
 class TestEventTypeLabel:
-    """Parametrized test for _event_type_label covering all known types
-    and the wildcard branch."""
+    """Parametrized test for _event_type_label covering every labelled
+    EventType case and the wildcard branch."""
 
     @pytest.mark.parametrize(
         ("event_type", "expected_text"),
@@ -767,6 +766,10 @@ class TestEventTypeLabel:
             pytest.param(EventType.USER_MESSAGE, "user message", id="user-message"),
             pytest.param(EventType.ASSISTANT_MESSAGE, "assistant", id="assistant"),
             pytest.param(EventType.TOOL_EXECUTION_COMPLETE, "tool", id="tool-complete"),
+            pytest.param(EventType.TOOL_EXECUTION_START, "tool start", id="tool-start"),
+            pytest.param(EventType.ASSISTANT_TURN_START, "turn start", id="turn-start"),
+            pytest.param(EventType.ASSISTANT_TURN_END, "turn end", id="turn-end"),
+            pytest.param(EventType.SESSION_START, "session start", id="session-start"),
             pytest.param(EventType.SESSION_SHUTDOWN, "session end", id="session-end"),
             pytest.param(
                 "UNKNOWN_FUTURE_TYPE", "UNKNOWN_FUTURE_TYPE", id="wildcard-branch"
