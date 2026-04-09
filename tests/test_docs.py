@@ -145,6 +145,32 @@ def test_since_last_shutdown_documents_premium_cost_estimate() -> None:
     )
 
 
+def test_components_table_lists_all_modules() -> None:
+    """Every .py module in src/copilot_usage/ (excluding __init__.py and the
+    docs/ subdirectory) must appear in the ### Components table in
+    architecture.md."""
+    pkg_dir = Path(__file__).parents[1] / "src" / "copilot_usage"
+    on_disk = {p.name for p in pkg_dir.glob("*.py") if p.name != "__init__.py"}
+    components_section_match = re.search(
+        r"^###\s+Components\b.*?(?=^#{1,6}\s+|\Z)",
+        _ARCH_MD,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert components_section_match, (
+        "Could not find the '### Components' section in architecture.md"
+    )
+    components_section = components_section_match.group(0)
+    # Extract backtick-quoted module names from rows in the Components table only.
+    in_table = set(
+        re.findall(r"^\|\s*`([^`]+\.py)`\s*\|", components_section, re.MULTILINE)
+    )
+    missing = on_disk - in_table
+    assert not missing, (
+        f"Modules missing from the ### Components table in "
+        f"architecture.md: {sorted(missing)}"
+    )
+
+
 def test_architecture_detect_resume_lists_all_indicators() -> None:
     """The _detect_resume() description in architecture.md must mention the
     three true resume indicators and the separately-tracked turn_start event."""
