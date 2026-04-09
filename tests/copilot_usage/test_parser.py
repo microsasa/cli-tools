@@ -4838,15 +4838,9 @@ class TestExtractOutputTokensEquivalence:
         _ = label
         fast_path_result = _extract_output_tokens(_make_assistant_event(raw_value))
 
-        # Pydantic rejects non-whole floats with a ValidationError; the model
-        # path treats those as non-contributing, same as the fast path.
-        try:
-            model = AssistantMessageData.model_validate({"outputTokens": raw_value})
-            model_contributes = model.outputTokens > 0
-            model_result = repr(model.outputTokens)
-        except ValidationError as exc:
-            model_contributes = False
-            model_result = f"ValidationError({exc})"
+        model = AssistantMessageData.model_validate({"outputTokens": raw_value})
+        model_contributes = model.outputTokens > 0
+        model_result = repr(model.outputTokens)
 
         fast_path_contributes = fast_path_result is not None
         assert fast_path_contributes == model_contributes, (
@@ -5040,6 +5034,45 @@ class TestExtractOutputTokensIntegration:
         events = parse_events(p)
         summary = build_session_summary(events)
         assert summary.active_output_tokens == 150
+
+    def test_fractional_float_consistent_summary_and_detail(
+        self, tmp_path: Path
+    ) -> None:
+        """outputTokens=1.5 yields 0 from both session summary and detail view.
+
+        Regression test: before the fix, ``_extract_output_tokens`` returned
+        ``None`` (→ 0 in the summary) while
+        ``AssistantMessageData.outputTokens`` truncated to ``1`` via Pydantic
+        lax coercion.  Both paths must now agree.
+        """
+        frac_msg = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-frac",
+                    "content": "fractional",
+                    "toolRequests": [],
+                    "interactionId": "int-frac",
+                    "outputTokens": 1.5,
+                },
+                "id": "ev-frac",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+                "parentId": "ev-user1",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, frac_msg, _TOOL_EXEC)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        # Summary path (via _extract_output_tokens / _first_pass)
+        assert summary.active_output_tokens == 0
+
+        # Detail path (via AssistantMessageData.outputTokens)
+        asst_events = [e for e in events if e.type == EventType.ASSISTANT_MESSAGE]
+        assert len(asst_events) == 1
+        detail_tokens = asst_events[0].as_assistant_message().outputTokens
+        assert detail_tokens == 0
 
 
 # ---------------------------------------------------------------------------

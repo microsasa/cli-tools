@@ -231,6 +231,21 @@ class TestSanitizeNonNumericTokens:
         d = AssistantMessageData.model_validate({"outputTokens": -100_000})
         assert d.outputTokens == 0
 
+    def test_non_whole_float_maps_to_zero(self) -> None:
+        """Non-integer float like ``1.5`` maps to ``0``, matching ``_extract_output_tokens``."""
+        d = AssistantMessageData.model_validate({"outputTokens": 1.5})
+        assert d.outputTokens == 0
+
+    def test_non_whole_float_large_maps_to_zero(self) -> None:
+        """Large non-integer float like ``2.3`` maps to ``0``."""
+        d = AssistantMessageData.model_validate({"outputTokens": 2.3})
+        assert d.outputTokens == 0
+
+    def test_whole_positive_float_coerced_to_int(self) -> None:
+        """Whole-number float like ``100.0`` is coerced to ``100``."""
+        d = AssistantMessageData.model_validate({"outputTokens": 100.0})
+        assert d.outputTokens == 100
+
 
 def test_session_shutdown_data() -> None:
     d = SessionShutdownData.model_validate(RAW_SHUTDOWN["data"])
