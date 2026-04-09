@@ -219,20 +219,25 @@ class AssistantMessageData(BaseModel):
     @field_validator("outputTokens", mode="before")
     @classmethod
     def _sanitize_non_numeric_tokens(cls, v: object) -> object:
-        """Map non-positive and non-numeric token counts to ``0``.
+        """Map non-positive, non-numeric, and non-whole-float token counts to ``0``.
 
-        JSON ``true``/``false``, numeric strings like ``"100"``, and
-        non-positive numeric values (int/float) are not valid token counts.
-        Returning ``0`` preserves parsing of the rest of the assistant
-        message payload while preventing these values from being lax-coerced
-        into token counts.
+        JSON ``true``/``false``, numeric strings like ``"100"``,
+        non-positive numeric values, and non-integer floats (e.g. ``1.5``)
+        are not valid token counts.  Returning ``0`` preserves parsing of
+        the rest of the assistant message payload while preventing these
+        values from being lax-coerced into token counts.
 
         This aligns with ``_extract_output_tokens`` in the parser fast path:
-        both paths agree that only positive numeric values contribute tokens.
+        both paths agree that only positive whole-number values contribute
+        tokens.
         """
         if isinstance(v, (bool, str)):
             return 0
-        if isinstance(v, (int, float)) and v <= 0:
+        if isinstance(v, float):
+            if not v.is_integer() or v <= 0:
+                return 0
+            return int(v)
+        if isinstance(v, int) and v <= 0:
             return 0
         return v
 

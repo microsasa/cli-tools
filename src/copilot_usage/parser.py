@@ -276,13 +276,11 @@ def _extract_output_tokens(ev: SessionEvent) -> int | None:
     """Extract ``outputTokens`` from an ``assistant.message`` event via direct dict access.
 
     Mirrors the domain intent of :class:`AssistantMessageData`'s
-    ``_sanitize_non_numeric_tokens`` field-validator: only positive numeric
-    values contribute tokens. When ``AssistantMessageData.model_validate(...)``
-    succeeds, both paths agree on whether a value contributes tokens; the
-    representation differs for non-contributing values — this function returns
-    ``None``, whereas the Pydantic model stores ``0``. Inputs rejected by
-    model validation should likewise be treated as non-contributing when
-    comparing behaviors.
+    ``_sanitize_non_numeric_tokens`` field-validator: only positive
+    whole-number values contribute tokens.  Both paths agree on whether a
+    value contributes tokens; the representation differs for
+    non-contributing values — this function returns ``None``, whereas the
+    Pydantic model stores ``0``.
 
     Specifically:
 
