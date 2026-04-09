@@ -214,7 +214,8 @@ def parse_token_int(raw: object) -> int | None:
 
     Centralises the token-validation rules shared by
     :meth:`AssistantMessageData._sanitize_non_numeric_tokens` (Pydantic
-    boundary) and :func:`_extract_output_tokens` (parser fast path).
+    boundary) and :func:`~copilot_usage.parser._extract_output_tokens`
+    (parser fast path).
 
     Rules:
 
