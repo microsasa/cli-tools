@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from rich.console import Console
 
+from copilot_usage._formatting import MAX_CONTENT_LEN
 from copilot_usage.models import (
     CodeChanges,
     EventType,
@@ -22,7 +23,11 @@ from copilot_usage.models import (
     ToolTelemetry,
 )
 from copilot_usage.render_detail import (
+    _build_event_details,
+    _event_type_label,
     _extract_tool_name,
+    _format_relative_time,
+    _render_active_period,
     _render_code_changes,
     _render_recent_events,
     _render_shutdown_cycles,
@@ -508,8 +513,6 @@ class TestBuildEventDetailsToolRequests:
     def test_tool_only_turn_shows_tool_names(self) -> None:
         """ASSISTANT_MESSAGE with content='', outputTokens=0, and two
         toolRequests must render both tool names."""
-        from copilot_usage.render_detail import _build_event_details
-
         ev = SessionEvent(
             type=EventType.ASSISTANT_MESSAGE,
             data={
@@ -529,8 +532,6 @@ class TestBuildEventDetailsToolRequests:
     def test_mixed_turn_shows_tokens_and_tool(self) -> None:
         """ASSISTANT_MESSAGE with content, outputTokens, and one
         toolRequest must render token info and the tool name."""
-        from copilot_usage.render_detail import _build_event_details
-
         ev = SessionEvent(
             type=EventType.ASSISTANT_MESSAGE,
             data={
@@ -548,8 +549,6 @@ class TestBuildEventDetailsToolRequests:
 
     def test_no_tools_unchanged(self) -> None:
         """ASSISTANT_MESSAGE without toolRequests must behave as before."""
-        from copilot_usage.render_detail import _build_event_details
-
         ev = SessionEvent(
             type=EventType.ASSISTANT_MESSAGE,
             data={
@@ -564,8 +563,6 @@ class TestBuildEventDetailsToolRequests:
 
     def test_truncation_applied_to_long_tool_list(self) -> None:
         """When the joined tool names exceed 60 chars, truncation applies."""
-        from copilot_usage.render_detail import _build_event_details
-
         long_names = [
             {"name": f"very_long_tool_name_{i}", "toolCallId": f"t{i}"}
             for i in range(10)
@@ -584,8 +581,6 @@ class TestBuildEventDetailsToolRequests:
 
     def test_empty_names_show_unknown(self) -> None:
         """toolRequests present but all names empty must show '(unknown)'."""
-        from copilot_usage.render_detail import _build_event_details
-
         ev = SessionEvent(
             type=EventType.ASSISTANT_MESSAGE,
             data={
@@ -602,8 +597,6 @@ class TestBuildEventDetailsToolRequests:
 
     def test_singular_label_based_on_displayed_names(self) -> None:
         """When two toolRequests exist but only one has a name, use 'tool'."""
-        from copilot_usage.render_detail import _build_event_details
-
         ev = SessionEvent(
             type=EventType.ASSISTANT_MESSAGE,
             data={
@@ -662,3 +655,154 @@ class TestRenderSessionDetailMultiModelShutdown:
         row = next(line for line in output.splitlines() if "2025-01-01 01:00" in line)
         assert re.search(r"\b7\b", row)  # total API requests = 3 + 4
         assert re.search(r"\b800\b", row)  # total output tokens = 500 + 300
+
+
+# ---------------------------------------------------------------------------
+# _format_relative_time — direct unit tests (issue #879)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatRelativeTime:
+    """Direct unit tests covering all branches of _format_relative_time."""
+
+    def test_sub_hour_formats_as_m_ss(self) -> None:
+        """timedelta(minutes=4, seconds=7) → '+4:07'."""
+        assert _format_relative_time(timedelta(minutes=4, seconds=7)) == "+4:07"
+
+    def test_over_hour_formats_as_h_mm_ss(self) -> None:
+        """timedelta(hours=1, minutes=2, seconds=3) → '+1:02:03'."""
+        assert (
+            _format_relative_time(timedelta(hours=1, minutes=2, seconds=3))
+            == "+1:02:03"
+        )
+
+    def test_negative_delta_clamped_to_zero(self) -> None:
+        """Negative timedelta must clamp to '+0:00', never a negative string."""
+        assert _format_relative_time(timedelta(seconds=-10)) == "+0:00"
+
+    def test_zero_delta(self) -> None:
+        """Zero timedelta → '+0:00'."""
+        assert _format_relative_time(timedelta()) == "+0:00"
+
+    def test_exactly_one_hour(self) -> None:
+        """Exactly 1h boundary triggers the hours branch."""
+        assert _format_relative_time(timedelta(hours=1)) == "+1:00:00"
+
+
+# ---------------------------------------------------------------------------
+# _render_active_period — direct unit tests (issue #879)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderActivePeriod:
+    """Direct unit tests for _render_active_period covering active / inactive."""
+
+    def test_active_session_renders_panel(self) -> None:
+        """Active session must render an 'Active Period' panel with stats."""
+        summary = SessionSummary(
+            session_id="active-test",
+            is_active=True,
+            model_calls=3,
+            user_messages=2,
+            active_model_calls=3,
+            active_user_messages=2,
+            active_output_tokens=1000,
+        )
+        buf, console = _buf_console()
+        _render_active_period(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Active Period" in output
+        assert "3 model calls" in output
+        assert "2 user messages" in output
+
+    def test_inactive_session_produces_no_output(self) -> None:
+        """Inactive session → returns immediately, no output."""
+        summary = SessionSummary(session_id="inactive-test", is_active=False)
+        buf, console = _buf_console()
+        _render_active_period(summary, target_console=console)
+        assert buf.getvalue() == ""
+
+
+class TestRenderSessionDetailActivePeriod:
+    """Integration test: render_session_detail with is_active=True must
+    render the Active Period panel (issue #879)."""
+
+    def test_active_session_shows_active_period_panel(self) -> None:
+        """render_session_detail with is_active=True must include the
+        Active Period panel in its output."""
+        summary = SessionSummary(
+            session_id="active-e2e",
+            start_time=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=2000,
+        )
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 4, 1, 10, 5, 0, tzinfo=UTC),
+            data={"content": "hello"},
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "Active Period" in output
+
+
+# ---------------------------------------------------------------------------
+# _event_type_label — parametrized unit tests (issue #879)
+# ---------------------------------------------------------------------------
+
+
+class TestEventTypeLabel:
+    """Parametrized test for _event_type_label covering every labelled
+    EventType case and the wildcard branch."""
+
+    @pytest.mark.parametrize(
+        ("event_type", "expected_text"),
+        [
+            pytest.param(EventType.USER_MESSAGE, "user message", id="user-message"),
+            pytest.param(EventType.ASSISTANT_MESSAGE, "assistant", id="assistant"),
+            pytest.param(EventType.TOOL_EXECUTION_COMPLETE, "tool", id="tool-complete"),
+            pytest.param(EventType.TOOL_EXECUTION_START, "tool start", id="tool-start"),
+            pytest.param(EventType.ASSISTANT_TURN_START, "turn start", id="turn-start"),
+            pytest.param(EventType.ASSISTANT_TURN_END, "turn end", id="turn-end"),
+            pytest.param(EventType.SESSION_START, "session start", id="session-start"),
+            pytest.param(EventType.SESSION_SHUTDOWN, "session end", id="session-end"),
+            pytest.param(
+                "UNKNOWN_FUTURE_TYPE", "UNKNOWN_FUTURE_TYPE", id="wildcard-branch"
+            ),
+        ],
+    )
+    def test_label_text(self, event_type: str, expected_text: str) -> None:
+        """Label plain text must match the expected string."""
+        label = _event_type_label(event_type)
+        assert label.plain == expected_text
+
+
+# ---------------------------------------------------------------------------
+# _build_event_details — USER_MESSAGE branch (issue #879)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetailsUserMessage:
+    """Tests for the USER_MESSAGE branch of _build_event_details."""
+
+    def test_content_returned(self) -> None:
+        """Short content is returned as-is."""
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": "hello"})
+        assert _build_event_details(ev) == "hello"
+
+    def test_long_content_truncated(self) -> None:
+        """Content exceeding MAX_CONTENT_LEN must be truncated with '…'."""
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": "x" * 300})
+        detail = _build_event_details(ev)
+        assert detail.endswith("…")
+        assert len(detail) <= MAX_CONTENT_LEN
+
+    def test_empty_content_returns_empty_string(self) -> None:
+        """Empty content → empty string."""
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": ""})
+        assert _build_event_details(ev) == ""
