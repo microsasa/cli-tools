@@ -35,8 +35,6 @@ from copilot_usage.report import (
     render_summary,
     session_display_name,
 )
-from copilot_usage.vscode_parser import get_vscode_summary
-from copilot_usage.vscode_report import render_vscode_summary
 
 type _View = Literal["home", "detail", "cost"]
 
@@ -661,6 +659,9 @@ def live(ctx: click.Context, path: Path | None) -> None:
 )
 def vscode(vscode_logs: Path | None) -> None:
     """Show usage from VS Code Copilot Chat logs."""
+    from copilot_usage.vscode_parser import get_vscode_summary
+    from copilot_usage.vscode_report import render_vscode_summary
+
     _print_version_header()
     summary = get_vscode_summary(vscode_logs)
     if summary.total_requests == 0:

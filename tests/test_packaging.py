@@ -99,3 +99,34 @@ def test_ccreq_re_not_in_vscode_parser_all() -> None:
 
     dunder_all = vscode_mod.__all__
     assert "CCREQ_RE" not in dunder_all, "CCREQ_RE must not be in vscode_parser.__all__"
+
+
+def test_cli_does_not_import_vscode_modules_at_module_level() -> None:
+    """``vscode_parser`` and ``vscode_report`` must be lazy-imported.
+
+    Regression guard for issue #890: these modules are only needed by the
+    ``vscode`` subcommand and should not be imported at ``cli`` module level
+    to avoid loading ``re``, ``stat``, ``types``, and running ``re.compile``
+    on every invocation.
+    """
+    import sys
+
+    original_sys_modules = sys.modules.copy()
+    try:
+        # Purge any previously imported copilot_usage modules so we get a
+        # clean import of cli.
+        for mod_name in list(sys.modules):
+            if mod_name == "copilot_usage" or mod_name.startswith("copilot_usage."):
+                del sys.modules[mod_name]
+
+        importlib.import_module("copilot_usage.cli")
+
+        assert "copilot_usage.vscode_parser" not in sys.modules, (
+            "vscode_parser must not be imported at cli module level"
+        )
+        assert "copilot_usage.vscode_report" not in sys.modules, (
+            "vscode_report must not be imported at cli module level"
+        )
+    finally:
+        sys.modules.clear()
+        sys.modules.update(original_sys_modules)
