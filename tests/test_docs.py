@@ -151,8 +151,19 @@ def test_components_table_lists_all_modules() -> None:
     architecture.md."""
     pkg_dir = Path(__file__).parents[1] / "src" / "copilot_usage"
     on_disk = {p.name for p in pkg_dir.glob("*.py") if p.name != "__init__.py"}
-    # Extract backtick-quoted module names from table rows.
-    in_table = set(re.findall(r"^\|\s*`([^`]+\.py)`\s*\|", _ARCH_MD, re.MULTILINE))
+    components_section_match = re.search(
+        r"^###\s+Components\b.*?(?=^#{1,6}\s+|\Z)",
+        _ARCH_MD,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert components_section_match, (
+        "Could not find the '### Components' section in architecture.md"
+    )
+    components_section = components_section_match.group(0)
+    # Extract backtick-quoted module names from rows in the Components table only.
+    in_table = set(
+        re.findall(r"^\|\s*`([^`]+\.py)`\s*\|", components_section, re.MULTILINE)
+    )
     missing = on_disk - in_table
     assert not missing, (
         f"Modules missing from the ### Components table in "
