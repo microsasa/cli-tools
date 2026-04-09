@@ -21,6 +21,7 @@ from copilot_usage.models import (
     TokenUsage,
     ToolExecutionData,
     ToolTelemetry,
+    UserMessageData,
 )
 from copilot_usage.render_detail import (
     _build_event_details,
@@ -31,6 +32,7 @@ from copilot_usage.render_detail import (
     _render_code_changes,
     _render_recent_events,
     _render_shutdown_cycles,
+    _safe_event_data,
     render_session_detail,
 )
 
@@ -806,3 +808,50 @@ class TestBuildEventDetailsUserMessage:
         """Empty content → empty string."""
         ev = SessionEvent(type=EventType.USER_MESSAGE, data={"content": ""})
         assert _build_event_details(ev) == ""
+
+
+# ---------------------------------------------------------------------------
+# _safe_event_data — exception recovery paths (issue #885)
+# ---------------------------------------------------------------------------
+
+
+class TestSafeEventData:
+    """Cover the except (ValidationError, ValueError) branch of _safe_event_data."""
+
+    def test_returns_none_on_validation_error(self) -> None:
+        """ValidationError from the parser must be caught; returns None."""
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            data={"attachments": 123},  # int, not list[str]
+        )
+        result = _safe_event_data(ev, ev.as_user_message)
+        assert result is None
+
+    def test_returns_none_on_value_error(self) -> None:
+        """ValueError from the parser must be caught; returns None."""
+        ev = SessionEvent(type=EventType.USER_MESSAGE, data={})
+
+        def _raise() -> UserMessageData:
+            raise ValueError("synthetic mismatch")
+
+        result = _safe_event_data(ev, _raise)
+        assert result is None
+
+    def test_returns_none_propagates_to_build_event_details(self) -> None:
+        """_build_event_details returns '' when _safe_event_data returns None."""
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            data={"attachments": 123},
+        )
+        assert _build_event_details(ev) == ""
+
+
+# ---------------------------------------------------------------------------
+# _build_event_details — wildcard case (issue #885)
+# ---------------------------------------------------------------------------
+
+
+def test_build_event_details_returns_empty_for_unrecognized_type() -> None:
+    """Wildcard case must return '' for event types without explicit handling."""
+    ev = SessionEvent(type=EventType.SESSION_RESUME, data={})
+    assert _build_event_details(ev) == ""
