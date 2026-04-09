@@ -28,6 +28,7 @@ from copilot_usage.models import (
     ensure_aware_opt,
     has_active_period_stats,
     merge_model_metrics,
+    parse_token_int,
     shutdown_output_tokens,
     total_output_tokens,
 )
@@ -369,6 +370,68 @@ def test_session_summary_full() -> None:
     )
     assert s.total_premium_requests == 24
     assert s.model_metrics["claude-opus-4.6-1m"].usage.inputTokens == 1627935
+
+
+# ---------------------------------------------------------------------------
+# parse_token_int
+# ---------------------------------------------------------------------------
+
+
+class TestParseTokenInt:
+    """Direct unit tests for the public parse_token_int() function."""
+
+    # --- invalid / non-contributing inputs ---
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_bool_returns_none(self, value: bool) -> None:
+        """Bool inputs (subclass of int) must be rejected."""
+        assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("value", ["42", "abc", ""])
+    def test_str_returns_none(self, value: str) -> None:
+        """String inputs must be rejected even if numeric."""
+        assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("value", [3.14, 0.5, -1.5, 1.999])
+    def test_non_whole_float_returns_none(self, value: float) -> None:
+        """Non-whole floats must be rejected."""
+        assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("value", [0, -1, -100_000])
+    def test_zero_or_negative_int_returns_none(self, value: int) -> None:
+        """Zero and negative ints must be rejected."""
+        assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("value", [0.0, -1.0, -100.0])
+    def test_zero_or_negative_float_returns_none(self, value: float) -> None:
+        """Zero and negative whole floats must be rejected."""
+        assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("value", [None, {}, [], object()])
+    def test_other_types_return_none(self, value: object) -> None:
+        """Unsupported types must be rejected."""
+        assert parse_token_int(value) is None
+
+    # --- valid / contributing inputs ---
+
+    def test_positive_int_returned_as_is(self) -> None:
+        """Positive int should be returned unchanged."""
+        assert parse_token_int(42) == 42
+
+    def test_positive_whole_float_coerced_to_int(self) -> None:
+        """Positive whole float should be coerced to int."""
+        result = parse_token_int(1234.0)
+        assert result == 1234
+        assert isinstance(result, int)
+
+    def test_large_positive_int(self) -> None:
+        """Large positive ints should be returned unchanged."""
+        assert parse_token_int(1_000_000) == 1_000_000
+
+    def test_return_type_is_int_not_float(self) -> None:
+        """Whole-number float coercion must produce an int, not a float."""
+        result = parse_token_int(99.0)
+        assert type(result) is int
 
 
 # ---------------------------------------------------------------------------
