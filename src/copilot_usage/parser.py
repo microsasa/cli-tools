@@ -36,6 +36,7 @@ from copilot_usage.models import (
     TokenUsage,
     add_to_model_metrics,
     copy_model_metrics,
+    parse_token_int,
     session_sort_key,
 )
 
@@ -275,35 +276,15 @@ def _read_config_model(config_path: Path | None = None) -> str | None:
 def _extract_output_tokens(ev: SessionEvent) -> int | None:
     """Extract ``outputTokens`` from an ``assistant.message`` event via direct dict access.
 
-    Mirrors the domain intent of :class:`AssistantMessageData`'s
-    ``_sanitize_non_numeric_tokens`` field-validator: only positive
-    whole-number values contribute tokens.  Both paths agree on whether a
-    value contributes tokens; the representation differs for
-    non-contributing values — this function returns ``None``, whereas the
-    Pydantic model stores ``0``.
-
-    Specifically:
-
-    - ``bool`` / ``str`` → ``None`` (invalid, not coerced)
-    - zero or negative ``int`` / ``float`` → ``None`` (non-positive)
-    - whole-number positive ``float`` → coerced to ``int``
-    - non-whole ``float`` / other non-numeric → ``None``
+    Delegates to :func:`~copilot_usage.models.parse_token_int` for the
+    actual validation logic, ensuring that the fast path and the Pydantic
+    model path always agree on both the contributing/non-contributing
+    verdict **and** the numeric token count.
 
     Callers are responsible for verifying ``ev.type`` before calling; this
     function reads only the ``outputTokens`` key from the event data dict.
     """
-    raw = ev.data.get("outputTokens")
-    if raw is None or isinstance(raw, (bool, str)):
-        return None
-    if isinstance(raw, float):
-        if not raw.is_integer():
-            return None
-        tokens = int(raw)
-    elif isinstance(raw, int):
-        tokens = raw
-    else:
-        return None
-    return tokens if tokens > 0 else None
+    return parse_token_int(ev.data.get("outputTokens"))
 
 
 def _full_scandir_discovery(
