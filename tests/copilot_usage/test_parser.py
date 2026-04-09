@@ -4808,6 +4808,7 @@ class TestExtractOutputTokensParametrized:
 # ---------------------------------------------------------------------------
 
 _EQUIVALENCE_CASES: list[tuple[str, object]] = [
+    ("none_null", None),
     ("bool_true", True),
     ("bool_false", False),
     ("str_numeric", "100"),

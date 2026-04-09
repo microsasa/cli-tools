@@ -252,12 +252,15 @@ class AssistantMessageData(BaseModel):
         """Map non-positive, non-numeric, and non-whole-float token counts to ``0``.
 
         Delegates to :func:`parse_token_int` for the actual validation
-        logic.  For types the helper recognises (``bool``, ``str``,
-        ``int``, ``float``), a ``None`` result is mapped to ``0`` so that
+        logic.  ``None`` (JSON ``null``) and types the helper recognises
+        (``bool``, ``str``, ``int``, ``float``) are mapped to ``0`` when
+        they don't represent a positive whole-number count, so that
         Pydantic's downstream ``int`` coercion always succeeds.  Unknown
         types are passed through so that Pydantic can raise its own
         ``ValidationError``.
         """
+        if v is None:
+            return 0
         if not isinstance(v, (bool, str, int, float)):
             return v
         result = parse_token_int(v)

@@ -278,8 +278,10 @@ def _extract_output_tokens(ev: SessionEvent) -> int | None:
 
     Delegates to :func:`~copilot_usage.models.parse_token_int` for the
     actual validation logic, ensuring that the fast path and the Pydantic
-    model path always agree on both the contributing/non-contributing
-    verdict **and** the numeric token count.
+    model path agree on whether a value contributes to token totals.  For
+    contributing values, they also agree on the numeric token count;
+    non-contributing values may be represented differently here as ``None``
+    and in the model as ``0``.
 
     Callers are responsible for verifying ``ev.type`` before calling; this
     function reads only the ``outputTokens`` key from the event data dict.
