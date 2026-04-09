@@ -40,6 +40,7 @@ __all__: Final[list[str]] = [
     "session_sort_key",
     "shutdown_output_tokens",
     "total_output_tokens",
+    "parse_token_int",
 ]
 
 # ---------------------------------------------------------------------------
@@ -208,6 +209,36 @@ class ToolRequest(BaseModel):
     type: str = ""
 
 
+def parse_token_int(raw: object) -> int | None:
+    """Parse a raw ``outputTokens`` value into a positive ``int``, or ``None``.
+
+    Centralises the token-validation rules shared by
+    :meth:`AssistantMessageData._sanitize_non_numeric_tokens` (Pydantic
+    boundary) and :func:`~copilot_usage.parser._extract_output_tokens`
+    (parser fast path).
+
+    Rules:
+
+    - ``bool`` / ``str`` → ``None`` (invalid, not coerced)
+    - non-whole ``float`` → ``None``
+    - zero or negative ``int`` / ``float`` → ``None``
+    - positive whole-number ``float`` → coerced to ``int``
+    - positive ``int`` → returned as-is
+    - any other type → ``None``
+    """
+    if isinstance(raw, (bool, str)):
+        return None
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            return None
+        tokens = int(raw)
+    elif isinstance(raw, int):
+        tokens = raw
+    else:
+        return None
+    return tokens if tokens > 0 else None
+
+
 class AssistantMessageData(BaseModel):
     """Payload for ``assistant.message`` events."""
 
@@ -221,25 +252,20 @@ class AssistantMessageData(BaseModel):
     def _sanitize_non_numeric_tokens(cls, v: object) -> object:
         """Map non-positive, non-numeric, and non-whole-float token counts to ``0``.
 
-        JSON ``true``/``false``, numeric strings like ``"100"``,
-        non-positive numeric values, and non-integer floats (e.g. ``1.5``)
-        are not valid token counts.  Returning ``0`` preserves parsing of
-        the rest of the assistant message payload while preventing these
-        values from being lax-coerced into token counts.
-
-        This aligns with ``_extract_output_tokens`` in the parser fast path:
-        both paths agree that only positive whole-number values contribute
-        tokens.
+        Delegates to :func:`parse_token_int` for the actual validation
+        logic.  ``None`` (JSON ``null``) and types the helper recognises
+        (``bool``, ``str``, ``int``, ``float``) are mapped to ``0`` when
+        they don't represent a positive whole-number count, so that
+        Pydantic's downstream ``int`` coercion always succeeds.  Unknown
+        types are passed through so that Pydantic can raise its own
+        ``ValidationError``.
         """
-        if isinstance(v, (bool, str)):
+        if v is None:
             return 0
-        if isinstance(v, float):
-            if not v.is_integer() or v <= 0:
-                return 0
-            return int(v)
-        if isinstance(v, int) and v <= 0:
-            return 0
-        return v
+        if not isinstance(v, (bool, str, int, float)):
+            return v
+        result = parse_token_int(v)
+        return result if result is not None else 0
 
     reasoningText: str | None = None
     reasoningOpaque: str | None = None

@@ -4808,6 +4808,7 @@ class TestExtractOutputTokensParametrized:
 # ---------------------------------------------------------------------------
 
 _EQUIVALENCE_CASES: list[tuple[str, object]] = [
+    ("none_null", None),
     ("bool_true", True),
     ("bool_false", False),
     ("str_numeric", "100"),
@@ -4847,6 +4848,49 @@ class TestExtractOutputTokensEquivalence:
             f"Divergence for {raw_value!r}: "
             f"_extract_output_tokens → {fast_path_result}, "
             f"AssistantMessageData.outputTokens → {model_result}"
+        )
+
+
+_VALUE_EQUALITY_CASES: list[tuple[str, object, int]] = [
+    ("positive_int_1", 1, 1),
+    ("positive_int_42", 42, 42),
+    ("whole_float_1234", 1234.0, 1234),
+    ("whole_float_1", 1.0, 1),
+]
+
+
+class TestExtractOutputTokensValueEquality:
+    """When both paths agree a value contributes, the numeric counts must be identical."""
+
+    @pytest.mark.parametrize(
+        ("label", "raw_value", "expected"),
+        _VALUE_EQUALITY_CASES,
+        ids=[c[0] for c in _VALUE_EQUALITY_CASES],
+    )
+    def test_token_value_agreement(
+        self, label: str, raw_value: object, expected: int
+    ) -> None:
+        """For contributing values, fast-path and model-path produce the same integer count."""
+        _ = label
+        fast_path_result = _extract_output_tokens(_make_assistant_event(raw_value))
+        model = AssistantMessageData.model_validate({"outputTokens": raw_value})
+
+        assert fast_path_result is not None, (
+            f"Expected fast path to contribute for {raw_value!r}"
+        )
+        assert model.outputTokens > 0, f"Expected model to contribute for {raw_value!r}"
+        assert fast_path_result == expected, (
+            f"Fast-path count mismatch for {raw_value!r}: "
+            f"got {fast_path_result}, expected {expected}"
+        )
+        assert model.outputTokens == expected, (
+            f"Model count mismatch for {raw_value!r}: "
+            f"got {model.outputTokens}, expected {expected}"
+        )
+        assert fast_path_result == model.outputTokens, (
+            f"Value divergence for {raw_value!r}: "
+            f"_extract_output_tokens → {fast_path_result}, "
+            f"AssistantMessageData.outputTokens → {model.outputTokens}"
         )
 
 
