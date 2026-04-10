@@ -2407,14 +2407,15 @@ class TestUpdateVscodeSummaryLargeScale:
             expected_count = 10_500 // 3 + (1 if idx < 10_500 % 3 else 0)
             assert acc.requests_by_category[c] == expected_count
 
-        # Per-date counts: 28 days cycled
-        total_date_requests = sum(acc.requests_by_date.values())
-        assert total_date_requests == 10_500
-
-        # All date keys are valid ISO dates
-        for dk in acc.requests_by_date:
-            assert len(dk) == 10  # "YYYY-MM-DD"
-            assert dk[4] == "-" and dk[7] == "-"
+        # Per-date counts: compute the exact expected mapping from input
+        # requests so we verify the full distribution, not just the total.
+        expected_requests_by_date: dict[str, int] = {}
+        for request in requests:
+            date_key = request.timestamp.date().isoformat()
+            expected_requests_by_date[date_key] = (
+                expected_requests_by_date.get(date_key, 0) + 1
+            )
+        assert acc.requests_by_date == expected_requests_by_date
 
     def test_timestamp_bounds(self) -> None:
         """first_timestamp and last_timestamp are correct min/max."""
