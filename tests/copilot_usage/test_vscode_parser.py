@@ -2336,3 +2336,102 @@ class TestCachedDiscoverSkipsChildScanOnHit:
         monkeypatch.setattr(_mod, "_scan_child_ids", spy)
         _cached_discover_vscode_logs(tmp_path)
         assert scan_calls == [], "child scan must be skipped on root_id cache hit"
+
+
+# ---------------------------------------------------------------------------
+# Correctness-equivalence test for the optimised _update_vscode_summary loop
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateVscodeSummaryLargeScale:
+    """Verify _update_vscode_summary produces correct aggregations at scale.
+
+    Builds a synthetic list of 10 000+ VSCodeRequest objects spanning
+    multiple models, categories, and dates and asserts the accumulated
+    result is bit-for-bit identical to a hand-computed reference.
+    No wall-clock timing — only deterministic correctness checks.
+    """
+
+    @staticmethod
+    def _build_requests(n: int = 10_000) -> list[VSCodeRequest]:
+        """Build *n* synthetic requests across several models/categories/dates."""
+        models = ["gpt-4o", "gpt-4o-mini", "claude-opus-4.6", "o3-mini"]
+        categories = ["inline", "panel/editAgent", "copilotLanguageModelWrapper"]
+        base = datetime(2026, 3, 1, 0, 0, 0)
+        requests: list[VSCodeRequest] = []
+        for i in range(n):
+            ts = base.replace(
+                day=1 + (i % 28),
+                hour=i % 24,
+                minute=i % 60,
+                second=i % 60,
+            )
+            requests.append(
+                VSCodeRequest(
+                    timestamp=ts,
+                    request_id=f"req{i:06d}",
+                    model=models[i % len(models)],
+                    duration_ms=50 + i,
+                    category=categories[i % len(categories)],
+                )
+            )
+        return requests
+
+    def test_aggregation_matches_reference(self) -> None:
+        """Accumulated totals match a manually computed reference."""
+        requests = self._build_requests(10_500)
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, requests)
+
+        assert acc.total_requests == 10_500
+
+        # Total duration: sum(50 + i for i in range(10_500))
+        expected_total_dur = sum(50 + i for i in range(10_500))
+        assert acc.total_duration_ms == expected_total_dur
+
+        # Per-model counts: 4 models cycled evenly → each gets 10_500 // 4
+        # with remainder distributed to first models.
+        models = ["gpt-4o", "gpt-4o-mini", "claude-opus-4.6", "o3-mini"]
+        for idx, m in enumerate(models):
+            expected_count = 10_500 // 4 + (1 if idx < 10_500 % 4 else 0)
+            assert acc.requests_by_model[m] == expected_count
+
+        # Per-model durations: sum(50 + i for i where i % 4 == model_index)
+        for idx, m in enumerate(models):
+            expected_dur = sum(50 + i for i in range(idx, 10_500, 4))
+            assert acc.duration_by_model[m] == expected_dur
+
+        # Per-category counts: 3 categories cycled evenly
+        categories = ["inline", "panel/editAgent", "copilotLanguageModelWrapper"]
+        for idx, c in enumerate(categories):
+            expected_count = 10_500 // 3 + (1 if idx < 10_500 % 3 else 0)
+            assert acc.requests_by_category[c] == expected_count
+
+        # Per-date counts: 28 days cycled
+        total_date_requests = sum(acc.requests_by_date.values())
+        assert total_date_requests == 10_500
+
+        # All date keys are valid ISO dates
+        for dk in acc.requests_by_date:
+            assert len(dk) == 10  # "YYYY-MM-DD"
+            assert dk[4] == "-" and dk[7] == "-"
+
+    def test_timestamp_bounds(self) -> None:
+        """first_timestamp and last_timestamp are correct min/max."""
+        requests = self._build_requests(10_000)
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, requests)
+
+        expected_first = min(r.timestamp for r in requests)
+        expected_last = max(r.timestamp for r in requests)
+        assert acc.first_timestamp == expected_first
+        assert acc.last_timestamp == expected_last
+
+    def test_empty_input(self) -> None:
+        """Passing an empty sequence leaves the accumulator unchanged."""
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, [])
+        assert acc.total_requests == 0
+        assert acc.total_duration_ms == 0
+        assert acc.first_timestamp is None
+        assert acc.last_timestamp is None
