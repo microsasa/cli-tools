@@ -2153,6 +2153,8 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         _VSCODE_DISCOVERY_CACHE[tmp_path] = _VSCodeDiscoveryCache(
             root_id=(cached.root_id[0] + 1_000_000_000, cached.root_id[1]),
             child_ids=cached.child_ids,
+            newest_child_path=cached.newest_child_path,
+            newest_child_id=cached.newest_child_id,
             log_paths=cached.log_paths,
         )
 
@@ -2192,7 +2194,13 @@ class TestVscodeDiscoveryCacheSkipsGlob:
     def test_new_window_under_existing_session_triggers_rediscovery(
         self, tmp_path: Path
     ) -> None:
-        """Adding a window dir under an existing session invalidates the cache."""
+        """Adding a window dir under an existing session invalidates the cache.
+
+        The discovery cache stores a sentinel (the most recently modified
+        session directory).  When a new ``window*`` directory is created
+        under that session, the session directory's mtime changes, causing
+        the sentinel check to miss and trigger a full re-glob.
+        """
         session_dir = tmp_path / "20260313T211400"
         log_dir = session_dir / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
@@ -2223,7 +2231,8 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             )
 
             s2 = get_vscode_summary(tmp_path)
-            assert glob_call_count == 2  # re-globbed due to child change
+            # Session dir mtime changed → sentinel miss → re-globbed
+            assert glob_call_count == 2
             assert s2.total_requests == 2
 
     def test_non_directory_candidate_skipped(self, tmp_path: Path) -> None:
@@ -2289,3 +2298,41 @@ class TestCachedDiscoverOsErrors:
         result = _cached_discover_vscode_logs(missing)
         assert result == []
         assert missing not in _VSCODE_DISCOVERY_CACHE
+
+
+class TestCachedDiscoverSkipsChildScanOnHit:
+    """Verify _scan_child_ids is not called on root_id + sentinel cache hits.
+
+    After a warm call populates _VSCODE_DISCOVERY_CACHE, a subsequent
+    call with an unchanged root *and* unchanged sentinel child must
+    short-circuit without invoking _scan_child_ids — avoiding
+    O(n_children) stat syscalls on every steady-state invocation.
+    """
+
+    def test_cached_discover_skips_child_scan_on_root_id_hit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_scan_child_ids must not be called when root_id matches the cache."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        (log_dir / "GitHub Copilot Chat.log").write_text(_make_log_line(req_idx=0))
+
+        # Warm the cache with the real implementation.
+        _cached_discover_vscode_logs(tmp_path)
+        assert tmp_path in _VSCODE_DISCOVERY_CACHE
+
+        # Spy on _scan_child_ids for subsequent calls.
+        import copilot_usage.vscode_parser as _mod
+
+        scan_calls: list[Path] = []
+        original = _mod._scan_child_ids  # pyright: ignore[reportPrivateUsage]
+
+        def spy(root: Path) -> frozenset[tuple[str, tuple[int, int]]]:
+            scan_calls.append(root)
+            return original(root)
+
+        monkeypatch.setattr(_mod, "_scan_child_ids", spy)
+        _cached_discover_vscode_logs(tmp_path)
+        assert scan_calls == [], "child scan must be skipped on root_id cache hit"
