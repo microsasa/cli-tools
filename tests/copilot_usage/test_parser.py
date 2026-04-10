@@ -55,6 +55,7 @@ from copilot_usage.parser import (
     _extract_session_name,
     _first_pass,
     _FirstPassResult,
+    _full_scandir_discovery,
     _infer_model_from_metrics,
     _insert_session_entry,
     _read_config_model,
@@ -520,6 +521,33 @@ class TestDiscoverSessionsDepth:
         # Also verify via discover_sessions directly
         paths = discover_sessions(tmp_path)
         assert paths == [valid]
+
+
+# ---------------------------------------------------------------------------
+# _full_scandir_discovery — OSError on DirEntry.is_dir (issue #896)
+# ---------------------------------------------------------------------------
+
+
+class TestFullScanDirDiscovery:
+    """Cover error-handling paths in _full_scandir_discovery."""
+
+    def test_is_dir_oserror_entry_is_skipped(self, tmp_path: Path) -> None:
+        """An entry whose is_dir() raises OSError must be silently skipped."""
+        from unittest.mock import MagicMock
+
+        bad_entry = MagicMock(spec=os.DirEntry)
+        bad_entry.name = "broken-session"
+        bad_entry.is_dir.side_effect = OSError("permission denied")
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=iter([bad_entry]))
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch("os.scandir", return_value=ctx):
+            result = _full_scandir_discovery(tmp_path, include_plan=False)
+
+        assert result == []
+        bad_entry.is_dir.assert_called_once_with(follow_symlinks=False)
 
 
 # ---------------------------------------------------------------------------
