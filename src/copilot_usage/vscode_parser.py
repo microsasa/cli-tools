@@ -492,30 +492,43 @@ class _SummaryAccumulator:
 def _update_vscode_summary(
     acc: _SummaryAccumulator, requests: Sequence[VSCodeRequest]
 ) -> None:
-    """Merge *requests* into *acc* in-place, then discard."""
+    """Merge *requests* into *acc* in-place, then discard.
+
+    Accumulator dict fields and repeated request attributes are bound to
+    locals before the loop to replace ``LOAD_ATTR`` with ``LOAD_FAST``.
+    """
+    rbm = acc.requests_by_model
+    dbm = acc.duration_by_model
+    rbc = acc.requests_by_category
+    rbd = acc.requests_by_date
     last_date_key: str = ""
     last_date_val: date | None = None
 
     for req in requests:
         acc.total_requests += 1
-        acc.total_duration_ms += req.duration_ms
+        dur = req.duration_ms
+        acc.total_duration_ms += dur
 
-        acc.requests_by_model[req.model] += 1
-        acc.duration_by_model[req.model] += req.duration_ms
-        acc.requests_by_category[req.category] += 1
+        model = req.model
+        rbm[model] += 1
+        dbm[model] += dur
+        rbc[req.category] += 1
 
-        ts_date = req.timestamp.date()
+        ts = req.timestamp
+        ts_date = ts.date()
         if last_date_val is None or ts_date != last_date_val:
-            last_date_key = req.timestamp.strftime("%Y-%m-%d")
+            last_date_key = ts_date.isoformat()
             last_date_val = ts_date
-        acc.requests_by_date[last_date_key] += 1
+        rbd[last_date_key] += 1
 
         # Timestamp bounds: full min/max scan so callers (especially
         # build_vscode_summary) need not pre-sort their input.
-        if acc.first_timestamp is None or req.timestamp < acc.first_timestamp:
-            acc.first_timestamp = req.timestamp
-        if acc.last_timestamp is None or req.timestamp > acc.last_timestamp:
-            acc.last_timestamp = req.timestamp
+        first = acc.first_timestamp
+        if first is None or ts < first:
+            acc.first_timestamp = ts
+        last_ts = acc.last_timestamp
+        if last_ts is None or ts > last_ts:
+            acc.last_timestamp = ts
 
 
 def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
