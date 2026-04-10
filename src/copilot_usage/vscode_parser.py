@@ -111,8 +111,9 @@ _GLOB_PATTERN: Final[str] = (
 # ---------------------------------------------------------------------------
 # Module-level discovery cache: candidate_root → _VSCodeDiscoveryCache.
 # Avoids redundant multi-level glob traversals when the candidate root
-# directory and its immediate child session directories have not changed
-# (no sessions or window directories added or removed).
+# directory has not changed (root mtime check catches subdirectory
+# additions/removals on Linux/macOS).  child_ids is recorded on cache
+# population and retained for diagnostics but is not rechecked on hits.
 # ---------------------------------------------------------------------------
 
 
@@ -120,11 +121,10 @@ _GLOB_PATTERN: Final[str] = (
 class _VSCodeDiscoveryCache:
     """Cached result of discover_vscode_logs for a given root directory.
 
-    *child_ids* stores the ``(name, file_identity)`` pairs of immediate
-    child directories under the candidate root.  This allows the cache to
-    detect new or modified session sub-directories (e.g. a new ``window*``
-    directory) whose creation would not update the root directory's own
-    mtime.
+    *root_id* (``(st_mtime_ns, st_size)``) is the primary cache key:
+    a hit on *root_id* trusts the cached log paths without rescanning
+    children.  *child_ids* is recorded at population time for
+    diagnostic/debugging purposes but is not rechecked on cache hits.
     """
 
     root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
@@ -221,18 +221,18 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
 def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     """Return discovered log paths, skipping glob when the root is unchanged.
 
-    Each candidate root directory is stat'd and its immediate child
-    directories are scanned via :func:`_scan_child_ids` (one
-    ``os.scandir`` plus one ``DirEntry.stat`` per child).  On a cache
-    hit (same root ``(st_mtime_ns, st_size)`` *and* same child-directory
-    identities), the stored paths are reused without re-running the
-    multi-level glob.  On a miss, the glob runs and the cache is
-    updated.
+    Each candidate root directory is stat'd.  On a cache hit (same
+    root ``(st_mtime_ns, st_size)``), the stored paths are reused
+    without scanning child directories or running the multi-level glob.
+    On a miss, :func:`_scan_child_ids` runs and the glob executes to
+    repopulate the cache.
 
-    Steady-state cost per candidate root is therefore O(children) —
-    one ``stat`` on the root plus one ``scandir`` walk — which is still
-    significantly cheaper than the deep recursive glob it replaces, but
-    not constant-time.
+    Since creating or removing a subdirectory updates the parent
+    directory's ``mtime`` on Linux (ext4/btrfs/overlayfs) and macOS
+    (APFS), the root identity check is sufficient to detect child-dir
+    changes; ``_scan_child_ids`` only runs on cache misses as an extra
+    safety net.  Steady-state cost is therefore O(1) — a single
+    ``stat()`` on the root directory.
 
     A non-directory candidate is skipped with an empty result, matching
     the behaviour of :func:`discover_vscode_logs`.
@@ -256,16 +256,14 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
             )
             continue
         root_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
-        child_ids = _scan_child_ids(candidate)
         cached = _VSCODE_DISCOVERY_CACHE.get(candidate)
-        if (
-            cached is not None
-            and cached.root_id == root_id
-            and cached.child_ids == child_ids
-        ):
+        if cached is not None and cached.root_id == root_id:
+            # Root directory identity unchanged — no subdirectories
+            # added/removed (parent mtime always updates on Linux/macOS).
             result.extend(cached.log_paths)
             continue
-        # Cache miss — run glob
+        # Cache miss or root changed — scan children and run glob
+        child_ids = _scan_child_ids(candidate)
         found = sorted(candidate.glob(_GLOB_PATTERN))
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id, child_ids=child_ids, log_paths=tuple(found)
@@ -543,11 +541,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
 
     Discovery uses :func:`_cached_discover_vscode_logs` to avoid
     redundant multi-level glob traversals when the candidate root
-    directories and their immediate child session directories have not
-    changed on disk.  The steady-state discovery cost is O(children)
-    per candidate root (one ``stat`` on the root plus one ``scandir``
-    walk), not constant-time — but still much cheaper than the deep
-    recursive glob it replaces.
+    directories have not changed on disk.  The steady-state discovery
+    cost is O(1) per candidate root (a single ``stat`` on the root
+    directory), which is much cheaper than the deep recursive glob it
+    replaces.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
