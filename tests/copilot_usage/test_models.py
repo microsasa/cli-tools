@@ -247,6 +247,17 @@ class TestSanitizeNonNumericTokens:
         d = AssistantMessageData.model_validate({"outputTokens": 100.0})
         assert d.outputTokens == 100
 
+    @pytest.mark.parametrize("raw", [float("inf"), float("-inf"), float("nan")])
+    def test_special_float_maps_to_zero(self, raw: float) -> None:
+        """IEEE 754 special floats on the Pydantic boundary must map to 0."""
+        d = AssistantMessageData.model_validate({"outputTokens": raw})
+        assert d.outputTokens == 0
+
+    def test_negative_zero_float_maps_to_zero(self) -> None:
+        """-0.0 on the Pydantic boundary must map to 0."""
+        d = AssistantMessageData.model_validate({"outputTokens": -0.0})
+        assert d.outputTokens == 0
+
 
 def test_session_shutdown_data() -> None:
     d = SessionShutdownData.model_validate(RAW_SHUTDOWN["data"])
@@ -406,6 +417,15 @@ class TestParseTokenInt:
     def test_zero_or_negative_float_returns_none(self, value: float) -> None:
         """Zero and negative whole floats must be rejected."""
         assert parse_token_int(value) is None
+
+    @pytest.mark.parametrize("raw", [float("inf"), float("-inf"), float("nan")])
+    def test_special_float_returns_none(self, raw: float) -> None:
+        """IEEE 754 special floats must be rejected, not coerced to int."""
+        assert parse_token_int(raw) is None
+
+    def test_negative_zero_float_returns_none(self) -> None:
+        """-0.0 passes is_integer() but must not count as a positive token value."""
+        assert parse_token_int(-0.0) is None
 
     @pytest.mark.parametrize("value", [None, {}, [], object()])
     def test_other_types_return_none(self, value: object) -> None:
