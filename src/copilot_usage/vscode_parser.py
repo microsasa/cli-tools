@@ -116,6 +116,9 @@ _GLOB_PATTERN: Final[str] = (
 # while the *newest_child* sentinel catches new window directories
 # inside existing sessions — keeping steady-state cost at O(1) (two
 # stat calls: root + sentinel child).
+# NOTE: only changes under the cached newest child are detected by the
+# sentinel; modifications to older session directories may go unnoticed
+# until the root directory itself changes or the cache is cleared.
 # ---------------------------------------------------------------------------
 
 
@@ -130,6 +133,14 @@ class _VSCodeDiscoveryCache:
     sentinel on a hit detects new window directories added inside an
     existing session.  *child_ids* is recorded at population time and
     retained for diagnostics but is not fully rescanned on cache hits.
+
+    **Limitation:** only changes under the cached newest session directory
+    are detected by the sentinel.  If a different (older) session directory
+    is modified (e.g. a new ``window*/`` appears under a non-newest
+    session), ``root_id`` will still match and the sentinel stat will also
+    match, so the cache may return stale ``log_paths`` until the root
+    directory itself changes or the cache is cleared.  This is an accepted
+    trade-off for O(1) steady-state cost.
     """
 
     root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
@@ -232,11 +243,12 @@ def _newest_child_from_ids(
     """Return the path and identity of the most recently modified child.
 
     Picks the child with the highest ``st_mtime_ns`` from *child_ids*.
+    Ties are broken deterministically by child name.
     Returns ``(None, None)`` when *child_ids* is empty.
     """
     if not child_ids:
         return None, None
-    name, identity = max(child_ids, key=lambda item: item[1][0])
+    name, identity = max(child_ids, key=lambda item: (item[1][0], item[0]))
     return root / name, identity
 
 
@@ -256,6 +268,11 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     existing sessions: adding ``window2/`` under a session dir updates
     that session dir's mtime, which the sentinel stat detects.
     Steady-state cost is O(1) — two ``stat()`` calls (root + sentinel).
+
+    **Limitation:** the sentinel only tracks the most recently modified
+    child at cache-population time.  Changes under a different (older)
+    session directory will not be detected until the root directory
+    itself changes or the cache is cleared.
 
     A non-directory candidate is skipped with an empty result, matching
     the behaviour of :func:`discover_vscode_logs`.
