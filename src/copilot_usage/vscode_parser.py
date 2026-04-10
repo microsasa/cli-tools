@@ -111,9 +111,11 @@ _GLOB_PATTERN: Final[str] = (
 # ---------------------------------------------------------------------------
 # Module-level discovery cache: candidate_root → _VSCodeDiscoveryCache.
 # Avoids redundant multi-level glob traversals when the candidate root
-# directory has not changed (root mtime check catches subdirectory
-# additions/removals on Linux/macOS).  child_ids is recorded on cache
-# population and retained for diagnostics but is not rechecked on hits.
+# directory and its most recently modified child have not changed.
+# The root mtime check catches session-directory additions/removals,
+# while the *newest_child* sentinel catches new window directories
+# inside existing sessions — keeping steady-state cost at O(1) (two
+# stat calls: root + sentinel child).
 # ---------------------------------------------------------------------------
 
 
@@ -121,14 +123,19 @@ _GLOB_PATTERN: Final[str] = (
 class _VSCodeDiscoveryCache:
     """Cached result of discover_vscode_logs for a given root directory.
 
-    *root_id* (``(st_mtime_ns, st_size)``) is the primary cache key:
-    a hit on *root_id* trusts the cached log paths without rescanning
-    children.  *child_ids* is recorded at population time for
-    diagnostic/debugging purposes but is not rechecked on cache hits.
+    *root_id* (``(st_mtime_ns, st_size)``) catches new or removed session
+    directories (child additions update parent mtime on Linux/macOS).
+    *newest_child_path* / *newest_child_id* store the most recently
+    modified immediate child at population time; re-stat'ing this single
+    sentinel on a hit detects new window directories added inside an
+    existing session.  *child_ids* is recorded at population time and
+    retained for diagnostics but is not fully rescanned on cache hits.
     """
 
     root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
     child_ids: _ChildIds
+    newest_child_path: Path | None  # most-recently-modified session dir
+    newest_child_id: tuple[int, int] | None  # its identity at population
     log_paths: tuple[Path, ...]
 
 
@@ -218,21 +225,37 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     return all_logs
 
 
+def _newest_child_from_ids(
+    root: Path,
+    child_ids: _ChildIds,
+) -> tuple[Path | None, tuple[int, int] | None]:
+    """Return the path and identity of the most recently modified child.
+
+    Picks the child with the highest ``st_mtime_ns`` from *child_ids*.
+    Returns ``(None, None)`` when *child_ids* is empty.
+    """
+    if not child_ids:
+        return None, None
+    name, identity = max(child_ids, key=lambda item: item[1][0])
+    return root / name, identity
+
+
 def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     """Return discovered log paths, skipping glob when the root is unchanged.
 
     Each candidate root directory is stat'd.  On a cache hit (same
-    root ``(st_mtime_ns, st_size)``), the stored paths are reused
-    without scanning child directories or running the multi-level glob.
+    root ``(st_mtime_ns, st_size)`` *and* same identity of the most
+    recently modified child), the stored paths are reused without
+    scanning all child directories or running the multi-level glob.
     On a miss, :func:`_scan_child_ids` runs and the glob executes to
     repopulate the cache.
 
-    Since creating or removing a subdirectory updates the parent
-    directory's ``mtime`` on Linux (ext4/btrfs/overlayfs) and macOS
-    (APFS), the root identity check is sufficient to detect child-dir
-    changes; ``_scan_child_ids`` only runs on cache misses as an extra
-    safety net.  Steady-state cost is therefore O(1) — a single
-    ``stat()`` on the root directory.
+    The root identity check catches session-directory additions/removals
+    (child additions update parent mtime on Linux/macOS).  The
+    *newest_child* sentinel catches new window directories inside
+    existing sessions: adding ``window2/`` under a session dir updates
+    that session dir's mtime, which the sentinel stat detects.
+    Steady-state cost is O(1) — two ``stat()`` calls (root + sentinel).
 
     A non-directory candidate is skipped with an empty result, matching
     the behaviour of :func:`discover_vscode_logs`.
@@ -257,16 +280,28 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
             continue
         root_id: tuple[int, int] = (st.st_mtime_ns, st.st_size)
         cached = _VSCODE_DISCOVERY_CACHE.get(candidate)
-        if cached is not None and cached.root_id == root_id:
-            # Root directory identity unchanged — no subdirectories
-            # added/removed (parent mtime always updates on Linux/macOS).
+        if (
+            cached is not None
+            and cached.root_id == root_id
+            and (
+                cached.newest_child_path is None
+                or safe_file_identity(cached.newest_child_path)
+                == cached.newest_child_id
+            )
+        ):
+            # Root + sentinel child unchanged — reuse cached log paths.
             result.extend(cached.log_paths)
             continue
-        # Cache miss or root changed — scan children and run glob
+        # Cache miss or root/sentinel changed — scan children and run glob
         child_ids = _scan_child_ids(candidate)
+        newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
         found = sorted(candidate.glob(_GLOB_PATTERN))
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
-            root_id=root_id, child_ids=child_ids, log_paths=tuple(found)
+            root_id=root_id,
+            child_ids=child_ids,
+            newest_child_path=newest_path,
+            newest_child_id=newest_id,
+            log_paths=tuple(found),
         )
         result.extend(found)
     result.sort()
@@ -541,10 +576,11 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
 
     Discovery uses :func:`_cached_discover_vscode_logs` to avoid
     redundant multi-level glob traversals when the candidate root
+    directories and their most recently modified child session
     directories have not changed on disk.  The steady-state discovery
-    cost is O(1) per candidate root (a single ``stat`` on the root
-    directory), which is much cheaper than the deep recursive glob it
-    replaces.
+    cost is O(1) per candidate root (two ``stat`` calls: one on the root
+    directory and one on the sentinel child), which is much cheaper than
+    the deep recursive glob it replaces.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
