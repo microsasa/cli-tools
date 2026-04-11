@@ -853,7 +853,9 @@ def _build_completed_summary(
         is_active=resume.session_resumed,
         has_shutdown_metrics=bool(merged_metrics),
         last_resume_time=resume.last_resume_time,
-        active_model_calls=resume.post_shutdown_turn_starts,
+        active_model_calls=(
+            resume.post_shutdown_turn_starts if resume.session_resumed else 0
+        ),
         active_user_messages=resume.post_shutdown_user_messages,
         active_output_tokens=resume.post_shutdown_output_tokens,
         shutdown_cycles=shutdown_cycles,
