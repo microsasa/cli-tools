@@ -9155,3 +9155,192 @@ class TestDefaultSessionPath:
     def test_exported_in_all(self) -> None:
         """DEFAULT_SESSION_PATH is listed in ``parser.__all__``."""
         assert "DEFAULT_SESSION_PATH" in _parser_module.__all__
+
+
+# ---------------------------------------------------------------------------
+# Issue #908 — orphaned ASSISTANT_TURN_START after shutdown must not inflate
+#              active_model_calls when session_resumed is False
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanedTurnStartDoesNotInflateActiveCalls:
+    """Regression tests for orphaned post-shutdown assistant.turn_start events.
+
+    When only ``ASSISTANT_TURN_START`` events follow the final shutdown (no
+    ``USER_MESSAGE``, ``ASSISTANT_MESSAGE``, or ``SESSION_RESUME``), the
+    session is *not* considered resumed.  ``active_model_calls`` must be ``0``
+    so that ``has_active_period_stats`` returns ``False`` and downstream
+    totals are not underreported.
+    """
+
+    def test_orphaned_turn_start_active_model_calls_zero(self, tmp_path: Path) -> None:
+        """session.start → shutdown → assistant.turn_start yields active_model_calls=0."""
+        orphaned_turn = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "99", "interactionId": "int-orphan"},
+                "id": "ev-turn-orphan",
+                "timestamp": "2026-03-07T11:05:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            orphaned_turn,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert summary.is_active is False
+        assert summary.active_model_calls == 0
+
+    def test_has_active_period_stats_false_for_orphaned_turn(
+        self, tmp_path: Path
+    ) -> None:
+        """has_active_period_stats returns False when only orphaned turns exist."""
+        from copilot_usage.models import has_active_period_stats
+
+        orphaned_turn = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "99", "interactionId": "int-orphan"},
+                "id": "ev-turn-orphan",
+                "timestamp": "2026-03-07T11:05:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            orphaned_turn,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+
+        assert has_active_period_stats(summary) is False
+
+    def test_compute_totals_not_reduced_by_orphaned_turn(self, tmp_path: Path) -> None:
+        """_compute_session_totals(shutdown_only=True) must not subtract orphaned turns."""
+        from copilot_usage.report import _compute_session_totals
+
+        orphaned_turn = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "99", "interactionId": "int-orphan"},
+                "id": "ev-turn-orphan",
+                "timestamp": "2026-03-07T11:05:00.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            orphaned_turn,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        totals = _compute_session_totals([summary], shutdown_only=True)
+
+        assert totals.model_calls == summary.model_calls
+
+    def test_build_completed_summary_direct_zeroes_active_calls(self) -> None:
+        """Direct _build_completed_summary with session_resumed=False zeroes active_model_calls."""
+        sd = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=5,
+            totalApiDurationMs=12000,
+            modelMetrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=8, cost=5),
+                    usage=TokenUsage(
+                        inputTokens=5000,
+                        outputTokens=350,
+                        cacheReadTokens=1000,
+                        cacheWriteTokens=0,
+                    ),
+                )
+            },
+        )
+        fp = _FirstPassResult(
+            session_id="orphan-turn-session",
+            start_time=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            end_time=datetime(2026, 3, 7, 11, 0, tzinfo=UTC),
+            cwd="/home/user/project",
+            model="claude-sonnet-4",
+            all_shutdowns=((4, sd),),
+            user_message_count=1,
+            total_output_tokens=150,
+            total_turn_starts=2,
+            tool_model=None,
+        )
+        resume = _ResumeInfo(
+            session_resumed=False,
+            post_shutdown_output_tokens=0,
+            post_shutdown_turn_starts=3,
+            post_shutdown_user_messages=0,
+            last_resume_time=None,
+        )
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.SESSION_START,
+                data={
+                    "sessionId": "orphan-turn-session",
+                    "version": 1,
+                    "startTime": "2026-03-07T10:00:00.000Z",
+                    "context": {"cwd": "/home/user/project"},
+                },
+                id="ev-start",
+                timestamp=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.USER_MESSAGE,
+                data={"content": "hello"},
+                id="ev-user",
+                timestamp=datetime(2026, 3, 7, 10, 1, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.ASSISTANT_TURN_START,
+                data={"turnId": "0", "interactionId": "int-1"},
+                id="ev-turn1",
+                timestamp=datetime(2026, 3, 7, 10, 1, 1, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.ASSISTANT_MESSAGE,
+                data={"messageId": "msg-1", "outputTokens": 150},
+                id="ev-asst",
+                timestamp=datetime(2026, 3, 7, 10, 1, 5, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.SESSION_SHUTDOWN,
+                data={},
+                id="ev-shutdown",
+                timestamp=datetime(2026, 3, 7, 11, 0, tzinfo=UTC),
+            ),
+            SessionEvent(
+                type=EventType.ASSISTANT_TURN_START,
+                data={"turnId": "99", "interactionId": "int-orphan"},
+                id="ev-orphan-turn",
+                timestamp=datetime(2026, 3, 7, 11, 5, tzinfo=UTC),
+            ),
+        ]
+
+        summary = _build_completed_summary(fp, name=None, resume=resume, events=events)
+
+        assert summary.is_active is False
+        assert summary.active_model_calls == 0
