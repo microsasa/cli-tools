@@ -5767,8 +5767,12 @@ class TestReadConfigModelCaching:
 
         # 3. Directly call build_session_summary (bypassing get_all_sessions)
         #    on an active session with no model info — model must be None.
+        #    Patch _CONFIG_PATH to a nonexistent file so the real
+        #    ~/.copilot/config.json doesn't leak into the assertion.
+        fake_config = tmp_path / "nonexistent" / "config.json"
         events = parse_events(events_path)
-        summary = build_session_summary(events, events_path=events_path)
+        with patch("copilot_usage.parser._CONFIG_PATH", fake_config):
+            summary = build_session_summary(events, events_path=events_path)
         assert summary.model is None
 
     def test_unchanged_config_skips_cache_clear(self, tmp_path: Path) -> None:
