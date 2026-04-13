@@ -23,7 +23,7 @@ jobs:
       - name: Install gh-aw extension
         uses: github/gh-aw/actions/setup-cli@5a06d310cf45161bde77d070065a1e1489fc411c # v0.68.1
         with:
-          version: v0.66.1
+          version: v0.68.1
       - name: Install uv
         uses: astral-sh/setup-uv@v7
       - name: Install Python dependencies
