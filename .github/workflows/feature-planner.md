@@ -46,6 +46,8 @@ Compare the current codebase against the vision. Identify one small, concrete st
 - **Specific enough to code** — include the files to create or modify, the behavior to add, and how to verify it works.
 - **Non-conflicting** — do not propose changes that would contradict or duplicate any open issue.
 - **Incremental** — prefer the smallest useful step over an ambitious leap. Each step should leave the codebase in a working, releasable state.
+- **No protected files** — do not propose features that require changes to `.github/`, `pyproject.toml`, `uv.lock`, or other dependency/build config files — except as described in the Dependency-aware rule below. The implementer agent cannot create PRs that touch these paths.
+- **Dependency-aware** — if a feature step requires a new third-party dependency, do not file the feature issue yet. Instead, file **only** a dependency issue titled `[aw][deps] Install <package> for <feature>` (labeled `auto-feature` only, not `aw`) that adds the dependency to `pyproject.toml` and `uv.lock`. This issue requires manual action by a maintainer — do not expect the implementer to handle it. Since the `auto-feature` gate prevents creating another issue while one is open, the feature issue will be filed on a subsequent run after a maintainer resolves and closes the dependency issue.
 
 Open an issue with: what the step achieves toward the vision, what specific changes are needed, and a testing requirement. Prefix the title with `[aw][feature]` and label the issue with `aw` and `auto-feature`.
 
