@@ -2364,7 +2364,7 @@ class TestGlobCandidate:
         assert _glob_candidate(tmp_path) == []
 
     def test_finds_matching_logs(self, tmp_path: Path) -> None:
-        """Returns sorted log paths when matching files exist."""
+        """Returns matching log paths when files exist."""
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"

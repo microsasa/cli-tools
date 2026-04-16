@@ -196,11 +196,23 @@ def _default_log_candidates() -> list[Path]:
     return [root / d / "logs" for d in code_dirs]
 
 
+def _glob_logs(candidate: Path) -> list[Path]:
+    """Glob *candidate* for Copilot Chat log files (no stat check).
+
+    The caller is responsible for verifying that *candidate* is a readable
+    directory before calling this function.  Results are returned in
+    arbitrary filesystem order; callers should sort if deterministic output
+    is required.
+    """
+    return list(candidate.glob(_GLOB_PATTERN))
+
+
 def _glob_candidate(candidate: Path) -> list[Path]:
-    """Glob *candidate* for Copilot Chat log files.
+    """Stat + glob *candidate* for Copilot Chat log files.
 
     Returns an empty list if *candidate* is not a directory or is unreadable.
-    Logs a debug message on ``OSError``.
+    Logs a debug message on ``OSError``.  Results are returned unsorted;
+    callers should sort if deterministic output is required.
     """
     try:
         st = candidate.stat()
@@ -210,7 +222,7 @@ def _glob_candidate(candidate: Path) -> list[Path]:
     if not stat.S_ISDIR(st.st_mode):
         logger.debug("VS Code logs directory not found: {}", candidate)
         return []
-    return sorted(candidate.glob(_GLOB_PATTERN))
+    return _glob_logs(candidate)
 
 
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
@@ -231,6 +243,7 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     """
     if base_path is not None:
         logs = _glob_candidate(base_path)
+        logs.sort()
         logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
         return logs
 
@@ -320,10 +333,12 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
             # Root + sentinel child unchanged — reuse cached log paths.
             result.extend(cached.log_paths)
             continue
-        # Cache miss or root/sentinel changed — scan children and run glob
+        # Cache miss or root/sentinel changed — scan children and run glob.
+        # *candidate* is already verified as an existing directory above,
+        # so call _glob_logs directly to avoid a redundant stat().
         child_ids = _scan_child_ids(candidate)
         newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
-        found = _glob_candidate(candidate)
+        found = _glob_logs(candidate)
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id,
             child_ids=child_ids,
