@@ -1,6 +1,6 @@
 """CLI entry-point for copilot-usage.
 
-Provides ``summary``, ``session``, ``cost``, and ``live`` commands,
+Provides ``summary``, ``session``, ``cost``, ``live``, and ``vscode`` commands,
 plus an interactive Rich-based session when invoked without a subcommand.
 """
 

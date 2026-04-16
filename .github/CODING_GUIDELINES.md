@@ -21,7 +21,8 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 ### No Runtime Type Interrogation
 
 - **No `getattr` / `hasattr`.** Access attributes directly through typed
-  references.
+  references.  `getattr`/`hasattr` are allowed in tests for introspection
+  (e.g., checking module exports or verifying field absence).
 - **No `isinstance` checks in business logic.** Use static typing and data
   models instead.  `isinstance` is allowed at I/O boundaries when coercing
   untyped external data (e.g., JSON values) into typed models.
