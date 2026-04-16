@@ -44,8 +44,10 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 - In `dataclasses.field`, use `default_factory=lambda: []` (not
   `default_factory=list`) for mutable defaults — this avoids a known pyright
   false-positive.
-- In Pydantic `Field`, `default_factory=list` is fine — Pydantic handles
-  the typing correctly.
+- In Pydantic `Field`, `default_factory=list` is fine for simple element types
+  (e.g. `list[str]`). For complex generics (e.g. `list[ToolRequest]`,
+  `list[tuple[datetime | None, ...]]`), use `default_factory=lambda: []` —
+  pyright cannot infer the type from bare `list` in these cases.
 
 ## Naming and Structure
 
