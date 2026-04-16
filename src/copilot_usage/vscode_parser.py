@@ -122,7 +122,7 @@ _GLOB_PATTERN: Final[str] = (
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _VSCodeDiscoveryCache:
     """Cached result of discover_vscode_logs for a given root directory.
 

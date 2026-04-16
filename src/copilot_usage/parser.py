@@ -148,7 +148,7 @@ _EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
 _config_file_id: tuple[int, int] | None = None
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _SortedSessionsCache:
     """Cached sorted result from ``get_all_sessions``.
 
