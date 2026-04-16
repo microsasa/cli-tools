@@ -157,12 +157,27 @@ def _cached_lookup(normalized: str) -> tuple[ModelPricing, bool]:
     # 2. Partial (longest matching key wins to avoid false positives)
     best: ModelPricing | None = None
     best_len = 0
+    tied = False
     for key, pricing in KNOWN_PRICING.items():
         if normalized.startswith(key) or key.startswith(normalized):
             match_len = min(len(key), len(normalized))
             if match_len > best_len:
                 best = pricing
                 best_len = match_len
+                tied = False
+            elif match_len == best_len and pricing is not best:
+                tied = True
+
+    if tied:
+        logger.warning(
+            "Ambiguous partial match for '{}' (multiple keys at length {}); "
+            "falling back to unknown-model pricing.",
+            normalized,
+            best_len,
+        )
+        return ModelPricing(
+            model_name=normalized, multiplier=1.0, tier=PricingTier.STANDARD
+        ), False  # warning already emitted above; don't duplicate in caller
 
     if best is not None:
         return ModelPricing(

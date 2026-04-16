@@ -269,7 +269,7 @@ class AssistantMessageData(BaseModel):
 
     reasoningText: str | None = None
     reasoningOpaque: str | None = None
-    toolRequests: list[ToolRequest] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType] - Pydantic infers the generic at runtime
+    toolRequests: list[ToolRequest] = Field(default_factory=lambda: [])
 
 
 class SessionShutdownData(BaseModel):
@@ -434,8 +434,8 @@ class SessionSummary(BaseModel):
 
     # Per-cycle shutdown data: (timestamp, parsed shutdown payload).
     # Populated at build time so renderers never re-scan the event list.
-    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = Field(  # pyright: ignore[reportUnknownVariableType] - Pydantic infers the generic at runtime
-        default_factory=list
+    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = Field(
+        default_factory=lambda: []
     )
 
     # Post-shutdown activity (only populated for resumed/active sessions)

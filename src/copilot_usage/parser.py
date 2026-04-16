@@ -826,7 +826,10 @@ def _build_completed_summary(
             else:
                 merged_metrics[model_name] = copy_model_metrics(mm)
         shutdown_cycles.append(
-            (events[idx].timestamp if idx < len(events) else None, sd)
+            (
+                events[idx].timestamp,
+                sd,
+            )
         )
 
     return SessionSummary(

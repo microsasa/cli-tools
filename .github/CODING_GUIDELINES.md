@@ -21,7 +21,8 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 ### No Runtime Type Interrogation
 
 - **No `getattr` / `hasattr`.** Access attributes directly through typed
-  references.
+  references.  `getattr`/`hasattr` are allowed in tests for introspection
+  (e.g., checking module exports or verifying field absence).
 - **No `isinstance` checks in business logic.** Use static typing and data
   models instead.  `isinstance` is allowed at I/O boundaries when coercing
   untyped external data (e.g., JSON values) into typed models.
@@ -44,8 +45,10 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 - In `dataclasses.field`, use `default_factory=lambda: []` (not
   `default_factory=list`) for mutable defaults — this avoids a known pyright
   false-positive.
-- In Pydantic `Field`, `default_factory=list` is fine — Pydantic handles
-  the typing correctly.
+- In Pydantic `Field`, `default_factory=list` is fine for simple element types
+  (e.g. `list[str]`). For complex generics (e.g. `list[ToolRequest]`,
+  `list[tuple[datetime | None, ...]]`), use `default_factory=lambda: []` —
+  pyright cannot infer the type from bare `list` in these cases.
 
 ## Naming and Structure
 
@@ -53,8 +56,8 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - Private helpers that serve a single public function live in the same module,
   prefixed with `_`.
-- When a module grows beyond ~250 lines or serves multiple public consumers,
-  extract a `_<name>.py` private module.
+- When a module serves multiple unrelated public consumers or mixes
+  distinct concerns, extract a `_<name>.py` private module.
 
 ### Import Conventions
 
@@ -99,12 +102,6 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - **ruff format** with double quotes, 88-char line length, space indentation.
 - Do not fight the formatter — let it own all whitespace decisions.
-
-## Defensive Programming
-
-- Guard clauses at the top of helper functions are acceptable even if currently
-  unreachable, as long as they make the function self-contained and safe to
-  call from future call sites.
 
 ## Verification Before Merge
 
