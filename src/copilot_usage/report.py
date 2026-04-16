@@ -679,9 +679,11 @@ def render_cost_view(
         else:
             model_calls_display = str(s.model_calls)
 
+        session_output = 0
         if s.model_metrics:
             for model_name in sorted(s.model_metrics):
                 mm = s.model_metrics[model_name]
+                session_output += mm.usage.outputTokens
                 table.add_row(
                     name,
                     model_name,
@@ -695,6 +697,9 @@ def render_cost_view(
                 # Only show session-level info once
                 name = ""
                 model_calls_display = ""
+            # For resumed sessions add post-shutdown active tokens
+            if has_active_period_stats(s) and s.has_shutdown_metrics:
+                session_output += s.active_output_tokens
         else:
             session_output = total_output_tokens(s)
             table.add_row(
@@ -706,7 +711,7 @@ def render_cost_view(
                 format_tokens(session_output) if session_output else "—",
             )
 
-        grand_output += total_output_tokens(s)
+        grand_output += session_output
         grand_model_calls += s.model_calls
 
         # For active sessions, append a shutdown-relative summary row only

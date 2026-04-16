@@ -6148,3 +6148,200 @@ class TestHistoricalSessionTableShutdownOnlyCounts:
         assert active_cols[4] == "40", (
             f"Active User Msgs: expected '40', got '{active_cols[4]}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #948 — render_cost_view must not call total_output_tokens redundantly
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewNoRedundantTotalOutputTokens:
+    """Issue #948 — eliminate redundant total_output_tokens calls."""
+
+    def test_grand_total_matches_expected_for_mixed_sessions(self) -> None:
+        """Grand-total output tokens equals sum(total_output_tokens(s))
+        for a mix of sessions with/without model_metrics, including
+        resumed sessions where has_active_period_stats is True."""
+        # Session with model_metrics (Case 2 in the issue)
+        with_metrics = SessionSummary(
+            session_id="mix-with-metrics-948",
+            name="With Metrics",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            model_calls=8,
+            user_messages=4,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=1000),
+                ),
+                "gpt-4o": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=6),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+
+        # Session without model_metrics (Case 1 in the issue)
+        without_metrics = SessionSummary(
+            session_id="mix-no-metrics-948",
+            name="No Metrics",
+            model=None,
+            start_time=datetime(2025, 6, 2, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=700,
+            model_metrics={},
+        )
+
+        # Resumed session with model_metrics and active period stats
+        resumed = SessionSummary(
+            session_id="mix-resumed-948",
+            name="Resumed",
+            model="gpt-4",
+            start_time=datetime(2025, 6, 3, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime(2025, 6, 3, 12, 0, tzinfo=UTC),
+            model_calls=12,
+            user_messages=6,
+            active_output_tokens=300,
+            active_model_calls=4,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=8, cost=16),
+                    usage=TokenUsage(outputTokens=800),
+                ),
+            },
+        )
+
+        sessions = [resumed, without_metrics, with_metrics]
+        expected_total = sum(total_output_tokens(s) for s in sessions)
+
+        output = _capture_cost_view(sessions)
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        actual = grand_cols[6]
+        assert actual == format_tokens(expected_total), (
+            f"Grand Total output tokens: expected {format_tokens(expected_total)}, "
+            f"got '{actual}'"
+        )
+
+    def test_total_output_tokens_not_called_for_model_metrics_sessions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """total_output_tokens must not be called for sessions where the
+        per-model loop already accumulates the total (model_metrics present)."""
+        # Session with model_metrics — total_output_tokens should NOT be called
+        with_metrics = SessionSummary(
+            session_id="spy-with-metrics-948",
+            name="Spy With Metrics",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            model_calls=5,
+            user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=800),
+                ),
+            },
+        )
+
+        # Session without model_metrics — called at most once
+        without_metrics = SessionSummary(
+            session_id="spy-no-metrics-948",
+            name="Spy No Metrics",
+            model=None,
+            start_time=datetime(2025, 7, 2, 10, 0, tzinfo=UTC),
+            is_active=True,
+            model_calls=2,
+            active_model_calls=2,
+            active_output_tokens=300,
+            model_metrics={},
+        )
+
+        call_log: list[str] = []
+        original_fn = total_output_tokens
+
+        def spy(session: SessionSummary) -> int:
+            call_log.append(session.session_id)
+            return original_fn(session)
+
+        monkeypatch.setattr("copilot_usage.report.total_output_tokens", spy)
+
+        _capture_cost_view([without_metrics, with_metrics])
+
+        # total_output_tokens must NOT be called for the model_metrics session
+        assert "spy-with-metrics-948" not in call_log, (
+            "total_output_tokens should not be called for sessions with model_metrics"
+        )
+
+        # total_output_tokens called at most once for the no-metrics session
+        no_metrics_calls = call_log.count("spy-no-metrics-948")
+        assert no_metrics_calls == 1, (
+            f"total_output_tokens called {no_metrics_calls} times for "
+            f"no-model-metrics session; expected exactly 1"
+        )
+
+    def test_resumed_session_with_metrics_no_redundant_call(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """For a resumed session with model_metrics, total_output_tokens
+        must not be called — the per-model loop plus active_output_tokens
+        is used instead."""
+        resumed = SessionSummary(
+            session_id="spy-resumed-948",
+            name="Spy Resumed",
+            model="gpt-4",
+            start_time=datetime(2025, 7, 3, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime(2025, 7, 3, 12, 0, tzinfo=UTC),
+            model_calls=10,
+            user_messages=5,
+            active_output_tokens=250,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=14),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+            },
+        )
+
+        call_log: list[str] = []
+        original_fn = total_output_tokens
+
+        def spy(session: SessionSummary) -> int:
+            call_log.append(session.session_id)
+            return original_fn(session)
+
+        monkeypatch.setattr("copilot_usage.report.total_output_tokens", spy)
+
+        output = _capture_cost_view([resumed])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # Verify correctness: 500 (shutdown) + 250 (active) = 750
+        expected = format_tokens(750)
+        lines = clean.splitlines()
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[6] == expected, (
+            f"Grand Total output tokens: expected {expected}, got '{grand_cols[6]}'"
+        )
+
+        # Verify no redundant call
+        assert "spy-resumed-948" not in call_log, (
+            "total_output_tokens should not be called for resumed sessions "
+            "with model_metrics"
+        )
