@@ -24,6 +24,7 @@ from copilot_usage.vscode_parser import (
     _cached_discover_vscode_logs,  # pyright: ignore[reportPrivateUsage]
     _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
     _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
+    _glob_candidate,  # pyright: ignore[reportPrivateUsage]
     _merge_partial,  # pyright: ignore[reportPrivateUsage]
     _scan_child_ids,  # pyright: ignore[reportPrivateUsage]
     _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
@@ -339,35 +340,35 @@ class TestDiscoverVscodeLogs:
     def test_default_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
-        with patch.object(Path, "is_dir", return_value=False):
-            result = discover_vscode_logs()
+        result = discover_vscode_logs()
         assert result == []
 
     def test_default_windows_no_appdata(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Windows without APPDATA uses the home-relative fallback path."""
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", "")  # empty → falsy
-        with patch.object(
-            Path, "is_dir", autospec=True, return_value=False
-        ) as mock_is_dir:
-            result = discover_vscode_logs()
-        mock_is_dir.assert_any_call(
-            Path.home() / "AppData" / "Roaming" / "Code" / "logs"
-        )
+
+        glob_calls: list[Path] = []
+
+        def _track(candidate: Path) -> list[Path]:
+            glob_calls.append(candidate)
+            return []
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_candidate", _track)
+        result = discover_vscode_logs()
+        assert Path.home() / "AppData" / "Roaming" / "Code" / "logs" in glob_calls
         assert result == []
 
     def test_default_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "darwin")
         monkeypatch.delenv("APPDATA", raising=False)
-        with patch.object(Path, "is_dir", return_value=False):
-            result = discover_vscode_logs()
+        result = discover_vscode_logs()
         assert result == []
 
     def test_default_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
         monkeypatch.delenv("APPDATA", raising=False)
-        with patch.object(Path, "is_dir", return_value=False):
-            result = discover_vscode_logs()
+        result = discover_vscode_logs()
         assert result == []
 
     # -- Insiders default discovery -----------------------------------------
@@ -2337,6 +2338,133 @@ class TestCachedDiscoverSkipsChildScanOnHit:
         monkeypatch.setattr(_mod, "_scan_child_ids", spy)
         _cached_discover_vscode_logs(tmp_path)
         assert scan_calls == [], "child scan must be skipped on root_id cache hit"
+
+
+# ---------------------------------------------------------------------------
+# _glob_candidate — unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestGlobCandidate:
+    """Tests for the shared _glob_candidate helper."""
+
+    def test_nonexistent_path_returns_empty(self, tmp_path: Path) -> None:
+        """A path that does not exist returns an empty list."""
+        missing = tmp_path / "no_such_dir"
+        assert _glob_candidate(missing) == []
+
+    def test_file_not_dir_returns_empty(self, tmp_path: Path) -> None:
+        """A regular file (not a directory) returns an empty list."""
+        regular_file = tmp_path / "not_a_dir"
+        regular_file.write_text("hello")
+        assert _glob_candidate(regular_file) == []
+
+    def test_empty_dir_returns_empty(self, tmp_path: Path) -> None:
+        """A directory with no matching log files returns an empty list."""
+        assert _glob_candidate(tmp_path) == []
+
+    def test_finds_matching_logs(self, tmp_path: Path) -> None:
+        """Returns sorted log paths when matching files exist."""
+        log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        result = _glob_candidate(tmp_path)
+        assert result == [log_file]
+
+    def test_oserror_logs_debug(self, tmp_path: Path) -> None:
+        """An OSError on stat() produces a debug log message."""
+        missing = tmp_path / "gone"
+        messages: list[str] = []
+
+        def _sink(message: object) -> None:
+            messages.append(str(message))
+
+        handler_id = logger.add(_sink, level="DEBUG")
+        try:
+            _glob_candidate(missing)
+        finally:
+            logger.remove(handler_id)
+        assert any("Skipping VS Code logs candidate" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# discover_vscode_logs — debug log on OSError (parity with cached path)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverVscodeLogsOsError:
+    """Verify discover_vscode_logs emits debug logs on stat failure."""
+
+    def test_missing_basepath_logs_debug(self, tmp_path: Path) -> None:
+        """A non-existent base_path emits a debug log via _glob_candidate."""
+        missing = tmp_path / "vanished"
+        messages: list[str] = []
+
+        def _sink(message: object) -> None:
+            messages.append(str(message))
+
+        handler_id = logger.add(_sink, level="DEBUG")
+        try:
+            result = discover_vscode_logs(missing)
+        finally:
+            logger.remove(handler_id)
+        assert result == []
+        assert any("Skipping VS Code logs candidate" in m for m in messages)
+
+    def test_candidate_oserror_logs_debug(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default candidates that raise OSError produce debug log output."""
+        monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
+        monkeypatch.delenv("APPDATA", raising=False)
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        messages: list[str] = []
+
+        def _sink(message: object) -> None:
+            messages.append(str(message))
+
+        handler_id = logger.add(_sink, level="DEBUG")
+        try:
+            result = discover_vscode_logs()
+        finally:
+            logger.remove(handler_id)
+        assert result == []
+        assert any("Skipping VS Code logs candidate" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Equivalence: discover_vscode_logs vs _cached_discover_vscode_logs
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverEquivalence:
+    """Both discovery functions return identical results for the same input."""
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        """Both return [] for an empty directory."""
+        assert discover_vscode_logs(tmp_path) == _cached_discover_vscode_logs(tmp_path)
+
+    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+        """Both return [] for a non-existent path."""
+        missing = tmp_path / "does_not_exist"
+        assert discover_vscode_logs(missing) == _cached_discover_vscode_logs(missing)
+
+    def test_with_log_files(self, tmp_path: Path) -> None:
+        """Both return the same sorted paths when log files exist."""
+        for session in ("20260313", "20260314"):
+            log_dir = tmp_path / session / "window1" / "exthost" / "GitHub.copilot-chat"
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=0), encoding="utf-8"
+            )
+        public = discover_vscode_logs(tmp_path)
+        cached = _cached_discover_vscode_logs(tmp_path)
+        assert public == cached
+        assert len(public) == 2
 
 
 # ---------------------------------------------------------------------------

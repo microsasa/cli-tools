@@ -196,6 +196,23 @@ def _default_log_candidates() -> list[Path]:
     return [root / d / "logs" for d in code_dirs]
 
 
+def _glob_candidate(candidate: Path) -> list[Path]:
+    """Glob *candidate* for Copilot Chat log files.
+
+    Returns an empty list if *candidate* is not a directory or is unreadable.
+    Logs a debug message on ``OSError``.
+    """
+    try:
+        st = candidate.stat()
+    except OSError as exc:
+        logger.debug("Skipping VS Code logs candidate {}: {}", candidate, exc)
+        return []
+    if not stat.S_ISDIR(st.st_mode):
+        logger.debug("VS Code logs directory not found: {}", candidate)
+        return []
+    return sorted(candidate.glob(_GLOB_PATTERN))
+
+
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     """Find all VS Code Copilot Chat log files.
 
@@ -213,20 +230,14 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     When both exist, files from both are returned and sorted together.
     """
     if base_path is not None:
-        if not base_path.is_dir():
-            logger.debug("VS Code logs directory not found: {}", base_path)
-            return []
-        logs = sorted(base_path.glob(_GLOB_PATTERN))
+        logs = _glob_candidate(base_path)
         logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
         return logs
 
     candidates = _default_log_candidates()
     all_logs: list[Path] = []
     for candidate in candidates:
-        if not candidate.is_dir():
-            logger.debug("VS Code logs directory not found: {}", candidate)
-            continue
-        all_logs.extend(candidate.glob(_GLOB_PATTERN))
+        all_logs.extend(_glob_candidate(candidate))
     all_logs.sort()
     logger.debug(
         "Discovered {} VS Code log file(s) across {} candidate(s)",
@@ -312,7 +323,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
         # Cache miss or root/sentinel changed — scan children and run glob
         child_ids = _scan_child_ids(candidate)
         newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
-        found = sorted(candidate.glob(_GLOB_PATTERN))
+        found = _glob_candidate(candidate)
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id,
             child_ids=child_ids,
