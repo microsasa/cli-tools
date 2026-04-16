@@ -1921,10 +1921,9 @@ class TestMergePartialTimestamps:
 
     def test_empty_partial_leaves_accumulator_timestamps_unchanged(self) -> None:
         """Merging a partial with None timestamps must not reset the accumulator."""
-        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
-            first_timestamp=datetime(2026, 3, 13, 10, 0, 0),
-            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
-        )
+        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc.first_timestamp = datetime(2026, 3, 13, 10, 0, 0)
+        acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         empty_partial = VSCodeLogSummary()  # timestamps default to None
         _merge_partial(acc, empty_partial)  # pyright: ignore[reportPrivateUsage]
         assert acc.first_timestamp == datetime(2026, 3, 13, 10, 0, 0)
@@ -1943,10 +1942,9 @@ class TestMergePartialTimestamps:
 
     def test_older_partial_updates_first_timestamp(self) -> None:
         """A partial with an earlier first_timestamp should update the accumulator."""
-        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
-            first_timestamp=datetime(2026, 3, 14, 10, 0, 0),
-            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
-        )
+        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc.first_timestamp = datetime(2026, 3, 14, 10, 0, 0)
+        acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         older = VSCodeLogSummary(
             first_timestamp=datetime(2026, 3, 13, 8, 0, 0),
             last_timestamp=datetime(2026, 3, 13, 12, 0, 0),
@@ -1958,10 +1956,9 @@ class TestMergePartialTimestamps:
 
     def test_newer_partial_does_not_update_first_timestamp(self) -> None:
         """A partial newer than the accumulator must not alter first_timestamp."""
-        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
-            first_timestamp=datetime(2026, 3, 13, 8, 0, 0),
-            last_timestamp=datetime(2026, 3, 14, 18, 0, 0),
-        )
+        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc.first_timestamp = datetime(2026, 3, 13, 8, 0, 0)
+        acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         newer = VSCodeLogSummary(
             first_timestamp=datetime(2026, 3, 15, 10, 0, 0),
             last_timestamp=datetime(2026, 3, 15, 20, 0, 0),
@@ -1973,10 +1970,9 @@ class TestMergePartialTimestamps:
 
     def test_counters_are_additive_not_replaced(self) -> None:
         """Counter dicts must be summed, not overwritten, by _merge_partial."""
-        acc = _SummaryAccumulator(  # pyright: ignore[reportPrivateUsage]
-            total_requests=10,
-            total_duration_ms=5000,
-        )
+        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc.total_requests = 10
+        acc.total_duration_ms = 5000
         acc.requests_by_model["gpt-4o"] += 5
         acc.duration_by_model["gpt-4o"] += 3000
         acc.requests_by_category["panel"] += 4
@@ -2453,3 +2449,13 @@ class TestVSCodeDiscoveryCacheIsFrozen:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             cache.root_id = (1, 1)  # type: ignore[misc]
+
+
+class TestSummaryAccumulatorIsNotDataclass:
+    """_SummaryAccumulator must be a plain class, not a dataclass."""
+
+    def test_not_a_dataclass(self) -> None:
+        """Verify _SummaryAccumulator is not decorated with @dataclass."""
+        assert not dataclasses.is_dataclass(
+            _SummaryAccumulator  # pyright: ignore[reportPrivateUsage]
+        )

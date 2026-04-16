@@ -465,28 +465,38 @@ def _get_cached_vscode_requests(
     return requests
 
 
-@dataclass(slots=True)
 class _SummaryAccumulator:
     """Mutable accumulator for incremental VSCodeLogSummary construction."""
 
-    total_requests: int = 0
-    total_duration_ms: int = 0
-    requests_by_model: defaultdict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
+    __slots__ = (
+        "total_requests",
+        "total_duration_ms",
+        "requests_by_model",
+        "duration_by_model",
+        "requests_by_category",
+        "requests_by_date",
+        "first_timestamp",
+        "last_timestamp",
+        "log_files_parsed",
+        "log_files_found",
     )
-    duration_by_model: defaultdict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
-    requests_by_category: defaultdict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
-    requests_by_date: defaultdict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
-    first_timestamp: datetime | None = None
-    last_timestamp: datetime | None = None
-    log_files_parsed: int = 0
-    log_files_found: int = 0
+
+    def __init__(
+        self,
+        *,
+        log_files_parsed: int = 0,
+        log_files_found: int = 0,
+    ) -> None:
+        self.total_requests: int = 0
+        self.total_duration_ms: int = 0
+        self.requests_by_model: defaultdict[str, int] = defaultdict(int)
+        self.duration_by_model: defaultdict[str, int] = defaultdict(int)
+        self.requests_by_category: defaultdict[str, int] = defaultdict(int)
+        self.requests_by_date: defaultdict[str, int] = defaultdict(int)
+        self.first_timestamp: datetime | None = None
+        self.last_timestamp: datetime | None = None
+        self.log_files_parsed: int = log_files_parsed
+        self.log_files_found: int = log_files_found
 
 
 def _update_vscode_summary(
