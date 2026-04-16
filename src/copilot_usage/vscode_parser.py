@@ -248,7 +248,10 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
     if base_path is not None:
         logs = _glob_candidate(base_path)
         logs.sort()
-        logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
+        if logs:
+            logger.debug(
+                "Discovered {} VS Code log file(s) under {}", len(logs), base_path
+            )
         return logs
 
     candidates = _default_log_candidates()
