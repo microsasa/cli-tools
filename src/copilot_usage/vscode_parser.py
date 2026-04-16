@@ -199,10 +199,12 @@ def _default_log_candidates() -> list[Path]:
 def _glob_logs(candidate: Path) -> list[Path]:
     """Glob *candidate* for Copilot Chat log files (no stat check).
 
-    The caller is responsible for verifying that *candidate* is a readable
-    directory before calling this function.  Results are returned in
-    arbitrary filesystem order; callers should sort if deterministic output
-    is required.
+    The caller is responsible for passing an existing directory, typically
+    one that has already been stat'd by the caller. ``Path.glob()`` may
+    still raise ``OSError`` if the directory cannot be traversed, so callers
+    that need graceful handling should catch that exception. Results are
+    returned in arbitrary filesystem order; callers should sort if
+    deterministic output is required.
     """
     return list(candidate.glob(_GLOB_PATTERN))
 
