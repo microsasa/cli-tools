@@ -82,7 +82,7 @@ def render_vscode_summary(
                 model,
                 pricing.tier.value,
                 f"{count:,}",
-                f"{avg_ms:,}ms",
+                format_duration(avg_ms),
                 format_duration(total_ms),
             )
 

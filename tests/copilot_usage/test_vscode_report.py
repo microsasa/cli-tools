@@ -159,7 +159,7 @@ class TestRenderVscodeSummaryPerModelTable:
             duration_by_model={"gpt-4o-mini": 2000},
         )
         output = _capture(summary)
-        # avg_ms = 2000 // 4 = 500
+        # avg_ms = 2000 // 4 = 500; format_duration(500) also returns "500ms"
         assert "500ms" in output
 
     def test_avg_ms_division_by_zero_guard(self) -> None:
@@ -221,6 +221,30 @@ class TestRenderVscodeSummaryPerModelTable:
         assert gpt_line.count("500ms") == 2
         # claude-opus-4.6 has no duration entry → 0ms avg and 0ms total
         assert opus_line.count("0ms") == 2
+
+    def test_avg_duration_over_one_minute_formatted_human_readable(self) -> None:
+        """Avg ≥ 60 000 ms renders as human-readable (e.g. '1m'), not raw ms."""
+        summary = _make_summary(
+            total_requests=2,
+            requests_by_model={"gpt-4o-mini": 2},
+            duration_by_model={"gpt-4o-mini": 120_000},
+        )
+        output = _capture(summary)
+        # avg_ms = 120_000 // 2 = 60_000 → format_duration → "1m"
+        assert "1m" in output
+        assert "60,000ms" not in output
+
+    def test_avg_duration_seconds_range_formatted(self) -> None:
+        """Avg in the seconds range renders as e.g. '5s', not raw '5,000ms'."""
+        summary = _make_summary(
+            total_requests=2,
+            requests_by_model={"gpt-4o-mini": 2},
+            duration_by_model={"gpt-4o-mini": 10_000},
+        )
+        output = _capture(summary)
+        # avg_ms = 10_000 // 2 = 5_000 → format_duration → "5s"
+        assert "5s" in output
+        assert "5,000ms" not in output
 
     def test_empty_requests_by_model_table_absent(self) -> None:
         summary = _make_summary(total_requests=5, requests_by_model={})
