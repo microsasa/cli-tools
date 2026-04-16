@@ -2301,6 +2301,32 @@ class TestCachedDiscoverOsErrors:
         assert result == []
         assert missing not in _VSCODE_DISCOVERY_CACHE
 
+    def test_glob_oserror_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A glob OSError after successful stat skips the candidate."""
+        existing_dir = tmp_path / "logs"
+        existing_dir.mkdir()
+
+        def _raise(_candidate: Path) -> list[Path]:
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_logs", _raise)
+
+        messages: list[str] = []
+
+        def _sink(message: object) -> None:
+            messages.append(str(message))
+
+        handler_id = logger.add(_sink, level="DEBUG")
+        try:
+            result = _cached_discover_vscode_logs(existing_dir)
+        finally:
+            logger.remove(handler_id)
+        assert result == []
+        assert existing_dir not in _VSCODE_DISCOVERY_CACHE
+        assert any("glob failed" in m for m in messages)
+
 
 class TestCachedDiscoverSkipsChildScanOnHit:
     """Verify _scan_child_ids is not called on root_id + sentinel cache hits.
@@ -2372,7 +2398,7 @@ class TestGlobCandidate:
         result = _glob_candidate(tmp_path)
         assert result == [log_file]
 
-    def test_oserror_logs_debug(self, tmp_path: Path) -> None:
+    def test_oserror_on_stat_logs_debug(self, tmp_path: Path) -> None:
         """An OSError on stat() produces a debug log message."""
         missing = tmp_path / "gone"
         messages: list[str] = []
@@ -2385,6 +2411,31 @@ class TestGlobCandidate:
             _glob_candidate(missing)
         finally:
             logger.remove(handler_id)
+        assert any("Skipping VS Code logs candidate" in m for m in messages)
+
+    def test_oserror_on_glob_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError during glob() returns [] and logs a debug message."""
+        existing_dir = tmp_path / "logs"
+        existing_dir.mkdir()
+
+        def _raise(_candidate: Path) -> list[Path]:
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_logs", _raise)
+
+        messages: list[str] = []
+
+        def _sink(message: object) -> None:
+            messages.append(str(message))
+
+        handler_id = logger.add(_sink, level="DEBUG")
+        try:
+            result = _glob_candidate(existing_dir)
+        finally:
+            logger.remove(handler_id)
+        assert result == []
         assert any("Skipping VS Code logs candidate" in m for m in messages)
 
 

@@ -222,7 +222,11 @@ def _glob_candidate(candidate: Path) -> list[Path]:
     if not stat.S_ISDIR(st.st_mode):
         logger.debug("VS Code logs directory not found: {}", candidate)
         return []
-    return _glob_logs(candidate)
+    try:
+        return _glob_logs(candidate)
+    except OSError as exc:
+        logger.debug("Skipping VS Code logs candidate {}: {}", candidate, exc)
+        return []
 
 
 def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
@@ -338,7 +342,15 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
         # so call _glob_logs directly to avoid a redundant stat().
         child_ids = _scan_child_ids(candidate)
         newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
-        found = _glob_logs(candidate)
+        try:
+            found = _glob_logs(candidate)
+        except OSError as exc:
+            logger.debug(
+                "Skipping VS Code logs candidate {}: glob failed: {}",
+                candidate,
+                exc,
+            )
+            continue
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id,
             child_ids=child_ids,
