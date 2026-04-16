@@ -159,25 +159,18 @@ class TestLookupModelPricing:
 
 
 class TestPartialMatchTieBreaking:
-    def test_multiple_partial_candidates_same_length_deterministic(
+    def test_multiple_partial_candidates_same_length_falls_back(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When several keys share the same overlap length, the first-inserted
-        matching key in KNOWN_PRICING wins (because the loop uses strict ``>``).
-
-        This test uses a small, purpose-built KNOWN_PRICING mapping so it does
-        not depend on the production registry's contents or insertion order.
+        """When several keys share the same overlap length, the lookup falls
+        back to unknown-model pricing and logs a warning.
 
         ``"gpt-5.1-cod"`` (11 chars) matches:
           - ``"gpt-5.1-codex"``      → match_len = min(13, 11) = 11
           - ``"gpt-5.1-codex-max"``  → match_len = min(17, 11) = 11
           - ``"gpt-5.1-codex-mini"`` → match_len = min(18, 11) = 11
 
-        All three share the same overlap; the first one in iteration order
-        (``gpt-5.1-codex``, multiplier 1.0) is selected. Because
-        ``gpt-5.1-codex-mini`` has a *different* multiplier/tier, we can
-        verify the tiebreak did not pick a later candidate with divergent
-        pricing.
+        All three share the same overlap — ambiguous, so fallback.
         """
         local_pricing = {
             "gpt-5.1-codex": ModelPricing(
@@ -199,20 +192,23 @@ class TestPartialMatchTieBreaking:
         monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
         _cached_lookup.cache_clear()
 
-        p = lookup_model_pricing("gpt-5.1-cod")
-        expected = local_pricing["gpt-5.1-codex"]
-        # lookup_model_pricing returns the *queried* name, not the matched key
-        assert p.model_name == "gpt-5.1-cod"
-        assert p.multiplier == expected.multiplier
-        assert p.tier == expected.tier
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            p = lookup_model_pricing("gpt-5.1-cod")
+        finally:
+            logger.remove(sink_id)
 
-    def test_partial_match_does_not_confuse_gpt5_mini_with_gpt5_standard(
+        assert p.model_name == "gpt-5.1-cod"
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert any("Ambiguous partial match" in m for m in messages)
+
+    def test_partial_match_tie_falls_back_to_unknown(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``"gpt-5"`` partially matches multiple ``gpt-5.*`` keys with the
-        same overlap length. Verify the resolved tier is deterministic and
-        matches the first-inserted candidate in ``KNOWN_PRICING`` (strict
-        ``>`` tiebreak) using a small, purpose-built pricing registry.
+        same overlap length. Ties fall back to unknown-model pricing.
         """
         local_pricing = {
             "gpt-5-mini": ModelPricing(
@@ -229,11 +225,17 @@ class TestPartialMatchTieBreaking:
         monkeypatch.setattr("copilot_usage.pricing.KNOWN_PRICING", local_pricing)
         _cached_lookup.cache_clear()
 
-        p = lookup_model_pricing("gpt-5")
-        expected = local_pricing["gpt-5-mini"]
-        # lookup_model_pricing returns the *queried* name, not the matched key
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            p = lookup_model_pricing("gpt-5")
+        finally:
+            logger.remove(sink_id)
+
         assert p.model_name == "gpt-5"
-        assert p.multiplier == expected.multiplier
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert any("Ambiguous partial match" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -244,39 +246,43 @@ class TestPartialMatchTieBreaking:
 class TestLookupModelPricingTieBreaking:
     """Tests for equal-length partial match resolution against the real registry.
 
-    ``lookup_model_pricing`` resolves ties via strict ``>``, so the first
-    matching key in ``_RAW_MULTIPLIERS`` insertion order wins.  These tests
-    document that deterministic behaviour using the production registry.
+    When multiple keys tie on overlap length, the lookup now falls back to
+    unknown-model pricing (1.0×, STANDARD) and logs a warning.
     """
 
-    def test_claude_opus_4_resolves_deterministically(self) -> None:
+    def test_claude_opus_4_falls_back_on_tie(self) -> None:
         """``"claude-opus-4"`` (13 chars) matches ``claude-opus-4.5``,
         ``claude-opus-4.6``, and ``claude-opus-4.6-1m`` all at
-        ``min_len=13``.  The first match in registry order wins.
+        ``min_len=13``.  Ambiguous → falls back to unknown.
         """
-        p = lookup_model_pricing("claude-opus-4")
-        # model_name must be the query, not the matched key
-        assert p.model_name == "claude-opus-4"
-        # First entry among claude-opus-4.* in _RAW_MULTIPLIERS is
-        # claude-opus-4.6 (mult=3.0, tier=PREMIUM)
-        first_key = "claude-opus-4.6"
-        expected = KNOWN_PRICING[first_key]
-        assert p.multiplier == expected.multiplier
-        assert p.tier == expected.tier
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            p = lookup_model_pricing("claude-opus-4")
+        finally:
+            logger.remove(sink_id)
 
-    def test_gpt_5_resolves_deterministically(self) -> None:
+        assert p.model_name == "claude-opus-4"
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert any("Ambiguous partial match" in m for m in messages)
+
+    def test_gpt_5_falls_back_on_tie(self) -> None:
         """``"gpt-5"`` (5 chars) matches ``gpt-5.4``, ``gpt-5.2``,
         ``gpt-5.1``, ``gpt-5-mini``, etc. all at ``min_len=5``.
-        The first match in registry order wins.
+        Ambiguous → falls back to unknown.
         """
-        p = lookup_model_pricing("gpt-5")
-        # model_name must be the query
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            p = lookup_model_pricing("gpt-5")
+        finally:
+            logger.remove(sink_id)
+
         assert p.model_name == "gpt-5"
-        # First gpt-5* key in _RAW_MULTIPLIERS is "gpt-5.4" (mult=1.0)
-        first_key = "gpt-5.4"
-        expected = KNOWN_PRICING[first_key]
-        assert p.multiplier == expected.multiplier
-        assert p.tier == expected.tier
+        assert p.multiplier == 1.0
+        assert p.tier == PricingTier.STANDARD
+        assert any("Ambiguous partial match" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
