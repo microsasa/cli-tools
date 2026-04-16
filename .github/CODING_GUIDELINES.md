@@ -55,8 +55,8 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - Private helpers that serve a single public function live in the same module,
   prefixed with `_`.
-- When a module grows beyond ~250 lines or serves multiple public consumers,
-  extract a `_<name>.py` private module.
+- When a module serves multiple unrelated public consumers or mixes
+  distinct concerns, extract a `_<name>.py` private module.
 
 ### Import Conventions
 
@@ -101,12 +101,6 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
 
 - **ruff format** with double quotes, 88-char line length, space indentation.
 - Do not fight the formatter — let it own all whitespace decisions.
-
-## Defensive Programming
-
-- Guard clauses at the top of helper functions are acceptable even if currently
-  unreachable, as long as they make the function self-contained and safe to
-  call from future call sites.
 
 ## Verification Before Merge
 
