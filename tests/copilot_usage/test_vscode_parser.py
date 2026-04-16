@@ -340,6 +340,11 @@ class TestDiscoverVscodeLogs:
     def test_default_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
+
+        def _no_glob(_candidate: Path) -> list[Path]:
+            return []
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_candidate", _no_glob)
         result = discover_vscode_logs()
         assert result == []
 
@@ -362,12 +367,22 @@ class TestDiscoverVscodeLogs:
     def test_default_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "darwin")
         monkeypatch.delenv("APPDATA", raising=False)
+
+        def _no_glob(_candidate: Path) -> list[Path]:
+            return []
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_candidate", _no_glob)
         result = discover_vscode_logs()
         assert result == []
 
     def test_default_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
         monkeypatch.delenv("APPDATA", raising=False)
+
+        def _no_glob(_candidate: Path) -> list[Path]:
+            return []
+
+        monkeypatch.setattr("copilot_usage.vscode_parser._glob_candidate", _no_glob)
         result = discover_vscode_logs()
         assert result == []
 
