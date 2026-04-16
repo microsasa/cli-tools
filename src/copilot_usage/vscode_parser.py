@@ -290,8 +290,9 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     root ``(st_mtime_ns, st_size)`` *and* same identity of the most
     recently modified child), the stored paths are reused without
     scanning all child directories or running the multi-level glob.
-    On a miss, :func:`_scan_child_ids` runs and the glob executes to
-    repopulate the cache.
+    On a miss, :func:`_scan_child_ids` runs and :func:`_glob_logs` is
+    called directly (not :func:`_glob_candidate`) to repopulate the
+    cache, since the stat check has already been performed.
 
     The root identity check catches session-directory additions/removals
     (child additions update parent mtime on Linux/macOS).  The
