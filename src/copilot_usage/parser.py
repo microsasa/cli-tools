@@ -713,8 +713,6 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 )
                 continue
             current_model = ev.currentModel or data.currentModel
-            if not current_model and data.modelMetrics:
-                current_model = _infer_model_from_metrics(data.modelMetrics)
             _shutdowns.append((idx, data))
             end_time = ev.timestamp
             model = current_model
@@ -850,7 +848,7 @@ def _build_completed_summary(
         end_time=None if resume.session_resumed else fp.end_time,
         name=name,
         cwd=fp.cwd,
-        model=fp.model,
+        model=fp.model or _infer_model_from_metrics(merged_metrics),
         total_premium_requests=total_premium,
         total_api_duration_ms=total_api_duration,
         model_metrics=merged_metrics,
