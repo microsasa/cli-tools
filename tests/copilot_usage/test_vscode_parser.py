@@ -1,5 +1,6 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+import dataclasses
 import os
 import re
 from datetime import datetime
@@ -2436,3 +2437,19 @@ class TestUpdateVscodeSummaryLargeScale:
         assert acc.total_duration_ms == 0
         assert acc.first_timestamp is None
         assert acc.last_timestamp is None
+
+
+class TestVSCodeDiscoveryCacheIsFrozen:
+    """_VSCodeDiscoveryCache must be a frozen dataclass."""
+
+    def test_field_reassignment_raises(self) -> None:
+        """Assigning to a field after construction raises FrozenInstanceError."""
+        cache = _VSCodeDiscoveryCache(
+            root_id=(0, 0),
+            child_ids=frozenset(),
+            newest_child_path=None,
+            newest_child_id=None,
+            log_paths=(),
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cache.root_id = (1, 1)  # type: ignore[misc]

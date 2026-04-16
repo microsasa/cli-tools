@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 import builtins
+import dataclasses
 import io
 import json
 import os
@@ -60,6 +61,7 @@ from copilot_usage.parser import (
     _insert_session_entry,
     _read_config_model,
     _ResumeInfo,
+    _SortedSessionsCache,
     build_session_summary,
     discover_sessions,
     get_all_sessions,
@@ -9283,3 +9285,17 @@ class TestOrphanedTurnStartDoesNotInflateActiveCalls:
 
         assert summary.is_active is False
         assert summary.active_model_calls == 0
+
+
+class TestSortedSessionsCacheIsFrozen:
+    """_SortedSessionsCache must be a frozen dataclass."""
+
+    def test_field_reassignment_raises(self) -> None:
+        """Assigning to a field after construction raises FrozenInstanceError."""
+        cache = _SortedSessionsCache(
+            root=Path("sessions"),
+            fingerprint=frozenset(),
+            summaries=[],
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cache.root = Path("/other")  # type: ignore[misc]
