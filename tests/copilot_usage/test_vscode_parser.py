@@ -2917,8 +2917,8 @@ class TestUpdateVscodeSummarySameDateNoDateAlloc:
     """Verify the date-bucketing fast path avoids per-iteration ``date()`` calls.
 
     All requests share the same calendar day so only one date key should
-    appear and ``datetime.date()`` should be called at most once (for the
-    first distinct date boundary).
+    appear and ``datetime.date()`` should not be called at all under the
+    ymd-tuple optimisation.
     """
 
     @staticmethod
