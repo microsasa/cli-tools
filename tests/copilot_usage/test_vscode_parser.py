@@ -2349,6 +2349,12 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             paths1 = _cached_discover_vscode_logs(tmp_path)
             assert glob_call_count == 1
             assert len(paths1) == 2
+            cache_entry = _VSCODE_DISCOVERY_CACHE.get(tmp_path)
+            assert cache_entry is not None
+            assert cache_entry.newest_child_path is not None
+            assert safe_file_identity(
+                cache_entry.newest_child_path
+            ) == safe_file_identity(newer_session)
 
             # Add a new window under the older (non-sentinel) session.
             new_log_dir = older_session / "window2" / "exthost" / "GitHub.copilot-chat"
@@ -2366,10 +2372,12 @@ class TestVscodeDiscoveryCacheSkipsGlob:
     def test_sentinel_deletion_triggers_rediscovery(self, tmp_path: Path) -> None:
         """Removing the sentinel session directory triggers a re-glob.
 
-        When the sentinel (newest child at cache-population time) is deleted,
-        ``safe_file_identity`` returns ``None`` which differs from the stored
-        ``newest_child_id`` tuple, causing the cache-hit condition to fail
-        and forcing a full re-glob that discovers only the remaining logs.
+        Deleting the sentinel directory makes ``safe_file_identity`` return
+        ``None`` which differs from the stored ``newest_child_id`` tuple.
+        To isolate this sentinel-based invalidation from the root-identity
+        change caused by ``rmtree`` (which updates ``tmp_path`` mtime), the
+        cached ``root_id`` is patched to the post-deletion stat so the
+        sentinel check is the actual invalidation mechanism under test.
         """
         import shutil
 
@@ -2411,8 +2419,17 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             shutil.rmtree(newer_session)
             assert safe_file_identity(newer_session) is None
 
+            # Patch cached root_id to post-deletion identity so that
+            # root_id comparison passes and the sentinel stat is the
+            # actual invalidation mechanism under test.
+            post_st = tmp_path.stat()
+            _VSCODE_DISCOVERY_CACHE[tmp_path] = dataclasses.replace(
+                cached,
+                root_id=(post_st.st_mtime_ns, post_st.st_size),
+            )
+
             paths2 = _cached_discover_vscode_logs(tmp_path)
-            # Sentinel gone → cache-hit condition fails → re-glob.
+            # Sentinel gone → root_id passes but sentinel check fails → re-glob.
             assert glob_call_count == 2
             # Only older_session's log remains.
             assert len(paths2) == 1
