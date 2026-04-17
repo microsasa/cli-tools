@@ -37,6 +37,7 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
+    _DETECT_RESUME_EVENT_TYPES,
     _DISCOVERY_CACHE,
     _EVENTS_CACHE,
     _FIRST_PASS_EVENT_TYPES,
@@ -8493,10 +8494,13 @@ class TestDetectResumeElifShortCircuit:
     """
 
     def test_comparison_count_500_assistant_messages(self, tmp_path: Path) -> None:
-        """500 post-shutdown ASSISTANT_MESSAGE events → ≤ 500 type comparisons.
+        """500 post-shutdown ASSISTANT_MESSAGE events → ≤ 1000 type comparisons.
 
         Uses a spy wrapper around ``ev.type`` access to count the total number
         of equality comparisons performed inside the _detect_resume loop.
+        With the frozenset pre-filter, each interesting event costs at most 2
+        __eq__ calls: one for the ``in`` membership test and one for the
+        if/elif branch match.
         """
         # Build a minimal session: start → user → shutdown → 500 assistant msgs
         start_raw = json.dumps(
@@ -8590,13 +8594,13 @@ class TestDetectResumeElifShortCircuit:
         assert result.post_shutdown_turn_starts == 0
         assert result.post_shutdown_user_messages == 0
 
-        # Performance: with an elif chain, ASSISTANT_MESSAGE is the first
-        # branch so each event needs exactly 1 comparison → 500 total.
-        # Allow a small margin for any non-assistant events (there are none
-        # here, but be robust).
-        assert eq_count <= 500, (
-            f"Expected ≤ 500 ev.type comparisons for 500 ASSISTANT_MESSAGE "
-            f"events with if/elif chain, got {eq_count}"
+        # Performance: with the frozenset pre-filter and elif chain,
+        # ASSISTANT_MESSAGE events cost at most 2 __eq__ calls each
+        # (1 for frozenset membership + 1 for the first elif branch).
+        # 500 events × 2 = 1000 maximum.
+        assert eq_count <= 1000, (
+            f"Expected ≤ 1000 ev.type comparisons for 500 ASSISTANT_MESSAGE "
+            f"events with frozenset pre-filter + if/elif chain, got {eq_count}"
         )
 
     def test_correctness_mixed_post_shutdown_events(self, tmp_path: Path) -> None:
@@ -9299,3 +9303,98 @@ class TestSortedSessionsCacheIsFrozen:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             cache.root = Path("/other")  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Issue #967 — _detect_resume: frozenset pre-filter for uninteresting events
+# ---------------------------------------------------------------------------
+
+
+class TestDetectResumeFrozensetPreFilter:
+    """Verify the _DETECT_RESUME_EVENT_TYPES frozenset pre-filter.
+
+    The frozenset guard skips events whose type is not one of the four
+    checked inside the if/elif chain, replacing 4 string comparisons
+    with a single O(1) hash lookup for each uninteresting event.
+    """
+
+    def test_many_tool_events_skipped_correctly(self, tmp_path: Path) -> None:
+        """≥100 tool events after shutdown are skipped; resume info is correct.
+
+        Builds a synthetic event list with a session.shutdown at index K
+        followed by ≥100 tool.execution_complete events, a user.message,
+        and a session.resume.  Asserts the returned _ResumeInfo has
+        session_resumed=True, post_shutdown_user_messages=1, and a
+        non-None last_resume_time.
+        """
+        num_tool_events = 120
+
+        tool_events = [
+            json.dumps(
+                {
+                    "type": "tool.execution_complete",
+                    "data": {
+                        "toolCallId": f"tc-{i}",
+                        "model": "claude-sonnet-4",
+                        "interactionId": "int-1",
+                        "success": True,
+                    },
+                    "id": f"ev-tool-{i}",
+                    "timestamp": "2026-03-07T11:01:00.000Z",
+                }
+            )
+            for i in range(num_tool_events)
+        ]
+
+        post_user = json.dumps(
+            {
+                "type": "user.message",
+                "data": {
+                    "content": "continue",
+                    "transformedContent": "continue",
+                    "attachments": [],
+                    "interactionId": "int-2",
+                },
+                "id": "ev-user-post",
+                "timestamp": "2026-03-07T12:00:30.000Z",
+            }
+        )
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume-967",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _SHUTDOWN_EVENT,
+            *tool_events,
+            post_user,
+            resume_ev,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        result = _detect_resume(events, fp.all_shutdowns)
+
+        assert result.session_resumed is True
+        assert result.post_shutdown_user_messages == 1
+        assert result.last_resume_time is not None
+        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+
+    def test_constant_contains_exactly_four_types(self) -> None:
+        """_DETECT_RESUME_EVENT_TYPES must contain exactly the 4 checked types."""
+        expected = frozenset(
+            {
+                EventType.ASSISTANT_MESSAGE,
+                EventType.USER_MESSAGE,
+                EventType.ASSISTANT_TURN_START,
+                EventType.SESSION_RESUME,
+            }
+        )
+        assert expected == _DETECT_RESUME_EVENT_TYPES

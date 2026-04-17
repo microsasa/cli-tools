@@ -743,6 +743,16 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     )
 
 
+_DETECT_RESUME_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        EventType.ASSISTANT_MESSAGE,
+        EventType.USER_MESSAGE,
+        EventType.ASSISTANT_TURN_START,
+        EventType.SESSION_RESUME,
+    }
+)
+
+
 def _detect_resume(
     events: list[SessionEvent],
     all_shutdowns: tuple[tuple[int, SessionShutdownData], ...],
@@ -767,6 +777,8 @@ def _detect_resume(
     for i in range(last_shutdown_idx + 1, len(events)):
         ev = events[i]
         etype = ev.type
+        if etype not in _DETECT_RESUME_EVENT_TYPES:
+            continue
         if etype == EventType.ASSISTANT_MESSAGE:
             session_resumed = True
             if (tokens := _extract_output_tokens(ev)) is not None:
