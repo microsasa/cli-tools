@@ -8489,8 +8489,11 @@ class TestDetectResumeElifShortCircuit:
     """Verify _detect_resume uses a short-circuiting if/elif chain.
 
     With the old implementation, every event triggered 5 unconditional ``if``
-    checks.  The new ``if/elif`` chain should evaluate at most 4 comparisons
-    per event and exactly 1 for the most common ``ASSISTANT_MESSAGE`` case.
+    checks.  The ``if/elif`` chain with frozenset pre-filter evaluates at most
+    5 comparisons per interesting event (1 for the ``in`` membership test plus
+    up to 4 for the elif branches) and exactly 2 for the most common
+    ``ASSISTANT_MESSAGE`` case (1 membership + 1 branch match).  Uninteresting
+    events are skipped via an O(1) hash lookup with no ``__eq__`` calls.
     """
 
     def test_comparison_count_500_assistant_messages(self, tmp_path: Path) -> None:
