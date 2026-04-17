@@ -9349,6 +9349,14 @@ class TestDetectResumeFrozensetPreFilter:
             for i in range(num_tool_events)
         ]
 
+        resume_ev = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume-967",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
         post_user = json.dumps(
             {
                 "type": "user.message",
@@ -9362,14 +9370,6 @@ class TestDetectResumeFrozensetPreFilter:
                 "timestamp": "2026-03-07T12:00:30.000Z",
             }
         )
-        resume_ev = json.dumps(
-            {
-                "type": "session.resume",
-                "data": {},
-                "id": "ev-resume-967",
-                "timestamp": "2026-03-07T12:00:00.000Z",
-            }
-        )
 
         p = tmp_path / "s" / "events.jsonl"
         _write_events(
@@ -9378,8 +9378,8 @@ class TestDetectResumeFrozensetPreFilter:
             _USER_MSG,
             _SHUTDOWN_EVENT,
             *tool_events,
-            post_user,
             resume_ev,
+            post_user,
         )
         events = parse_events(p)
         fp = _first_pass(events)
