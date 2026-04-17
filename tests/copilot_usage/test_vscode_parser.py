@@ -2309,6 +2309,131 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         assert summary.total_requests == 0
         assert file_path not in _VSCODE_DISCOVERY_CACHE
 
+    def test_new_window_under_older_session_not_detected_by_sentinel(
+        self, tmp_path: Path
+    ) -> None:
+        """Cache returns stale paths when a non-sentinel session dir is modified.
+
+        The sentinel tracks only the most recently modified session directory
+        at cache-population time.  Adding a new ``window*/`` under an older
+        (non-sentinel) session does not invalidate the cache, so the new log
+        file is not discovered until the root directory itself changes or the
+        cache is cleared.  This locks in the documented O(1) design trade-off.
+        """
+        older_session = tmp_path / "session_A"
+        newer_session = tmp_path / "session_B"
+
+        for session, idx in [(older_session, 0), (newer_session, 1)]:
+            log_dir = session / "window1" / "exthost" / "GitHub.copilot-chat"
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=idx)
+            )
+
+        # Pin mtime so session_B is strictly newest (the sentinel).
+        os.utime(older_session, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(newer_session, ns=(2_000_000_000, 2_000_000_000))
+
+        original_glob = Path.glob
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        with patch.object(Path, "glob", _counting_glob):
+            paths1 = _cached_discover_vscode_logs(tmp_path)
+            assert glob_call_count == 1
+            assert len(paths1) == 2
+            cache_entry = _VSCODE_DISCOVERY_CACHE.get(tmp_path)
+            assert cache_entry is not None
+            assert cache_entry.newest_child_path is not None
+            assert safe_file_identity(
+                cache_entry.newest_child_path
+            ) == safe_file_identity(newer_session)
+
+            # Add a new window under the older (non-sentinel) session.
+            new_log_dir = older_session / "window2" / "exthost" / "GitHub.copilot-chat"
+            new_log_dir.mkdir(parents=True)
+            new_log_file = new_log_dir / "GitHub Copilot Chat.log"
+            new_log_file.write_text(_make_log_line(req_idx=2))
+
+            paths2 = _cached_discover_vscode_logs(tmp_path)
+            # Root identity unchanged, sentinel (session_B) unchanged →
+            # cache hit → stale result (new log not discovered).
+            assert glob_call_count == 1
+            assert len(paths2) == 2  # Still 2, not 3 — stale by design.
+            assert new_log_file not in paths2
+
+    def test_sentinel_deletion_triggers_rediscovery(self, tmp_path: Path) -> None:
+        """Removing the sentinel session directory triggers a re-glob.
+
+        Deleting the sentinel directory makes ``safe_file_identity`` return
+        ``None`` which differs from the stored ``newest_child_id`` tuple.
+        To isolate this sentinel-based invalidation from the root-identity
+        change caused by ``rmtree`` (which updates ``tmp_path`` mtime), the
+        cached ``root_id`` is patched to the post-deletion stat so the
+        sentinel check is the actual invalidation mechanism under test.
+        """
+        import shutil
+
+        older_session = tmp_path / "session_A"
+        newer_session = tmp_path / "session_B"
+
+        for session, idx in [(older_session, 0), (newer_session, 1)]:
+            log_dir = session / "window1" / "exthost" / "GitHub.copilot-chat"
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=idx)
+            )
+
+        # Pin mtime so session_B is strictly newest (the sentinel).
+        os.utime(older_session, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(newer_session, ns=(2_000_000_000, 2_000_000_000))
+
+        original_glob = Path.glob
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        with patch.object(Path, "glob", _counting_glob):
+            paths1 = _cached_discover_vscode_logs(tmp_path)
+            assert glob_call_count == 1
+            assert len(paths1) == 2
+
+            # Confirm sentinel is newer_session.
+            cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
+            assert cached.newest_child_path == newer_session
+
+            # Delete the sentinel directory entirely.
+            shutil.rmtree(newer_session)
+            assert safe_file_identity(newer_session) is None
+
+            # Patch cached root_id to post-deletion identity so that
+            # root_id comparison passes and the sentinel stat is the
+            # actual invalidation mechanism under test.
+            post_st = tmp_path.stat()
+            _VSCODE_DISCOVERY_CACHE[tmp_path] = dataclasses.replace(
+                cached,
+                root_id=(post_st.st_mtime_ns, post_st.st_size),
+            )
+
+            paths2 = _cached_discover_vscode_logs(tmp_path)
+            # Sentinel gone → root_id passes but sentinel check fails → re-glob.
+            assert glob_call_count == 2
+            # Only older_session's log remains.
+            assert len(paths2) == 1
+
 
 class TestScanChildIdsEdgeCases:
     """Cover error-handling paths in _scan_child_ids."""
