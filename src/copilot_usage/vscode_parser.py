@@ -366,7 +366,8 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
 # the back, least-recently-used at the front.
 # ---------------------------------------------------------------------------
 
-_MAX_CACHED_VSCODE_LOGS: Final[int] = 64
+_MAX_CACHED_VSCODE_REQUESTS: Final[int] = 64
+_MAX_CACHED_FILE_SUMMARIES: Final[int] = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,7 +436,7 @@ def _get_cached_vscode_requests(
     On the first call for a given *log_path*, delegates to
     :func:`parse_vscode_log` and stores the result.  Subsequent calls
     return the cached tuple as long as the file identity is unchanged.
-    The cache is bounded to :data:`_MAX_CACHED_VSCODE_LOGS` entries;
+    The cache is bounded to :data:`_MAX_CACHED_VSCODE_REQUESTS` entries;
     the **least-recently used** entry is evicted when the limit is
     reached.
 
@@ -460,7 +461,7 @@ def _get_cached_vscode_requests(
         _VSCODE_LOG_CACHE,
         log_path,
         _CachedVSCodeLog(file_id=resolved_id, requests=requests),
-        _MAX_CACHED_VSCODE_LOGS,
+        _MAX_CACHED_VSCODE_REQUESTS,
     )
     return requests
 
@@ -668,7 +669,7 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
                 _PER_FILE_SUMMARY_CACHE,
                 log_path,
                 _CachedFileSummary(file_id, partial_summary),
-                _MAX_CACHED_VSCODE_LOGS,
+                _MAX_CACHED_FILE_SUMMARIES,
             )
             _merge_partial(acc, partial_summary)
         acc.log_files_parsed += 1

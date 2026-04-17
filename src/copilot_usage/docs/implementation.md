@@ -505,8 +505,8 @@ The `CCREQ_RE` regex in `vscode_parser.py` extracts: timestamp, request ID, mode
 | Cache | Key | Purpose | Invalidation |
 |---|---|---|---|
 | `_VSCODE_DISCOVERY_CACHE` | Candidate root `Path` | Skips glob when the root directory identity and cached newest-child sentinel are unchanged | Replaced when `root_id` (root dir identity) changes or `newest_child_id` (the cached most-recently-modified child dir identity) changes; changes under older/non-sentinel child dirs may not invalidate until the root changes or the cache is cleared |
-| `_VSCODE_LOG_CACHE` | Log file `Path` | Skips re-parsing a log file whose `(mtime_ns, size)` is unchanged | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
-| `_PER_FILE_SUMMARY_CACHE` | Log file `Path` | Caches per-file aggregation (`VSCodeLogSummary`) keyed by `Path`, validated by file identity | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
+| `_VSCODE_LOG_CACHE` | Log file `Path` | Skips re-parsing a log file whose `(mtime_ns, size)` is unchanged | LRU eviction at `_MAX_CACHED_VSCODE_REQUESTS` (64); entry replaced when file identity changes |
+| `_PER_FILE_SUMMARY_CACHE` | Log file `Path` | Caches per-file aggregation (`VSCodeLogSummary`) keyed by `Path`, validated by file identity | LRU eviction at `_MAX_CACHED_FILE_SUMMARIES` (256); entry replaced when file identity changes |
 | `_vscode_summary_cache` | `frozenset[tuple[Path, file_id]]` | Full `VSCodeLogSummary` for the entire set of discovered files | Replaced when the combined identity set changes; only populated when all discovered logs were successfully parsed (transient read failures do not produce a stale cache) |
 
 The two per-file caches (`_VSCODE_LOG_CACHE` and `_PER_FILE_SUMMARY_CACHE`) use `OrderedDict` with LRU insertion via the shared `lru_insert()` helper from `_fs_utils.py`. On a cache hit, entries are moved to the end via `move_to_end()` to maintain recency order.
