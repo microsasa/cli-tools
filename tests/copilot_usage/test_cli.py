@@ -1,5 +1,7 @@
 """Tests for copilot_usage.cli — wired-up CLI commands."""
 
+# pyright: reportPrivateUsage=false
+
 import contextlib
 import io
 import json
@@ -19,17 +21,17 @@ from rich.console import Console
 
 from copilot_usage import __version__
 from copilot_usage.cli import (
-    _build_session_index,  # pyright: ignore[reportPrivateUsage]
-    _DateTimeOrDate,  # pyright: ignore[reportPrivateUsage]
-    _normalize_until,  # pyright: ignore[reportPrivateUsage]
-    _ParsedDateArg,  # pyright: ignore[reportPrivateUsage]
-    _print_version_header,  # pyright: ignore[reportPrivateUsage]
-    _read_line_nonblocking,  # pyright: ignore[reportPrivateUsage]
-    _render_session_list,  # pyright: ignore[reportPrivateUsage]
-    _show_session_by_index,  # pyright: ignore[reportPrivateUsage]
-    _start_observer,  # pyright: ignore[reportPrivateUsage]
-    _stop_observer,  # pyright: ignore[reportPrivateUsage]
-    _validate_since_until,  # pyright: ignore[reportPrivateUsage]
+    _build_session_index,
+    _DateTimeOrDate,
+    _normalize_until,
+    _ParsedDateArg,
+    _print_version_header,
+    _read_line_nonblocking,
+    _render_session_list,
+    _show_session_by_index,
+    _start_observer,
+    _stop_observer,
+    _validate_since_until,
     main,
 )
 from copilot_usage.models import ensure_aware_opt
@@ -880,7 +882,7 @@ class TestFileChangeHandler:
     def test_dispatch_sets_event_on_first_call(self) -> None:
         """First dispatch call within a cold window sets the change_event."""
         from copilot_usage.cli import (
-            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+            _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -893,7 +895,7 @@ class TestFileChangeHandler:
         import time as _time
 
         from copilot_usage.cli import (
-            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+            _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -903,7 +905,7 @@ class TestFileChangeHandler:
 
         # Clear and force _last_trigger to now so second call is within debounce
         event.clear()
-        handler._last_trigger = _time.monotonic()  # pyright: ignore[reportPrivateUsage]
+        handler._last_trigger = _time.monotonic()
         handler.dispatch(object())
         assert not event.is_set()
 
@@ -912,7 +914,7 @@ class TestFileChangeHandler:
         import time as _time
 
         from copilot_usage.cli import (
-            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+            _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -922,14 +924,14 @@ class TestFileChangeHandler:
 
         event.clear()
         # Simulate passage of time by manipulating _last_trigger
-        handler._last_trigger = _time.monotonic() - 3.0  # pyright: ignore[reportPrivateUsage]
+        handler._last_trigger = _time.monotonic() - 3.0
         handler.dispatch(object())
         assert event.is_set()
 
     def test_dispatch_interface(self) -> None:
         """_FileChangeHandler provides a dispatch(event) interface compatible with watchdog handlers."""
         from copilot_usage.cli import (
-            _FileChangeHandler,  # pyright: ignore[reportPrivateUsage]
+            _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -1105,7 +1107,7 @@ def test_auto_refresh_home_view(tmp_path: Path, monkeypatch: Any) -> None:
 
     import copilot_usage.cli as cli_mod
 
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _patched_draw_home(console: Console, sessions: list[Any]) -> None:
         draw_home_calls.append(1)
@@ -1115,7 +1117,7 @@ def test_auto_refresh_home_view(tmp_path: Path, monkeypatch: Any) -> None:
 
     # Capture the change_event via _start_observer
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+    orig_start_observer = cli_mod._start_observer
 
     def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
         captured_event.append(change_event)
@@ -1162,7 +1164,7 @@ def test_auto_refresh_cost_view(tmp_path: Path, monkeypatch: Any) -> None:
 
     # Capture the change_event via _start_observer
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+    orig_start_observer = cli_mod._start_observer
 
     def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
         captured_event.append(change_event)
@@ -1203,7 +1205,7 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
 
     import copilot_usage.cli as cli_mod
 
-    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+    orig_show = cli_mod._show_session_by_index
 
     def _patched_show(*args: Any, **kwargs: Any) -> None:
         show_detail_calls.append(1)
@@ -1213,7 +1215,7 @@ def test_auto_refresh_detail_view(tmp_path: Path, monkeypatch: Any) -> None:
 
     # Capture the change_event via _start_observer
     captured_event: list[threading.Event] = []
-    orig_start_observer = cli_mod._start_observer  # pyright: ignore[reportPrivateUsage]
+    orig_start_observer = cli_mod._start_observer
 
     def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
         captured_event.append(change_event)
@@ -1259,7 +1261,7 @@ def test_auto_refresh_detail_session_id_none(tmp_path: Path, monkeypatch: Any) -
     import copilot_usage.cli as cli_mod
 
     show_detail_calls: list[int] = []
-    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+    orig_show = cli_mod._show_session_by_index
 
     def _tracking_show(*args: Any, **kwargs: Any) -> None:
         show_detail_calls.append(1)
@@ -1268,7 +1270,7 @@ def test_auto_refresh_detail_session_id_none(tmp_path: Path, monkeypatch: Any) -
     monkeypatch.setattr(cli_mod, "_show_session_by_index", _tracking_show)
 
     draw_home_calls: list[int] = []
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
         draw_home_calls.append(1)
@@ -1330,7 +1332,7 @@ def test_interactive_invalid_number_then_file_change(
     import copilot_usage.cli as cli_mod
 
     draw_home_calls: list[int] = []
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
         draw_home_calls.append(1)
@@ -1339,7 +1341,7 @@ def test_interactive_invalid_number_then_file_change(
     monkeypatch.setattr(cli_mod, "_draw_home", _tracking_draw_home)
 
     prompt_calls: list[str] = []
-    orig_write_prompt = cli_mod._write_prompt  # pyright: ignore[reportPrivateUsage]
+    orig_write_prompt = cli_mod._write_prompt
 
     def _tracking_prompt(prompt: str) -> None:
         prompt_calls.append(prompt)
@@ -1431,7 +1433,7 @@ def test_auto_refresh_detail_tracks_session_by_id(
 
     # Track which session_ids are rendered in _show_session_by_index
     rendered_session_ids: list[str] = []
-    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+    orig_show = cli_mod._show_session_by_index
 
     def _tracking_show(console: Console, sessions: list[Any], index: int) -> None:
         if 1 <= index <= len(sessions):
@@ -1520,7 +1522,7 @@ def test_auto_refresh_detail_session_deleted_falls_back_to_home(
     import copilot_usage.cli as cli_mod
 
     draw_home_calls: list[int] = []
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _tracking_draw_home(console: Console, sessions: list[Any]) -> None:
         draw_home_calls.append(1)
@@ -1586,7 +1588,7 @@ def test_auto_refresh_render_crash_home_does_not_kill_loop(
     import copilot_usage.cli as cli_mod
 
     call_count_home = [0]
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _crashing_draw_home(console: Console, sessions: list[Any]) -> None:
         call_count_home[0] += 1
@@ -1701,7 +1703,7 @@ def test_auto_refresh_render_crash_detail_does_not_kill_loop(
     import copilot_usage.cli as cli_mod
 
     detail_call_count = [0]
-    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+    orig_show = cli_mod._show_session_by_index
 
     def _crashing_show(*args: Any, **kwargs: Any) -> None:
         detail_call_count[0] += 1
@@ -1869,7 +1871,7 @@ def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) 
     import copilot_usage.cli as cli_mod
 
     draw_call_count = [0]
-    orig_draw_home = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw_home = cli_mod._draw_home
 
     def _crashing_draw_home(console: Console, sessions: list[Any]) -> None:
         draw_call_count[0] += 1
@@ -1880,7 +1882,7 @@ def test_auto_refresh_prompt_write_also_fails(tmp_path: Path, monkeypatch: Any) 
     monkeypatch.setattr(cli_mod, "_draw_home", _crashing_draw_home)
 
     prompt_call_count = [0]
-    orig_write_prompt = cli_mod._write_prompt  # pyright: ignore[reportPrivateUsage]
+    orig_write_prompt = cli_mod._write_prompt
 
     def _crashing_prompt(prompt: str) -> None:
         prompt_call_count[0] += 1
@@ -2295,7 +2297,7 @@ def test_interactive_loop_observer_none_no_auto_refresh(
     monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
 
     draw_home_calls: list[int] = []
-    orig_draw = cli_mod._draw_home  # pyright: ignore[reportPrivateUsage]
+    orig_draw = cli_mod._draw_home
 
     def _tracking_draw(console: Console, sessions: list[Any]) -> None:
         draw_home_calls.append(1)
@@ -2453,7 +2455,7 @@ def test_interactive_cost_view_prints_version_header(
     monkeypatch.setattr(cli_mod, "_start_observer", _null_start)
 
     header_calls: list[str] = []
-    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+    orig_header = cli_mod._print_version_header
 
     def _patched_header(target: Console | None = None) -> None:
         header_calls.append("called")
@@ -2503,7 +2505,7 @@ def test_interactive_detail_view_prints_version_header(
     monkeypatch.setattr(cli_mod, "_start_observer", _null_start)
 
     header_calls: list[str] = []
-    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+    orig_header = cli_mod._print_version_header
 
     def _patched_header(target: Console | None = None) -> None:
         header_calls.append("called")
@@ -2554,7 +2556,7 @@ def test_interactive_version_header_count_matches_auto_refresh(
     import copilot_usage.cli as cli_mod
 
     header_calls: list[str] = []
-    orig_header = cli_mod._print_version_header  # pyright: ignore[reportPrivateUsage]
+    orig_header = cli_mod._print_version_header
 
     def _patched_header(target: Console | None = None) -> None:
         header_calls.append("called")
@@ -3180,13 +3182,13 @@ class TestValidateSinceUntil:
 
     def test_both_none(self) -> None:
         """since=None, until=None → (None, None)."""
-        result = _validate_since_until(None, None)  # pyright: ignore[reportPrivateUsage]
+        result = _validate_since_until(None, None)
         assert result == (None, None)
 
     def test_naive_since_made_aware(self) -> None:
         """Naive since is made UTC-aware; until stays None."""
         naive_since = datetime(2026, 3, 7, 10, 0, 0)
-        aware_since, aware_until = _validate_since_until(naive_since, None)  # pyright: ignore[reportPrivateUsage]
+        aware_since, aware_until = _validate_since_until(naive_since, None)
         assert aware_until is None
         assert aware_since is not None
         assert aware_since.tzinfo is not None
@@ -3197,7 +3199,7 @@ class TestValidateSinceUntil:
         """Date-only midnight until is expanded to 23:59:59.999999."""
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
         arg = _ParsedDateArg(value=midnight, has_explicit_time=False)
-        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
+        aware_since, aware_until = _validate_since_until(None, arg)
         assert aware_since is None
         assert aware_until is not None
         assert aware_until.hour == 23
@@ -3211,7 +3213,7 @@ class TestValidateSinceUntil:
         """Explicit T00:00:00 until is NOT expanded — issue #870 fix."""
         midnight = datetime(2026, 3, 7, 0, 0, 0, tzinfo=UTC)
         arg = _ParsedDateArg(value=midnight, has_explicit_time=True)
-        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
+        aware_since, aware_until = _validate_since_until(None, arg)
         assert aware_since is None
         assert aware_until == midnight
 
@@ -3219,7 +3221,7 @@ class TestValidateSinceUntil:
         """Non-midnight until is returned as-is (already aware)."""
         non_midnight = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
         arg = _ParsedDateArg(value=non_midnight, has_explicit_time=True)
-        aware_since, aware_until = _validate_since_until(None, arg)  # pyright: ignore[reportPrivateUsage]
+        aware_since, aware_until = _validate_since_until(None, arg)
         assert aware_since is None
         assert aware_until == non_midnight
 
@@ -3228,7 +3230,7 @@ class TestValidateSinceUntil:
         dt_before = datetime(2026, 3, 1, 0, 0, 0, tzinfo=UTC)
         dt_after = datetime(2026, 3, 7, 14, 30, 0, tzinfo=UTC)
         arg = _ParsedDateArg(value=dt_after, has_explicit_time=True)
-        aware_since, aware_until = _validate_since_until(dt_before, arg)  # pyright: ignore[reportPrivateUsage]
+        aware_since, aware_until = _validate_since_until(dt_before, arg)
         assert aware_since is not None
         assert aware_until is not None
         assert aware_since <= aware_until
@@ -3239,7 +3241,7 @@ class TestValidateSinceUntil:
         dt_before = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
         arg = _ParsedDateArg(value=dt_before, has_explicit_time=True)
         with pytest.raises(click.UsageError, match="--since") as exc_info:
-            _validate_since_until(dt_after, arg)  # pyright: ignore[reportPrivateUsage]
+            _validate_since_until(dt_after, arg)
         msg = str(exc_info.value)
         assert "after" in msg
         # Verify isoformat timestamps with sep=' ' and timespec='seconds'
@@ -3514,7 +3516,7 @@ def test_auto_refresh_detail_uses_session_index_for_200_sessions(
 
     # Track which index is rendered
     rendered_indices: list[int] = []
-    orig_show = cli_mod._show_session_by_index  # pyright: ignore[reportPrivateUsage]
+    orig_show = cli_mod._show_session_by_index
 
     def _tracking_show(console: Console, sessions: list[Any], index: int) -> None:
         rendered_indices.append(index)
@@ -3530,7 +3532,7 @@ def test_auto_refresh_detail_uses_session_index_for_200_sessions(
 
     # Spy on _build_session_index to verify it is called during refresh
     build_index_calls: list[int] = []
-    orig_build = cli_mod._build_session_index  # pyright: ignore[reportPrivateUsage]
+    orig_build = cli_mod._build_session_index
 
     def _spy_build_session_index(
         sessions: list[SessionSummary],
