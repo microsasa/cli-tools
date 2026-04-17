@@ -1812,25 +1812,22 @@ class TestDiscoveryGenerationFastPath:
         assert s2 is s1  # exact same cached object
         assert s2.total_requests == len(log_files)
 
-    def test_second_call_completes_quickly(self, tmp_path: Path) -> None:
-        """Second call with warm cache completes in < 10% of the first call time."""
-        import time
-
+    def test_second_call_uses_cached_summary_without_rebuild(
+        self, tmp_path: Path
+    ) -> None:
+        """Second call with warm cache returns the cached summary without rebuilding."""
         self._make_log_tree(tmp_path, n_files=5)
 
-        start = time.perf_counter()
-        get_vscode_summary(tmp_path)
-        first_duration = time.perf_counter() - start
+        s1 = get_vscode_summary(tmp_path)
 
-        start = time.perf_counter()
-        get_vscode_summary(tmp_path)
-        second_duration = time.perf_counter() - start
+        with patch(
+            "copilot_usage.vscode_parser._update_vscode_summary",
+            wraps=_update_vscode_summary,
+        ) as update_summary:
+            s2 = get_vscode_summary(tmp_path)
 
-        # Second call should be at most 10% of first, or under 500 μs.
-        assert second_duration <= max(first_duration * 0.1, 500e-6), (
-            f"second call took {second_duration * 1e6:.0f} μs, "
-            f"first took {first_duration * 1e6:.0f} μs"
-        )
+        update_summary.assert_not_called()
+        assert s2 is s1
 
     def test_discovery_miss_falls_through_to_stat(self, tmp_path: Path) -> None:
         """When the discovery cache misses, per-file stat() still runs."""
