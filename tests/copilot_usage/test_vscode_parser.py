@@ -1,5 +1,7 @@
 """Tests for copilot_usage.vscode_parser and the vscode CLI subcommand."""
 
+# pyright: reportPrivateUsage=false
+
 import dataclasses
 import os
 import re
@@ -14,22 +16,22 @@ from loguru import logger
 from copilot_usage._fs_utils import safe_file_identity
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
-    _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
-    _MAX_CACHED_FILE_SUMMARIES,  # pyright: ignore[reportPrivateUsage]
-    _MAX_CACHED_VSCODE_REQUESTS,  # pyright: ignore[reportPrivateUsage]
-    _PER_FILE_SUMMARY_CACHE,  # pyright: ignore[reportPrivateUsage]
-    _VSCODE_DISCOVERY_CACHE,  # pyright: ignore[reportPrivateUsage]
-    _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
+    _CCREQ_RE,
+    _MAX_CACHED_FILE_SUMMARIES,
+    _MAX_CACHED_VSCODE_REQUESTS,
+    _PER_FILE_SUMMARY_CACHE,
+    _VSCODE_DISCOVERY_CACHE,
+    _VSCODE_LOG_CACHE,
     VSCodeLogSummary,
     VSCodeRequest,
-    _cached_discover_vscode_logs,  # pyright: ignore[reportPrivateUsage]
-    _default_log_candidates,  # pyright: ignore[reportPrivateUsage]
-    _get_cached_vscode_requests,  # pyright: ignore[reportPrivateUsage]
-    _merge_partial,  # pyright: ignore[reportPrivateUsage]
-    _scan_child_ids,  # pyright: ignore[reportPrivateUsage]
-    _SummaryAccumulator,  # pyright: ignore[reportPrivateUsage]
-    _update_vscode_summary,  # pyright: ignore[reportPrivateUsage]
-    _VSCodeDiscoveryCache,  # pyright: ignore[reportPrivateUsage]
+    _cached_discover_vscode_logs,
+    _default_log_candidates,
+    _get_cached_vscode_requests,
+    _merge_partial,
+    _scan_child_ids,
+    _SummaryAccumulator,
+    _update_vscode_summary,
+    _VSCodeDiscoveryCache,
     build_vscode_summary,
     discover_vscode_logs,
     get_vscode_summary,
@@ -67,7 +69,7 @@ def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     _VSCODE_DISCOVERY_CACHE.clear()
     import copilot_usage.vscode_parser as _mod
 
-    _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
+    _mod._vscode_summary_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -1717,7 +1719,7 @@ class TestSafeFileIdentityCalledOncePerFile:
         # Clear summary cache only (per-file cache stays warm).
         import copilot_usage.vscode_parser as _mod
 
-        _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
+        _mod._vscode_summary_cache = None
 
         call_counts: dict[Path, int] = {}
         real_fn = safe_file_identity
@@ -1987,56 +1989,56 @@ class TestMergePartialTimestamps:
 
     def test_empty_partial_leaves_accumulator_timestamps_unchanged(self) -> None:
         """Merging a partial with None timestamps must not reset the accumulator."""
-        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc = _SummaryAccumulator()
         acc.first_timestamp = datetime(2026, 3, 13, 10, 0, 0)
         acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         empty_partial = VSCodeLogSummary()  # timestamps default to None
-        _merge_partial(acc, empty_partial)  # pyright: ignore[reportPrivateUsage]
+        _merge_partial(acc, empty_partial)
         assert acc.first_timestamp == datetime(2026, 3, 13, 10, 0, 0)
         assert acc.last_timestamp == datetime(2026, 3, 14, 18, 0, 0)
 
     def test_first_partial_into_fresh_accumulator_adopts_timestamps(self) -> None:
         """Merging the first partial into a fresh acc adopts its timestamps."""
-        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc = _SummaryAccumulator()
         partial = VSCodeLogSummary(
             first_timestamp=datetime(2026, 3, 13, 9, 0, 0),
             last_timestamp=datetime(2026, 3, 13, 17, 0, 0),
         )
-        _merge_partial(acc, partial)  # pyright: ignore[reportPrivateUsage]
+        _merge_partial(acc, partial)
         assert acc.first_timestamp == datetime(2026, 3, 13, 9, 0, 0)
         assert acc.last_timestamp == datetime(2026, 3, 13, 17, 0, 0)
 
     def test_older_partial_updates_first_timestamp(self) -> None:
         """A partial with an earlier first_timestamp should update the accumulator."""
-        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc = _SummaryAccumulator()
         acc.first_timestamp = datetime(2026, 3, 14, 10, 0, 0)
         acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         older = VSCodeLogSummary(
             first_timestamp=datetime(2026, 3, 13, 8, 0, 0),
             last_timestamp=datetime(2026, 3, 13, 12, 0, 0),
         )
-        _merge_partial(acc, older)  # pyright: ignore[reportPrivateUsage]
+        _merge_partial(acc, older)
         assert acc.first_timestamp == datetime(2026, 3, 13, 8, 0, 0)
         # last_timestamp unchanged — the older partial's last is earlier.
         assert acc.last_timestamp == datetime(2026, 3, 14, 18, 0, 0)
 
     def test_newer_partial_does_not_update_first_timestamp(self) -> None:
         """A partial newer than the accumulator must not alter first_timestamp."""
-        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc = _SummaryAccumulator()
         acc.first_timestamp = datetime(2026, 3, 13, 8, 0, 0)
         acc.last_timestamp = datetime(2026, 3, 14, 18, 0, 0)
         newer = VSCodeLogSummary(
             first_timestamp=datetime(2026, 3, 15, 10, 0, 0),
             last_timestamp=datetime(2026, 3, 15, 20, 0, 0),
         )
-        _merge_partial(acc, newer)  # pyright: ignore[reportPrivateUsage]
+        _merge_partial(acc, newer)
         assert acc.first_timestamp == datetime(2026, 3, 13, 8, 0, 0)
         # last_timestamp updated because the newer partial is later.
         assert acc.last_timestamp == datetime(2026, 3, 15, 20, 0, 0)
 
     def test_counters_are_additive_not_replaced(self) -> None:
         """Counter dicts must be summed, not overwritten, by _merge_partial."""
-        acc = _SummaryAccumulator()  # pyright: ignore[reportPrivateUsage]
+        acc = _SummaryAccumulator()
         acc.total_requests = 10
         acc.total_duration_ms = 5000
         acc.requests_by_model["gpt-4o"] += 5
@@ -2052,7 +2054,7 @@ class TestMergePartialTimestamps:
             requests_by_category={"panel": 1, "inline": 2},
             requests_by_date={"2026-03-13": 1, "2026-03-14": 2},
         )
-        _merge_partial(acc, partial)  # pyright: ignore[reportPrivateUsage]
+        _merge_partial(acc, partial)
 
         assert acc.total_requests == 13
         assert acc.total_duration_ms == 7000
@@ -2108,7 +2110,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
         assert summary.total_requests == 1
         assert summary.log_files_found == 2
         assert summary.log_files_parsed == 1
-        assert _mod._vscode_summary_cache is None  # pyright: ignore[reportPrivateUsage]
+        assert _mod._vscode_summary_cache is None
 
     def test_cache_populated_on_full_success_after_failure(self) -> None:
         """After a failed call, a fully successful call should populate the cache."""
@@ -2142,7 +2144,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
         ):
             get_vscode_summary()
 
-        assert _mod._vscode_summary_cache is None  # pyright: ignore[reportPrivateUsage]
+        assert _mod._vscode_summary_cache is None
 
         # Second call: all files succeed — cache should be populated.
         with (
@@ -2158,7 +2160,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
             summary2 = get_vscode_summary()
 
         assert summary2.total_requests == 2
-        assert _mod._vscode_summary_cache is not None  # pyright: ignore[reportPrivateUsage]
+        assert _mod._vscode_summary_cache is not None
 
 
 class TestVscodeDiscoveryCacheSkipsGlob:
@@ -2390,7 +2392,7 @@ class TestCachedDiscoverSkipsChildScanOnHit:
         import copilot_usage.vscode_parser as _mod
 
         scan_calls: list[Path] = []
-        original = _mod._scan_child_ids  # pyright: ignore[reportPrivateUsage]
+        original = _mod._scan_child_ids
 
         def spy(root: Path) -> frozenset[tuple[str, tuple[int, int]]]:
             scan_calls.append(root)
@@ -2522,6 +2524,4 @@ class TestSummaryAccumulatorIsNotDataclass:
 
     def test_not_a_dataclass(self) -> None:
         """Verify _SummaryAccumulator is not decorated with @dataclass."""
-        assert not dataclasses.is_dataclass(
-            _SummaryAccumulator  # pyright: ignore[reportPrivateUsage]
-        )
+        assert not dataclasses.is_dataclass(_SummaryAccumulator)
