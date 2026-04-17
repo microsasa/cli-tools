@@ -67,7 +67,6 @@ def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     import copilot_usage.vscode_parser as _mod
 
     _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
-    _mod._discovery_generation = 0  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1746,12 +1745,11 @@ class TestSafeFileIdentityCalledOncePerFile:
 
 
 class TestDiscoveryGenerationFastPath:
-    """Verify that get_vscode_summary limits log-file stat() on a warm cache.
+    """Verify that get_vscode_summary re-checks all file identities on warm cache.
 
-    When the discovery-cache generation has not changed since the summary
-    was last cached, ``safe_file_identity`` is called at most once — for
-    the mutable-log sentinel — rather than for every discovered log file.
-    The cached summary is returned in O(1) syscalls.
+    When the summary cache is warm, ``safe_file_identity`` is called for
+    every cached log file.  If any file's identity differs, the fast
+    path is skipped and the full rebuild path runs.
     """
 
     @staticmethod
@@ -1772,17 +1770,15 @@ class TestDiscoveryGenerationFastPath:
             paths.append(log_file)
         return paths
 
-    def test_second_call_one_sentinel_safe_file_identity(self, tmp_path: Path) -> None:
-        """safe_file_identity is called once (sentinel) for log files on warm cache."""
+    def test_second_call_checks_all_file_identities(self, tmp_path: Path) -> None:
+        """safe_file_identity is called for every log file on warm cache."""
         log_files = self._make_log_tree(tmp_path, n_files=5)
 
         # First call — warms discovery + summary caches.
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
 
-        # Second call — discovery-generation fast path should fire.
-        # safe_file_identity is called once for the mutable-log sentinel,
-        # but must NOT be called for all N log files.
+        # Second call — fast path should re-check every file identity.
         log_file_set = set(log_files)
         per_file_calls: list[Path] = []
         real_fn = safe_file_identity
@@ -1798,12 +1794,30 @@ class TestDiscoveryGenerationFastPath:
         ):
             s2 = get_vscode_summary(tmp_path)
 
-        assert len(per_file_calls) == 1, (
+        assert len(per_file_calls) == len(log_files), (
             f"safe_file_identity called {len(per_file_calls)} times for log "
-            f"files on warm cache, expected 1 (sentinel only)"
+            f"files on warm cache, expected {len(log_files)} (all files)"
         )
         assert s2 is s1  # exact same cached object
         assert s2.total_requests == len(log_files)
+
+    def test_non_sentinel_file_mutation_invalidates_cache(self, tmp_path: Path) -> None:
+        """Mutating a non-newest log file invalidates the summary cache."""
+        log_files = self._make_log_tree(tmp_path, n_files=5)
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == len(log_files)
+
+        # Mutate the *oldest* (first) log file — not the newest sentinel.
+        oldest = log_files[0]
+        oldest.write_text(
+            _make_log_line(req_idx=100) + "\n" + _make_log_line(req_idx=101)
+        )
+
+        s2 = get_vscode_summary(tmp_path)
+        assert s2 is not s1
+        # The mutated file now has 2 requests; others have 1 each.
+        assert s2.total_requests == len(log_files) + 1
 
     def test_second_call_uses_cached_summary_without_rebuild(
         self, tmp_path: Path
@@ -1822,15 +1836,14 @@ class TestDiscoveryGenerationFastPath:
         update_summary.assert_not_called()
         assert s2 is s1
 
-    def test_discovery_miss_falls_through_to_stat(self, tmp_path: Path) -> None:
-        """When the discovery cache misses, per-file stat() still runs."""
+    def test_discovery_miss_revalidates_file_identities(self, tmp_path: Path) -> None:
+        """When the discovery cache misses, file identities are still checked."""
         log_files = self._make_log_tree(tmp_path, n_files=3)
 
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
 
-        # Tamper with the cached root_id to force a discovery-cache miss
-        # (which bumps _discovery_generation).
+        # Tamper with the cached root_id to force a discovery-cache miss.
         cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
         _VSCODE_DISCOVERY_CACHE[tmp_path] = _VSCodeDiscoveryCache(
             root_id=(cached.root_id[0] + 1_000_000_000, cached.root_id[1]),
@@ -1853,8 +1866,7 @@ class TestDiscoveryGenerationFastPath:
         ):
             s2 = get_vscode_summary(tmp_path)
 
-        # Discovery miss caused a generation bump so the fast path did
-        # not fire — per-file stat calls were made.
+        # File identity calls were made (fast path or full path).
         assert len(stat_calls) > 0
         # But the result is still correct.
         assert s2.total_requests == len(log_files)
