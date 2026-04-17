@@ -110,6 +110,30 @@ class TestRenderCodeChanges:
         assert "+10" in output
         assert "-2" in output
 
+    def test_files_present_zero_line_counts_renders_table(self) -> None:
+        """filesModified non-empty with zero line deltas → table IS rendered."""
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True)
+        changes = CodeChanges(linesAdded=0, linesRemoved=0, filesModified=["a.py"])
+        _render_code_changes(changes, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert output != ""
+        assert "Files modified" in output
+        assert re.search(r"Files modified\s+│\s+1\b", output)
+        assert "+0" in output
+        assert "-0" in output
+
+    def test_zero_files_positive_line_counts_renders_table(self) -> None:
+        """Empty filesModified with positive line counts → table IS rendered."""
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True)
+        changes = CodeChanges(linesAdded=5, linesRemoved=2, filesModified=[])
+        _render_code_changes(changes, target_console=console)
+        output = buf.getvalue()
+        assert output != ""
+        assert "+5" in output
+        assert "-2" in output
+
     def test_aggregated_code_changes_rendered_correctly(self) -> None:
         """Code Changes panel reflects aggregated totals from multiple cycles.
 
@@ -211,6 +235,84 @@ class TestRenderSessionDetailBothTimestampsNone:
         render_session_detail([ev], summary, target_console=console)
         # Rendered without error; at minimum the header must appear
         assert "Session Detail" in buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Gap — render_session_detail start_time fallback from events (#954)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailStartTimeFallbackFromEvents:
+    """Cover the middle branch of the session_start ternary:
+
+    ``start_time is None`` but ``events[0].timestamp`` is not None,
+    so ``session_start = ensure_aware(events[0].timestamp)``.
+    """
+
+    def test_fallback_uses_first_event_timestamp(self) -> None:
+        """Relative-time column uses events[0].timestamp as reference.
+
+        With a 5-minute gap between the two events, the second event
+        must show a relative offset of exactly +5:00, proving the
+        renderer chose events[0].timestamp — not datetime.now().
+        """
+        ev1 = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+            data={"content": "hello"},
+        )
+        ev2 = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 1, 1, 10, 5, 0, tzinfo=UTC),
+            data={"content": "world"},
+        )
+        summary = SessionSummary(session_id="fb-test", start_time=None)
+
+        buf, console = _buf_console()
+        render_session_detail([ev1, ev2], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+
+        # The second event must appear at +5:00 relative to ev1.
+        assert "+5:00" in output
+        # The first event must appear at +0:00 (delta is zero).
+        assert "+0:00" in output
+
+    def test_changing_first_event_timestamp_shifts_relative_times(self) -> None:
+        """Regression guard: moving events[0].timestamp changes output.
+
+        Confirms the first event timestamp (not the last) is the
+        reference for relative-time computation.
+        """
+        ev1_early = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+            data={"content": "a"},
+        )
+        ev1_late = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 1, 1, 10, 3, 0, tzinfo=UTC),
+            data={"content": "a"},
+        )
+        ev2 = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 1, 1, 10, 5, 0, tzinfo=UTC),
+            data={"content": "b"},
+        )
+        summary = SessionSummary(session_id="fb-reg", start_time=None)
+
+        buf_early, con_early = _buf_console()
+        render_session_detail([ev1_early, ev2], summary, target_console=con_early)
+        out_early = _strip_ansi(buf_early.getvalue())
+
+        buf_late, con_late = _buf_console()
+        render_session_detail([ev1_late, ev2], summary, target_console=con_late)
+        out_late = _strip_ansi(buf_late.getvalue())
+
+        # With ev1 at 10:00 the second event is +5:00; with ev1 at 10:03 it's +2:00.
+        assert "+5:00" in out_early
+        assert "+2:00" in out_late
+        # The two outputs must differ because the reference changed.
+        assert out_early != out_late
 
 
 # ---------------------------------------------------------------------------
