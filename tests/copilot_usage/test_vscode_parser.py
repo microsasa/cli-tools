@@ -1791,25 +1791,28 @@ class TestPerFileSummaryCacheLRUEviction:
 
 
 # ---------------------------------------------------------------------------
-# Per-file summary cache survives beyond old shared 64-entry limit
+# Per-file summary cache survives beyond the request-cache limit
 # ---------------------------------------------------------------------------
 
 
-class TestPerFileSummaryCacheSurvivesBeyond64:
-    """Verify that per-file summaries for 70+ files survive across calls.
+class TestPerFileSummaryCacheSurvivesBeyondRequestCacheLimit:
+    """Verify that per-file summaries survive when file count exceeds
+    ``_MAX_CACHED_VSCODE_REQUESTS``.
 
-    Before the fix, ``_PER_FILE_SUMMARY_CACHE`` shared the 64-entry limit
-    of ``_VSCODE_LOG_CACHE``.  With a separate 256-entry limit, all
+    Before the fix, ``_PER_FILE_SUMMARY_CACHE`` shared the request-cache
+    limit of ``_VSCODE_LOG_CACHE``.  With a separate, larger limit, all
     unchanged files should hit the per-file summary cache on the second
     call and ``parse_vscode_log`` should only be invoked for the one
     changed file.
     """
 
     def test_only_changed_file_reparsed(self, tmp_path: Path) -> None:
-        """With 70+ files, only the changed file triggers parse_vscode_log."""
-        num_files = 75
+        """With more files than _MAX_CACHED_VSCODE_REQUESTS, only the
+        changed file triggers parse_vscode_log.
+        """
+        num_files = _MAX_CACHED_VSCODE_REQUESTS + 11
+        assert num_files < _MAX_CACHED_FILE_SUMMARIES
 
-        # Create 75 log files inside a VS Code log directory layout.
         log_files: list[Path] = []
         for i in range(num_files):
             log_dir = (
