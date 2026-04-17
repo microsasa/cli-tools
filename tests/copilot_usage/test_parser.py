@@ -8493,7 +8493,8 @@ class TestDetectResumeElifShortCircuit:
     5 comparisons per interesting event (1 for the ``in`` membership test plus
     up to 4 for the elif branches) and exactly 2 for the most common
     ``ASSISTANT_MESSAGE`` case (1 membership + 1 branch match).  Uninteresting
-    events are skipped via an O(1) hash lookup with no ``__eq__`` calls.
+    events are skipped via an O(1) hash lookup with no additional branch
+    comparisons (``__eq__`` is only invoked on rare hash collisions).
     """
 
     def test_comparison_count_500_assistant_messages(self, tmp_path: Path) -> None:
@@ -8501,9 +8502,9 @@ class TestDetectResumeElifShortCircuit:
 
         Uses a spy wrapper around ``ev.type`` access to count the total number
         of equality comparisons performed inside the _detect_resume loop.
-        With the frozenset pre-filter, each interesting event costs at most 2
-        __eq__ calls: one for the ``in`` membership test and one for the
-        if/elif branch match.
+        With the frozenset pre-filter, each interesting event typically costs 2
+        ``__eq__`` calls: one for the ``in`` membership test and one for the
+        if/elif branch match (rare hash collisions may add a few more).
         """
         # Build a minimal session: start → user → shutdown → 500 assistant msgs
         start_raw = json.dumps(
