@@ -1655,6 +1655,24 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
 # ---------------------------------------------------------------------------
 
 
+def _make_log_tree(tmp_path: Path, n_files: int) -> list[Path]:
+    """Create *n_files* log files under a VS Code log directory layout."""
+    paths: list[Path] = []
+    for i in range(n_files):
+        log_dir = (
+            tmp_path
+            / f"2026031{i}T211400"
+            / "window1"
+            / "exthost"
+            / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=i))
+        paths.append(log_file)
+    return paths
+
+
 class TestSafeFileIdentityCalledOncePerFile:
     """Assert safe_file_identity is called at most once per log file per call.
 
@@ -1665,27 +1683,9 @@ class TestSafeFileIdentityCalledOncePerFile:
     should occur.
     """
 
-    @staticmethod
-    def _make_log_tree(tmp_path: Path, n_files: int) -> list[Path]:
-        """Create *n_files* log files under a VS Code log directory layout."""
-        paths: list[Path] = []
-        for i in range(n_files):
-            log_dir = (
-                tmp_path
-                / f"2026031{i}T211400"
-                / "window1"
-                / "exthost"
-                / "GitHub.copilot-chat"
-            )
-            log_dir.mkdir(parents=True)
-            log_file = log_dir / "GitHub Copilot Chat.log"
-            log_file.write_text(_make_log_line(req_idx=i))
-            paths.append(log_file)
-        return paths
-
     def test_cold_cache_stats_each_file_once(self, tmp_path: Path) -> None:
         """On a cold summary + per-file cache, each file is stat'd once."""
-        log_files = self._make_log_tree(tmp_path, n_files=5)
+        log_files = _make_log_tree(tmp_path, n_files=5)
         call_counts: dict[Path, int] = {}
         real_fn = safe_file_identity
 
@@ -1708,7 +1708,7 @@ class TestSafeFileIdentityCalledOncePerFile:
 
     def test_warm_per_file_cache_stats_each_file_once(self, tmp_path: Path) -> None:
         """With a warm per-file cache but cold summary cache, still one stat."""
-        log_files = self._make_log_tree(tmp_path, n_files=3)
+        log_files = _make_log_tree(tmp_path, n_files=3)
         # Warm the per-file cache.
         for lf in log_files:
             _get_cached_vscode_requests(lf)
@@ -1752,33 +1752,15 @@ class TestWarmCacheIdentityValidation:
     summary is invalidated and the full rebuild path runs.
     """
 
-    @staticmethod
-    def _make_log_tree(tmp_path: Path, n_files: int) -> list[Path]:
-        """Create *n_files* log files under a VS Code log directory layout."""
-        paths: list[Path] = []
-        for i in range(n_files):
-            log_dir = (
-                tmp_path
-                / f"2026031{i}T211400"
-                / "window1"
-                / "exthost"
-                / "GitHub.copilot-chat"
-            )
-            log_dir.mkdir(parents=True)
-            log_file = log_dir / "GitHub Copilot Chat.log"
-            log_file.write_text(_make_log_line(req_idx=i))
-            paths.append(log_file)
-        return paths
-
     def test_second_call_checks_all_file_identities(self, tmp_path: Path) -> None:
         """safe_file_identity is called for every log file on warm cache."""
-        log_files = self._make_log_tree(tmp_path, n_files=5)
+        log_files = _make_log_tree(tmp_path, n_files=5)
 
         # First call — warms discovery + summary caches.
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
 
-        # Second call — fast path should re-check every file identity.
+        # Second call — cache check re-stats every discovered file.
         log_file_set = set(log_files)
         per_file_calls: list[Path] = []
         real_fn = safe_file_identity
@@ -1803,7 +1785,7 @@ class TestWarmCacheIdentityValidation:
 
     def test_file_mutation_invalidates_cache(self, tmp_path: Path) -> None:
         """Mutating any cached log file invalidates the summary cache."""
-        log_files = self._make_log_tree(tmp_path, n_files=5)
+        log_files = _make_log_tree(tmp_path, n_files=5)
 
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
@@ -1823,7 +1805,7 @@ class TestWarmCacheIdentityValidation:
         self, tmp_path: Path
     ) -> None:
         """Second call with warm cache returns the cached summary without rebuilding."""
-        self._make_log_tree(tmp_path, n_files=5)
+        _make_log_tree(tmp_path, n_files=5)
 
         s1 = get_vscode_summary(tmp_path)
 
@@ -1838,7 +1820,7 @@ class TestWarmCacheIdentityValidation:
 
     def test_discovery_miss_revalidates_file_identities(self, tmp_path: Path) -> None:
         """When the discovery cache misses, file identities are still checked."""
-        log_files = self._make_log_tree(tmp_path, n_files=3)
+        log_files = _make_log_tree(tmp_path, n_files=3)
 
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
@@ -1866,8 +1848,14 @@ class TestWarmCacheIdentityValidation:
         ):
             s2 = get_vscode_summary(tmp_path)
 
-        # File identity calls were made (fast path or full path).
-        assert len(stat_calls) > 0
+        # File identity calls include the actual log files, not just
+        # discovery-cache sentinel directories.
+        log_file_set = set(log_files)
+        log_stat_calls = [p for p in stat_calls if p in log_file_set]
+        assert len(log_stat_calls) == len(log_files), (
+            f"Expected stat calls for all {len(log_files)} log files, "
+            f"got {len(log_stat_calls)}"
+        )
         # But the result is still correct.
         assert s2.total_requests == len(log_files)
 
@@ -1909,7 +1897,7 @@ class TestWarmCacheIdentityValidation:
         assert s1.log_files_found == 2
 
         # Summary was NOT cached because of partial failure.
-        # Second call must stat files (not use fast path).
+        # Second call must stat files to check cache validity.
         stat_calls: list[Path] = []
         real_sfi = safe_file_identity
 
@@ -1924,7 +1912,8 @@ class TestWarmCacheIdentityValidation:
             s2 = get_vscode_summary(tmp_path)
 
         # Per-file stats were made because summary cache was None.
-        assert len(stat_calls) >= 2
+        assert log_file in stat_calls
+        assert log_file2 in stat_calls
         assert s2.total_requests == 2
 
 

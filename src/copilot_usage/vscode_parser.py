@@ -389,13 +389,7 @@ _VSCODE_LOG_CACHE: OrderedDict[Path, _CachedVSCodeLog] = OrderedDict()
 
 @dataclass(frozen=True, slots=True)
 class _CachedVSCodeSummary:
-    """Cache entry pairing a snapshot of file identities with the summary.
-
-    The fast path in :func:`get_vscode_summary` re-checks every cached
-    log file identity via :func:`safe_file_identity` before returning
-    the cached summary.  If any file's ``(mtime_ns, size)`` differs,
-    the fast path is skipped and the full rebuild path runs.
-    """
+    """Cache entry pairing a snapshot of file identities with the summary."""
 
     file_ids: frozenset[tuple[Path, tuple[int, int] | None]]
     summary: VSCodeLogSummary
@@ -628,11 +622,6 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     directory and one on the sentinel child), which is much cheaper than
     the deep recursive glob it replaces.
 
-    **Fast path (O(n) syscalls):** when the discovered log paths match
-    those in the cached summary *and* every cached log file's
-    ``(mtime_ns, size)`` identity is unchanged, the cached summary is
-    returned without re-parsing or re-aggregating.
-
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
     cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
@@ -649,18 +638,6 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     global _vscode_summary_cache
 
     logs = _cached_discover_vscode_logs(base_path)
-    current_paths = frozenset(logs)
-
-    # Fast path: re-check every cached log file identity so in-place log
-    # appends/updates to any discovered file cannot bypass invalidation.
-    if _vscode_summary_cache is not None:
-        cached_paths = frozenset(path for path, _ in _vscode_summary_cache.file_ids)
-        if cached_paths == current_paths and all(
-            safe_file_identity(path) == file_id
-            for path, file_id in _vscode_summary_cache.file_ids
-        ):
-            return _vscode_summary_cache.summary
-
     log_ids: list[tuple[Path, tuple[int, int] | None]] = [
         (p, safe_file_identity(p)) for p in logs
     ]
