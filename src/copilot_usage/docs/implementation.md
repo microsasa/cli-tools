@@ -397,7 +397,19 @@ Implemented in `_extract_session_name()` (in `parser.py`).
 ### Resolution order
 
 1. **Primary**: Read `plan.md` from the session directory. If it exists and the first line starts with `# `, extract the heading text after `# `.
-2. **Fallback**: The report layer uses `s.name or s.session_id[:12]` — showing the first 12 characters of the session UUID.
+2. **Fallback**: The report layer uses `s.name or s.session_id[:12] or "(no id)"` — showing the session name if available, then the first 12 characters of the session UUID, then the literal `"(no id)"` when the session ID is also empty.
+
+### Plan probe mechanism
+
+Not every session has a `plan.md` at discovery time — it may be created later during a session. To handle this without rescanning the entire session-state directory, the discovery cache implements a **plan probe** mechanism:
+
+- `_DiscoveryCache` maintains a `no_plan_indices` list — the indices (into the cached `entries` list) of sessions where no `plan.md` has been found yet.
+- On each **cache hit** (i.e., the root directory identity is unchanged so no full rescan is triggered), up to `_MAX_PLAN_PROBES` (currently 5) entries from `no_plan_indices` are checked for a newly-created `plan.md`.
+- A `probe_cursor` tracks where the next sweep should start within `no_plan_indices`, rotating forward by the probe count each time. This ensures every session is eventually probed across successive cache-hit refresh cycles rather than always checking the same first few entries.
+- When a probed session's `plan.md` is found, that index is removed from `no_plan_indices` and will not be re-checked.
+- When `no_plan_indices` is empty (all sessions have a cached `plan.md` path), the probe step is skipped entirely.
+
+This design keeps probe cost bounded at `O(min(_MAX_PLAN_PROBES, len(no_plan_indices)))` per call — constant amortised regardless of total session count.
 
 ### How it's called
 
@@ -444,7 +456,7 @@ Tier is derived from the multiplier (in `pricing.py`): ≥3.0 → Premium, = 0.0
 When no shutdown data exists, the model is resolved in `_build_active_summary()` (in `parser.py`):
 
 1. Scan `tool.execution_complete` events for a `model` field
-2. Fall back to `~/.copilot/config.json` → `data.model` field (`_read_config_model()` in `parser.py`)
+2. Fall back to `~/.copilot/config.json` → top-level `"model"` field (`_read_config_model()` in `parser.py`)
 
 ---
 
@@ -485,3 +497,16 @@ The `CCREQ_RE` regex in `vscode_parser.py` extracts: timestamp, request ID, mode
 - Log files discovered vs successfully parsed
 
 `parse_vscode_log()` raises `OSError` if a file can't be read. `get_vscode_summary()` catches it and skips unreadable files, so only successfully read files are counted in `log_files_parsed`.
+
+### Caching
+
+`vscode_parser.py` uses a four-layer caching architecture to avoid redundant I/O and parsing on repeated calls (e.g., during live-refresh). All caches rely on `(st_mtime_ns, st_size)`-based identities to detect changes on disk, though not every cache computes that identity via `safe_file_identity()`.
+
+| Cache | Key | Purpose | Invalidation |
+|---|---|---|---|
+| `_VSCODE_DISCOVERY_CACHE` | Candidate root `Path` | Skips glob when the root directory identity and cached newest-child sentinel are unchanged | Replaced when `root_id` (root dir identity) changes or `newest_child_id` (the cached most-recently-modified child dir identity) changes; changes under older/non-sentinel child dirs may not invalidate until the root changes or the cache is cleared |
+| `_VSCODE_LOG_CACHE` | Log file `Path` | Skips re-parsing a log file whose `(mtime_ns, size)` is unchanged | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
+| `_PER_FILE_SUMMARY_CACHE` | Log file `Path` | Caches per-file aggregation (`VSCodeLogSummary`) keyed by `Path`, validated by file identity | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
+| `_vscode_summary_cache` | `frozenset[tuple[Path, file_id]]` | Full `VSCodeLogSummary` for the entire set of discovered files | Replaced when the combined identity set changes; only populated when all discovered logs were successfully parsed (transient read failures do not produce a stale cache) |
+
+The two per-file caches (`_VSCODE_LOG_CACHE` and `_PER_FILE_SUMMARY_CACHE`) use `OrderedDict` with LRU insertion via the shared `lru_insert()` helper from `_fs_utils.py`. On a cache hit, entries are moved to the end via `move_to_end()` to maintain recency order.
