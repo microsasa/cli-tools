@@ -152,6 +152,11 @@ class _VSCodeDiscoveryCache:
 
 _VSCODE_DISCOVERY_CACHE: dict[Path, _VSCodeDiscoveryCache] = {}
 
+# Monotonically increasing counter bumped on every discovery-cache miss.
+# Allows the summary cache to skip O(n) per-file stat() calls when the
+# discovery state has not changed since the summary was last computed.
+_discovery_generation: int = 0
+
 
 def _scan_child_ids(root: Path) -> _ChildIds:
     """Return identities of immediate child directories under *root*.
@@ -277,6 +282,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     A non-directory candidate is skipped with an empty result, matching
     the behaviour of :func:`discover_vscode_logs`.
     """
+    global _discovery_generation
     candidates = [base_path] if base_path is not None else _default_log_candidates()
     result: list[Path] = []
     for candidate in candidates:
@@ -310,6 +316,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
             result.extend(cached.log_paths)
             continue
         # Cache miss or root/sentinel changed — scan children and run glob
+        _discovery_generation += 1
         child_ids = _scan_child_ids(candidate)
         newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
         found = sorted(candidate.glob(_GLOB_PATTERN))
@@ -389,10 +396,17 @@ _VSCODE_LOG_CACHE: OrderedDict[Path, _CachedVSCodeLog] = OrderedDict()
 
 @dataclass(frozen=True, slots=True)
 class _CachedVSCodeSummary:
-    """Cache entry pairing a snapshot of file identities with the summary."""
+    """Cache entry pairing a snapshot of file identities with the summary.
+
+    *discovery_gen* records the value of :data:`_discovery_generation` at
+    population time.  When the generation has not changed on the next
+    call, no per-file ``stat()`` is needed — the fast path returns the
+    cached summary in O(1).
+    """
 
     file_ids: frozenset[tuple[Path, tuple[int, int] | None]]
     summary: VSCodeLogSummary
+    discovery_gen: int
 
 
 _vscode_summary_cache: _CachedVSCodeSummary | None = None
@@ -622,6 +636,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     directory and one on the sentinel child), which is much cheaper than
     the deep recursive glob it replaces.
 
+    **Fast path (O(1)):** when the discovery-cache generation has not
+    changed since the summary was last cached, no per-file ``stat()``
+    calls are made and the cached summary is returned immediately.
+
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
     are not re-parsed on repeated invocations.  A module-level summary
     cache (:data:`_vscode_summary_cache`) avoids re-aggregating all
@@ -638,6 +656,15 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     global _vscode_summary_cache
 
     logs = _cached_discover_vscode_logs(base_path)
+
+    # Fast path: discovery state unchanged since the summary was cached
+    # — skip O(n) per-file stat() calls entirely.
+    if (
+        _vscode_summary_cache is not None
+        and _vscode_summary_cache.discovery_gen == _discovery_generation
+    ):
+        return _vscode_summary_cache.summary
+
     log_ids: list[tuple[Path, tuple[int, int] | None]] = [
         (p, safe_file_identity(p)) for p in logs
     ]
@@ -647,6 +674,13 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
         _vscode_summary_cache is not None
         and _vscode_summary_cache.file_ids == current_ids
     ):
+        # Files unchanged despite discovery-state change — promote to
+        # current generation so subsequent calls take the fast path.
+        _vscode_summary_cache = _CachedVSCodeSummary(
+            file_ids=current_ids,
+            summary=_vscode_summary_cache.summary,
+            discovery_gen=_discovery_generation,
+        )
         return _vscode_summary_cache.summary
 
     acc = _SummaryAccumulator(log_files_found=len(logs))
@@ -678,6 +712,8 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     # transient read failures should not produce a permanently stale cache.
     if summary.log_files_parsed == summary.log_files_found:
         _vscode_summary_cache = _CachedVSCodeSummary(
-            file_ids=current_ids, summary=summary
+            file_ids=current_ids,
+            summary=summary,
+            discovery_gen=_discovery_generation,
         )
     return summary

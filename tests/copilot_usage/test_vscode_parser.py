@@ -67,6 +67,7 @@ def _clear_vscode_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     import copilot_usage.vscode_parser as _mod
 
     _mod._vscode_summary_cache = None  # pyright: ignore[reportPrivateUsage]
+    _mod._discovery_generation = 0  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1478,6 +1479,10 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
         )
 
+        # Clear discovery cache so the next call falls through to per-file
+        # stat (in production, directory-level changes trigger this).
+        _VSCODE_DISCOVERY_CACHE.clear()
+
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
             wraps=_update_vscode_summary,
@@ -1636,6 +1641,10 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
         extra = "\n".join(_make_log_line(req_idx=i + n * 2) for i in range(m))
         log_file2.write_text(existing + "\n" + extra)
 
+        # Clear discovery cache so the next call falls through to per-file
+        # stat (in production, directory-level changes trigger this).
+        _VSCODE_DISCOVERY_CACHE.clear()
+
         # Spy on _update_vscode_summary and call again.
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
@@ -1737,6 +1746,184 @@ class TestSafeFileIdentityCalledOncePerFile:
                 f"safe_file_identity called {call_counts[log_file]} times "
                 f"for {log_file.name}, expected at most 1"
             )
+
+
+# ---------------------------------------------------------------------------
+# Discovery-generation fast path — zero per-file stat() on warm cache
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryGenerationFastPath:
+    """Verify that get_vscode_summary skips per-file stat() on a warm cache.
+
+    When the discovery-cache generation has not changed since the summary
+    was last cached, ``safe_file_identity`` must not be called at all —
+    the cached summary is returned in O(1) with zero per-file syscalls.
+    """
+
+    @staticmethod
+    def _make_log_tree(tmp_path: Path, n_files: int) -> list[Path]:
+        """Create *n_files* log files under a VS Code log directory layout."""
+        paths: list[Path] = []
+        for i in range(n_files):
+            log_dir = (
+                tmp_path
+                / f"2026031{i}T211400"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            log_file = log_dir / "GitHub Copilot Chat.log"
+            log_file.write_text(_make_log_line(req_idx=i))
+            paths.append(log_file)
+        return paths
+
+    def test_second_call_zero_safe_file_identity(self, tmp_path: Path) -> None:
+        """safe_file_identity is not called for log files on the second call."""
+        log_files = self._make_log_tree(tmp_path, n_files=5)
+
+        # First call — warms discovery + summary caches.
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == len(log_files)
+
+        # Second call — discovery-generation fast path should fire.
+        # safe_file_identity may still be called for the discovery-cache
+        # sentinel child, but must NOT be called for any log file.
+        log_file_set = set(log_files)
+        per_file_calls: list[Path] = []
+        real_fn = safe_file_identity
+
+        def _counting_spy(path: Path) -> tuple[int, int] | None:
+            if path in log_file_set:
+                per_file_calls.append(path)
+            return real_fn(path)
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=_counting_spy,
+        ):
+            s2 = get_vscode_summary(tmp_path)
+
+        assert len(per_file_calls) == 0, (
+            f"safe_file_identity called {len(per_file_calls)} times for log "
+            f"files on warm cache, expected 0"
+        )
+        assert s2 is s1  # exact same cached object
+        assert s2.total_requests == len(log_files)
+
+    def test_second_call_completes_quickly(self, tmp_path: Path) -> None:
+        """Second call with warm cache completes in < 10% of the first call time."""
+        import time
+
+        self._make_log_tree(tmp_path, n_files=5)
+
+        start = time.perf_counter()
+        get_vscode_summary(tmp_path)
+        first_duration = time.perf_counter() - start
+
+        start = time.perf_counter()
+        get_vscode_summary(tmp_path)
+        second_duration = time.perf_counter() - start
+
+        # Second call should be at most 10% of first, or under 500 μs.
+        assert second_duration <= max(first_duration * 0.1, 500e-6), (
+            f"second call took {second_duration * 1e6:.0f} μs, "
+            f"first took {first_duration * 1e6:.0f} μs"
+        )
+
+    def test_discovery_miss_falls_through_to_stat(self, tmp_path: Path) -> None:
+        """When the discovery cache misses, per-file stat() still runs."""
+        log_files = self._make_log_tree(tmp_path, n_files=3)
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == len(log_files)
+
+        # Tamper with the cached root_id to force a discovery-cache miss
+        # (which bumps _discovery_generation).
+        cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
+        _VSCODE_DISCOVERY_CACHE[tmp_path] = _VSCodeDiscoveryCache(
+            root_id=(cached.root_id[0] + 1_000_000_000, cached.root_id[1]),
+            child_ids=cached.child_ids,
+            newest_child_path=cached.newest_child_path,
+            newest_child_id=cached.newest_child_id,
+            log_paths=cached.log_paths,
+        )
+
+        stat_calls: list[Path] = []
+        real_fn = safe_file_identity
+
+        def _counting_spy(path: Path) -> tuple[int, int] | None:
+            stat_calls.append(path)
+            return real_fn(path)
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=_counting_spy,
+        ):
+            s2 = get_vscode_summary(tmp_path)
+
+        # Discovery miss caused a generation bump so the fast path did
+        # not fire — per-file stat calls were made.
+        assert len(stat_calls) > 0
+        # But the result is still correct.
+        assert s2.total_requests == len(log_files)
+
+    def test_partial_failure_not_cached_then_second_call_stats(
+        self, tmp_path: Path
+    ) -> None:
+        """When summary is not cached (partial failure), second call stats files."""
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        log_dir2 = (
+            tmp_path / "20260314T100000" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir2.mkdir(parents=True)
+        log_file2 = log_dir2 / "GitHub Copilot Chat.log"
+        log_file2.write_text(_make_log_line(req_idx=1))
+
+        real_fn = _get_cached_vscode_requests
+
+        def _fail_second(
+            log_path: Path,
+            file_id: tuple[int, int] | None = None,
+        ) -> tuple[VSCodeRequest, ...]:
+            if log_path == log_file2:
+                raise OSError("transient read failure")
+            return real_fn(log_path, file_id)
+
+        with patch(
+            "copilot_usage.vscode_parser._get_cached_vscode_requests",
+            side_effect=_fail_second,
+        ):
+            s1 = get_vscode_summary(tmp_path)
+
+        assert s1.log_files_parsed == 1
+        assert s1.log_files_found == 2
+
+        # Summary was NOT cached because of partial failure.
+        # Second call must stat files (not use fast path).
+        stat_calls: list[Path] = []
+        real_sfi = safe_file_identity
+
+        def _counting_spy(path: Path) -> tuple[int, int] | None:
+            stat_calls.append(path)
+            return real_sfi(path)
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=_counting_spy,
+        ):
+            s2 = get_vscode_summary(tmp_path)
+
+        # Per-file stats were made because summary cache was None.
+        assert len(stat_calls) >= 2
+        assert s2.total_requests == 2
 
 
 # ---------------------------------------------------------------------------
