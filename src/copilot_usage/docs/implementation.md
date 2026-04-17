@@ -407,7 +407,7 @@ Not every session has a `plan.md` at discovery time — it may be created later 
 - On each **cache hit** (i.e., the root directory identity is unchanged so no full rescan is triggered), up to `_MAX_PLAN_PROBES` (currently 5) entries from `no_plan_indices` are checked for a newly-created `plan.md`.
 - A `probe_cursor` tracks where the next sweep should start within `no_plan_indices`, rotating forward by the probe count each time. This ensures every session is eventually probed across successive cache-hit refresh cycles rather than always checking the same first few entries.
 - When a probed session's `plan.md` is found, that index is removed from `no_plan_indices` and will not be re-checked.
-- When `no_plan_indices` is empty (all sessions have names), the probe step is skipped entirely.
+- When `no_plan_indices` is empty (all sessions have a cached `plan.md` path), the probe step is skipped entirely.
 
 This design keeps probe cost bounded at `O(min(_MAX_PLAN_PROBES, len(no_plan_indices)))` per call — constant amortised regardless of total session count.
 
@@ -500,11 +500,11 @@ The `CCREQ_RE` regex in `vscode_parser.py` extracts: timestamp, request ID, mode
 
 ### Caching
 
-`vscode_parser.py` uses a four-layer caching architecture to avoid redundant I/O and parsing on repeated calls (e.g., during live-refresh). All caches use `safe_file_identity()` — the `(st_mtime_ns, st_size)` tuple — to detect changes on disk.
+`vscode_parser.py` uses a four-layer caching architecture to avoid redundant I/O and parsing on repeated calls (e.g., during live-refresh). All caches rely on `(st_mtime_ns, st_size)`-based identities to detect changes on disk, though not every cache computes that identity via `safe_file_identity()`.
 
 | Cache | Key | Purpose | Invalidation |
 |---|---|---|---|
-| `_VSCODE_DISCOVERY_CACHE` | Candidate root `Path` | Skips glob when root directory and immediate child directories are unchanged | Replaced when `root_id` (root dir identity) changes or `newest_child_id` (most-recently-modified child dir identity) changes |
+| `_VSCODE_DISCOVERY_CACHE` | Candidate root `Path` | Skips glob when the root directory identity and cached newest-child sentinel are unchanged | Replaced when `root_id` (root dir identity) changes or `newest_child_id` (the cached most-recently-modified child dir identity) changes; changes under older/non-sentinel child dirs may not invalidate until the root changes or the cache is cleared |
 | `_VSCODE_LOG_CACHE` | Log file `Path` | Skips re-parsing a log file whose `(mtime_ns, size)` is unchanged | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
 | `_PER_FILE_SUMMARY_CACHE` | Log file `Path` | Caches per-file aggregation (`VSCodeLogSummary`) keyed by file identity | LRU eviction at `_MAX_CACHED_VSCODE_LOGS` (64); entry replaced when file identity changes |
 | `_vscode_summary_cache` | `frozenset[tuple[Path, file_id]]` | Full `VSCodeLogSummary` for the entire set of discovered files | Replaced when the combined identity set changes; only populated when all discovered logs were successfully parsed (transient read failures do not produce a stale cache) |
