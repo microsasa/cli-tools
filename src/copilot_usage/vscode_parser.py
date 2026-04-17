@@ -400,8 +400,9 @@ class _CachedVSCodeSummary:
 
     *discovery_gen* records the value of :data:`_discovery_generation` at
     population time.  When the generation has not changed on the next
-    call and the discovered log paths match, no per-file ``stat()`` is
-    needed — the fast path returns the cached summary in O(1).
+    call and the discovered log paths match, only the newest cached log
+    file is ``stat()``'d as a sentinel — the fast path returns the
+    cached summary in O(1) syscalls if the sentinel is unchanged.
     """
 
     file_ids: frozenset[tuple[Path, tuple[int, int] | None]]
@@ -636,9 +637,10 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     directory and one on the sentinel child), which is much cheaper than
     the deep recursive glob it replaces.
 
-    **Fast path (O(1)):** when the discovery-cache generation has not
-    changed since the summary was last cached and the discovered log
-    paths match, no per-file ``stat()`` calls are made and the cached
+    **Fast path (O(1) syscalls):** when the discovery-cache generation has
+    not changed since the summary was last cached and the discovered log
+    paths match, only the newest log file is ``stat()``'d as a sentinel
+    to detect in-place modifications.  If it is unchanged the cached
     summary is returned immediately.
 
     Uses :func:`_get_cached_vscode_requests` so that unchanged log files
@@ -660,15 +662,27 @@ def get_vscode_summary(base_path: Path | None = None) -> VSCodeLogSummary:
     current_paths = frozenset(logs)
 
     # Fast path: discovery state unchanged since the summary was cached
-    # for the same discovered log set — skip O(n) per-file stat() calls
-    # entirely.
+    # for the same discovered log set.  Before returning the cached
+    # summary, re-check one cached mutable-log sentinel so in-place log
+    # appends/updates do not bypass invalidation entirely.
     if _vscode_summary_cache is not None:
         cached_paths = frozenset(path for path, _ in _vscode_summary_cache.file_ids)
         if (
             _vscode_summary_cache.discovery_gen == _discovery_generation
             and cached_paths == current_paths
         ):
-            return _vscode_summary_cache.summary
+            sentinel_candidates = [
+                (path, file_id)
+                for path, file_id in _vscode_summary_cache.file_ids
+                if file_id is not None
+            ]
+            if sentinel_candidates:
+                sentinel_path, sentinel_file_id = max(
+                    sentinel_candidates,
+                    key=lambda item: item[1],
+                )
+                if safe_file_identity(sentinel_path) == sentinel_file_id:
+                    return _vscode_summary_cache.summary
 
     log_ids: list[tuple[Path, tuple[int, int] | None]] = [
         (p, safe_file_identity(p)) for p in logs

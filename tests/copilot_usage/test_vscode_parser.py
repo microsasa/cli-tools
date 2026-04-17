@@ -1479,10 +1479,6 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
         )
 
-        # Clear discovery cache so the next call falls through to per-file
-        # stat (in production, directory-level changes trigger this).
-        _VSCODE_DISCOVERY_CACHE.clear()
-
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
             wraps=_update_vscode_summary,
@@ -1641,10 +1637,6 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
         extra = "\n".join(_make_log_line(req_idx=i + n * 2) for i in range(m))
         log_file2.write_text(existing + "\n" + extra)
 
-        # Clear discovery cache so the next call falls through to per-file
-        # stat (in production, directory-level changes trigger this).
-        _VSCODE_DISCOVERY_CACHE.clear()
-
         # Spy on _update_vscode_summary and call again.
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
@@ -1749,16 +1741,17 @@ class TestSafeFileIdentityCalledOncePerFile:
 
 
 # ---------------------------------------------------------------------------
-# Discovery-generation fast path — zero per-file stat() on warm cache
+# Discovery-generation fast path — one sentinel stat() on warm cache
 # ---------------------------------------------------------------------------
 
 
 class TestDiscoveryGenerationFastPath:
-    """Verify that get_vscode_summary skips per-file stat() on a warm cache.
+    """Verify that get_vscode_summary limits log-file stat() on a warm cache.
 
     When the discovery-cache generation has not changed since the summary
-    was last cached, ``safe_file_identity`` must not be called at all —
-    the cached summary is returned in O(1) with zero per-file syscalls.
+    was last cached, ``safe_file_identity`` is called at most once — for
+    the mutable-log sentinel — rather than for every discovered log file.
+    The cached summary is returned in O(1) syscalls.
     """
 
     @staticmethod
@@ -1779,8 +1772,8 @@ class TestDiscoveryGenerationFastPath:
             paths.append(log_file)
         return paths
 
-    def test_second_call_zero_safe_file_identity(self, tmp_path: Path) -> None:
-        """safe_file_identity is not called for log files on the second call."""
+    def test_second_call_one_sentinel_safe_file_identity(self, tmp_path: Path) -> None:
+        """safe_file_identity is called once (sentinel) for log files on warm cache."""
         log_files = self._make_log_tree(tmp_path, n_files=5)
 
         # First call — warms discovery + summary caches.
@@ -1788,8 +1781,8 @@ class TestDiscoveryGenerationFastPath:
         assert s1.total_requests == len(log_files)
 
         # Second call — discovery-generation fast path should fire.
-        # safe_file_identity may still be called for the discovery-cache
-        # sentinel child, but must NOT be called for any log file.
+        # safe_file_identity is called once for the mutable-log sentinel,
+        # but must NOT be called for all N log files.
         log_file_set = set(log_files)
         per_file_calls: list[Path] = []
         real_fn = safe_file_identity
@@ -1805,9 +1798,9 @@ class TestDiscoveryGenerationFastPath:
         ):
             s2 = get_vscode_summary(tmp_path)
 
-        assert len(per_file_calls) == 0, (
+        assert len(per_file_calls) == 1, (
             f"safe_file_identity called {len(per_file_calls)} times for log "
-            f"files on warm cache, expected 0"
+            f"files on warm cache, expected 1 (sentinel only)"
         )
         assert s2 is s1  # exact same cached object
         assert s2.total_requests == len(log_files)
