@@ -5,7 +5,7 @@
 import dataclasses
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2911,6 +2911,72 @@ class TestUpdateVscodeSummaryLargeScale:
         assert acc.total_duration_ms == 0
         assert acc.first_timestamp is None
         assert acc.last_timestamp is None
+
+
+class TestUpdateVscodeSummarySameDateNoDateAlloc:
+    """Verify the date-bucketing fast path avoids per-iteration ``date()`` calls.
+
+    All requests share the same calendar day so only one date key should
+    appear and ``datetime.date()`` should be called at most once (for the
+    first distinct date boundary).
+    """
+
+    @staticmethod
+    def _same_day_requests(n: int = 500) -> list[VSCodeRequest]:
+        """Build *n* requests all on the same calendar day."""
+        base = datetime(2026, 4, 15, 10, 0, 0)
+        return [
+            VSCodeRequest(
+                timestamp=base.replace(second=i % 60, minute=i % 60),
+                request_id=f"sd{i:05d}",
+                model="gpt-4o",
+                duration_ms=100,
+                category="inline",
+            )
+            for i in range(n)
+        ]
+
+    def test_single_date_key(self) -> None:
+        """requests_by_date contains exactly one key for same-day input."""
+        requests = self._same_day_requests(500)
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, requests)
+
+        assert dict(acc.requests_by_date) == {"2026-04-15": 500}
+
+    def test_no_per_iteration_date_alloc(self) -> None:
+        """``datetime.date()`` is never called by the optimised loop."""
+        date_call_count = 0
+        base = datetime(2026, 4, 15, 10, 0, 0)
+
+        class _SpyDatetime(datetime):
+            """Subclass that counts ``.date()`` invocations."""
+
+            def date(self) -> date:
+                nonlocal date_call_count
+                date_call_count += 1
+                return super().date()
+
+        requests = [
+            VSCodeRequest(
+                timestamp=_SpyDatetime(
+                    base.year, base.month, base.day, 10, i % 60, i % 60
+                ),
+                request_id=f"spy{i:05d}",
+                model="gpt-4o",
+                duration_ms=100,
+                category="inline",
+            )
+            for i in range(200)
+        ]
+        acc = _SummaryAccumulator()
+        _update_vscode_summary(acc, requests)
+
+        assert date_call_count == 0, (
+            f"datetime.date() called {date_call_count} times; "
+            "expected 0 after ymd-tuple optimisation"
+        )
+        assert acc.total_requests == 200
 
 
 class TestVSCodeDiscoveryCacheIsFrozen:

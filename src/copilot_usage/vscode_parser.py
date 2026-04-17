@@ -8,7 +8,7 @@ import types
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal
 
@@ -622,7 +622,7 @@ def _update_vscode_summary(
     first_ts = acc.first_timestamp
     last_ts = acc.last_timestamp
     last_date_key: str = ""
-    last_date_val: date | None = None
+    last_date_val: tuple[int, int, int] | None = None
 
     for req in requests:
         total_req += 1
@@ -635,10 +635,11 @@ def _update_vscode_summary(
         rbc[req.category] += 1
 
         ts = req.timestamp
-        ts_date = ts.date()
-        if last_date_val is None or ts_date != last_date_val:
-            last_date_key = ts_date.isoformat()
-            last_date_val = ts_date
+        ts_ymd = (ts.year, ts.month, ts.day)
+        if last_date_val is None or ts_ymd != last_date_val:
+            y, m, d = ts_ymd
+            last_date_key = f"{y:04d}-{m:02d}-{d:02d}"
+            last_date_val = ts_ymd
         rbd[last_date_key] += 1
 
         # Timestamp bounds: full min/max scan so callers (especially
