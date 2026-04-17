@@ -15,7 +15,8 @@ from copilot_usage._fs_utils import safe_file_identity
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     _CCREQ_RE,  # pyright: ignore[reportPrivateUsage]
-    _MAX_CACHED_VSCODE_LOGS,  # pyright: ignore[reportPrivateUsage]
+    _MAX_CACHED_FILE_SUMMARIES,  # pyright: ignore[reportPrivateUsage]
+    _MAX_CACHED_VSCODE_REQUESTS,  # pyright: ignore[reportPrivateUsage]
     _PER_FILE_SUMMARY_CACHE,  # pyright: ignore[reportPrivateUsage]
     _VSCODE_DISCOVERY_CACHE,  # pyright: ignore[reportPrivateUsage]
     _VSCODE_LOG_CACHE,  # pyright: ignore[reportPrivateUsage]
@@ -1323,9 +1324,9 @@ class TestVscodeLogCache:
         assert len(second) == 2
 
     def test_lru_eviction(self, tmp_path: Path) -> None:
-        """When the cache exceeds _MAX_CACHED_VSCODE_LOGS, the oldest entry is evicted."""
+        """When the cache exceeds _MAX_CACHED_VSCODE_REQUESTS, the oldest entry is evicted."""
         paths: list[Path] = []
-        for i in range(_MAX_CACHED_VSCODE_LOGS + 1):
+        for i in range(_MAX_CACHED_VSCODE_REQUESTS + 1):
             p = tmp_path / f"log_{i}.log"
             p.write_text(_make_log_line(req_idx=i))
             paths.append(p)
@@ -1335,7 +1336,7 @@ class TestVscodeLogCache:
 
         # The first entry should have been evicted.
         assert paths[0] not in _VSCODE_LOG_CACHE
-        assert len(_VSCODE_LOG_CACHE) == _MAX_CACHED_VSCODE_LOGS
+        assert len(_VSCODE_LOG_CACHE) == _MAX_CACHED_VSCODE_REQUESTS
 
     def test_lru_promotion_on_access(self, tmp_path: Path) -> None:
         """Accessing a cached entry moves it to the back (most-recently used)."""
@@ -1749,13 +1750,13 @@ class TestPerFileSummaryCacheLRUEviction:
 
     After removing _BoundedFileSummaryCache, eviction is handled by the
     shared ``lru_insert()`` helper.  This test exercises the integration:
-    writing more than ``_MAX_CACHED_VSCODE_LOGS`` distinct files must
+    writing more than ``_MAX_CACHED_FILE_SUMMARIES`` distinct files must
     evict the oldest entry while the newest survives.
     """
 
     def test_oldest_evicted_newest_survives(self, tmp_path: Path) -> None:
-        """Inserting _MAX_CACHED_VSCODE_LOGS + 1 files evicts the first."""
-        limit = _MAX_CACHED_VSCODE_LOGS
+        """Inserting _MAX_CACHED_FILE_SUMMARIES + 1 files evicts the first."""
+        limit = _MAX_CACHED_FILE_SUMMARIES
 
         # Create limit + 1 log files inside a VS Code log directory layout.
         log_files: list[Path] = []
@@ -1787,6 +1788,68 @@ class TestPerFileSummaryCacheLRUEviction:
         )
         # Cache size must match the configured limit after one eviction.
         assert len(_PER_FILE_SUMMARY_CACHE) == limit
+
+
+# ---------------------------------------------------------------------------
+# Per-file summary cache survives beyond old shared 64-entry limit
+# ---------------------------------------------------------------------------
+
+
+class TestPerFileSummaryCacheSurvivesBeyond64:
+    """Verify that per-file summaries for 70+ files survive across calls.
+
+    Before the fix, ``_PER_FILE_SUMMARY_CACHE`` shared the 64-entry limit
+    of ``_VSCODE_LOG_CACHE``.  With a separate 256-entry limit, all
+    unchanged files should hit the per-file summary cache on the second
+    call and ``parse_vscode_log`` should only be invoked for the one
+    changed file.
+    """
+
+    def test_only_changed_file_reparsed(self, tmp_path: Path) -> None:
+        """With 70+ files, only the changed file triggers parse_vscode_log."""
+        num_files = 75
+
+        # Create 75 log files inside a VS Code log directory layout.
+        log_files: list[Path] = []
+        for i in range(num_files):
+            log_dir = (
+                tmp_path
+                / f"session{i:04d}"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            log_file = log_dir / "GitHub Copilot Chat.log"
+            log_file.write_text(_make_log_line(req_idx=i))
+            log_files.append(log_file)
+
+        # First call: populate caches.  parse_vscode_log called once per file.
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            s1 = get_vscode_summary(tmp_path)
+            assert s1.total_requests == num_files
+            assert spy.call_count == num_files
+
+        # Modify exactly one file so its safe_file_identity changes.
+        changed = log_files[0]
+        changed.write_text(
+            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=9999)
+        )
+
+        # Second call: only the changed file should be re-parsed.
+        with patch(
+            "copilot_usage.vscode_parser.parse_vscode_log",
+            wraps=parse_vscode_log,
+        ) as spy:
+            s2 = get_vscode_summary(tmp_path)
+            assert spy.call_count == 1
+            assert spy.call_args is not None
+            assert spy.call_args[0][0] == changed
+        # The changed file now contributes 2 requests.
+        assert s2.total_requests == num_files + 1
 
 
 # ---------------------------------------------------------------------------
