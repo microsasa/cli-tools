@@ -1740,16 +1740,16 @@ class TestSafeFileIdentityCalledOncePerFile:
 
 
 # ---------------------------------------------------------------------------
-# Discovery-generation fast path — one sentinel stat() on warm cache
+# Warm-cache identity validation across cached VS Code log files
 # ---------------------------------------------------------------------------
 
 
-class TestDiscoveryGenerationFastPath:
-    """Verify that get_vscode_summary re-checks all file identities on warm cache.
+class TestWarmCacheIdentityValidation:
+    """Verify warm-cache per-file identity validation in get_vscode_summary.
 
     When the summary cache is warm, ``safe_file_identity`` is called for
-    every cached log file.  If any file's identity differs, the fast
-    path is skipped and the full rebuild path runs.
+    every cached log file.  If any file's identity differs, the cached
+    summary is invalidated and the full rebuild path runs.
     """
 
     @staticmethod
@@ -1801,14 +1801,14 @@ class TestDiscoveryGenerationFastPath:
         assert s2 is s1  # exact same cached object
         assert s2.total_requests == len(log_files)
 
-    def test_non_sentinel_file_mutation_invalidates_cache(self, tmp_path: Path) -> None:
-        """Mutating a non-newest log file invalidates the summary cache."""
+    def test_file_mutation_invalidates_cache(self, tmp_path: Path) -> None:
+        """Mutating any cached log file invalidates the summary cache."""
         log_files = self._make_log_tree(tmp_path, n_files=5)
 
         s1 = get_vscode_summary(tmp_path)
         assert s1.total_requests == len(log_files)
 
-        # Mutate the *oldest* (first) log file — not the newest sentinel.
+        # Mutate the *oldest* (first) log file.
         oldest = log_files[0]
         oldest.write_text(
             _make_log_line(req_idx=100) + "\n" + _make_log_line(req_idx=101)
