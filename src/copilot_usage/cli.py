@@ -254,12 +254,15 @@ class _FileChangeHandler:
     def __init__(self, change_event: threading.Event) -> None:
         self._change_event = change_event
         self._last_trigger = 0.0
+        self._lock = threading.Lock()
 
     def dispatch(self, event: object) -> None:
         now = time.monotonic()
-        if now - self._last_trigger > _WATCHDOG_DEBOUNCE_SECS:
+        with self._lock:
+            if now - self._last_trigger <= _WATCHDOG_DEBOUNCE_SECS:
+                return
             self._last_trigger = now
-            self._change_event.set()
+        self._change_event.set()
 
 
 class _Stoppable(Protocol):

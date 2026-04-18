@@ -941,8 +941,55 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
+    def test_concurrent_dispatch_sets_event_at_most_once(self) -> None:
+        """Concurrent dispatch calls within the debounce window set the event at most once."""
+        import time as _time
 
-# ---------------------------------------------------------------------------
+        from copilot_usage.cli import (
+            _FileChangeHandler,
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+
+        # Prime the handler so _last_trigger is "now", then clear the event.
+        handler.dispatch(object())
+        assert event.is_set()
+        event.clear()
+
+        # Reset _last_trigger to a value that makes the debounce window expire,
+        # so both threads believe they should fire.
+        handler._last_trigger = _time.monotonic() - 10.0
+
+        set_count: list[int] = [0]
+        count_lock = threading.Lock()
+        original_set = event.set
+
+        def counting_set() -> None:
+            with count_lock:
+                set_count[0] += 1
+            original_set()
+
+        event.set = counting_set  # type: ignore[assignment]
+
+        barrier = threading.Barrier(2)
+
+        def worker() -> None:
+            barrier.wait()
+            handler.dispatch(object())
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5.0)
+        t2.join(timeout=5.0)
+
+        assert set_count[0] == 1, (
+            f"Expected change_event.set() exactly once, got {set_count[0]}"
+        )
+
+
 # Issue #59 — untested branches
 # ---------------------------------------------------------------------------
 
