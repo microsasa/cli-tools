@@ -576,16 +576,17 @@ def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``.
 
-    Plain ``dict`` values are passed to the constructor;
-    ``VSCodeLogSummary.__post_init__`` wraps them in ``MappingProxyType``.
+    Accumulator ``defaultdict`` fields are passed directly;
+    ``VSCodeLogSummary.__post_init__`` copies them once into
+    ``MappingProxyType`` wrappers.
     """
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
-        requests_by_model=dict(acc.requests_by_model),
-        duration_by_model=dict(acc.duration_by_model),
-        requests_by_category=dict(acc.requests_by_category),
-        requests_by_date=dict(acc.requests_by_date),
+        requests_by_model=acc.requests_by_model,
+        duration_by_model=acc.duration_by_model,
+        requests_by_category=acc.requests_by_category,
+        requests_by_date=acc.requests_by_date,
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,
