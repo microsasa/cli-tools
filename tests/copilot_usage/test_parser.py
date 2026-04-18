@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import SupportsIndex, overload
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from pydantic import ValidationError
@@ -60,6 +60,7 @@ from copilot_usage.parser import (
     _full_scandir_discovery,
     _infer_model_from_metrics,
     _insert_session_entry,
+    _parse_events_from_offset,
     _read_config_model,
     _ResumeInfo,
     _SortedSessionsCache,
@@ -6757,7 +6758,10 @@ class TestSessionCacheMtime:
         self._make_session(tmp_path, "sess-b", "b")
 
         # First call — populates cache; both files must be parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 2
             assert spy.call_count == 2
@@ -6788,11 +6792,14 @@ class TestSessionCacheMtime:
         os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
 
         # Second call — only the modified file should be re-parsed.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 2
             assert spy.call_count == 1
-            spy.assert_called_once_with(p1)
+            spy.assert_called_once_with(p1, ANY)
 
     def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
         """Cached entries produce the same summaries as a fresh parse."""
@@ -7069,7 +7076,10 @@ class TestStalePruningScopedToBasePath:
         get_all_sessions(path_b)
 
         # Third call back to path_a — parse_events should not be called.
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             result = get_all_sessions(path_a)
             assert len(result) == 1
             assert spy.call_count == 0
@@ -7257,7 +7267,10 @@ class TestActiveSessionCaching:
         # First call — must parse
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result1 = get_all_sessions(tmp_path)
             assert len(result1) == 1
@@ -7267,7 +7280,10 @@ class TestActiveSessionCaching:
         # Second call — no file changes, should use cache
         with (
             patch("copilot_usage.parser._CONFIG_PATH", config),
-            patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy,
+            patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy,
         ):
             result2 = get_all_sessions(tmp_path)
             assert len(result2) == 1
@@ -7294,7 +7310,10 @@ class TestActiveSessionCaching:
             config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
 
             # Second call should re-parse because config model changed
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
@@ -7315,7 +7334,10 @@ class TestActiveSessionCaching:
             get_all_sessions(tmp_path / "sessions")
 
             # Second call — same config, same file → cache hit
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result = get_all_sessions(tmp_path / "sessions")
                 assert len(result) == 1
                 assert result[0].model == "gpt-5.1"
@@ -7358,7 +7380,10 @@ class TestActiveSessionCaching:
             # Now create a config with a model
             config.write_text('{"model": "gpt-5.1"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "gpt-5.1"
@@ -7387,7 +7412,10 @@ class TestActiveSessionCaching:
             # Change config — should NOT trigger re-parse
             config.write_text('{"model": "gpt-5.2"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model == "claude-sonnet-4"
@@ -7416,7 +7444,10 @@ class TestActiveSessionCaching:
             # Delete the config file — config_model should now be None
             config.unlink()
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 assert result2[0].model is None  # config-sourced model gone
@@ -7451,7 +7482,10 @@ class TestActiveSessionCaching:
             plan.write_text("# Renamed\n", encoding="utf-8")
             config.write_text('{"model": "claude-sonnet-4"}', encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 # Full re-parse must have occurred (config staleness wins)
@@ -7492,7 +7526,10 @@ class TestActiveSessionCaching:
             # Change ONLY plan.md — config stays the same
             plan.write_text("# Renamed\n", encoding="utf-8")
 
-            with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+            with patch(
+                "copilot_usage.parser._parse_events_from_offset",
+                wraps=_parse_events_from_offset,
+            ) as spy:
                 result2 = get_all_sessions(tmp_path / "sessions")
                 assert len(result2) == 1
                 # Plan-only fast path — no re-parse
@@ -7573,7 +7610,10 @@ class TestGetCachedEvents:
         first = get_cached_events(p)
         assert len(first) == 1_001  # 1 start + 1000 user messages
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             second = get_cached_events(p)
             assert spy.call_count == 0
 
@@ -7640,7 +7680,10 @@ class TestGetCachedEvents:
         first = get_cached_events(p)
 
         # Subsequent reads must not call parse_events at all
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             second = get_cached_events(p)
             third = get_cached_events(p)
             assert spy.call_count == 0
@@ -7710,7 +7753,10 @@ class TestGetAllSessionsPopulatesEventsCache:
         — parse_events is called only once per session, not twice."""
         p = self._make_session(tmp_path, "sess-a", "a")
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             get_all_sessions(tmp_path)
             assert spy.call_count == 1  # single parse during get_all_sessions
 
@@ -7786,7 +7832,10 @@ class TestGetAllSessionsEventsCacheOverflow:
         excluded_path = paths[0]
         assert excluded_path not in _EVENTS_CACHE
 
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             events = get_cached_events(excluded_path)
             spy.assert_called_once()  # cache miss → re-parse
 
@@ -8169,7 +8218,10 @@ class TestEventsCacheLimitCoversTypicalSessions:
 
         # Now call get_cached_events for every session and assert that
         # parse_events is *never* invoked (all hits come from cache).
-        with patch("copilot_usage.parser.parse_events", wraps=parse_events) as spy:
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
             for ep in paths:
                 get_cached_events(ep)
             assert spy.call_count == 0
@@ -9567,3 +9619,222 @@ class TestDetectResumeFrozensetPreFilter:
             }
         )
         assert expected == _DETECT_RESUME_EVENT_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Incremental events.jsonl parsing
+# ---------------------------------------------------------------------------
+
+
+def _make_event_line(
+    event_type: str, event_id: str, ts: str = "2026-05-01T10:00:00.000Z"
+) -> str:
+    """Build a minimal JSON event line."""
+    if event_type == "session.start":
+        return json.dumps(
+            {
+                "type": "session.start",
+                "data": {
+                    "sessionId": event_id,
+                    "version": "1.0.0",
+                    "startTime": ts,
+                },
+                "id": event_id,
+                "timestamp": ts,
+            }
+        )
+    if event_type == "assistant.message":
+        return json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": event_id,
+                    "content": "hello",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 10,
+                },
+                "id": event_id,
+                "timestamp": ts,
+            }
+        )
+    msg = f"unknown event type: {event_type}"
+    raise ValueError(msg)
+
+
+class TestParseEventsFromOffset:
+    """Tests for :func:`_parse_events_from_offset`."""
+
+    def test_full_parse_from_zero(self, tmp_path: Path) -> None:
+        """Offset 0 parses the entire file."""
+        p = tmp_path / "events.jsonl"
+        lines = [
+            _make_event_line("session.start", "s1") + "\n",
+            _make_event_line("assistant.message", "m1") + "\n",
+        ]
+        p.write_text("".join(lines), encoding="utf-8")
+
+        events, safe_end = _parse_events_from_offset(p, 0)
+        assert len(events) == 2
+        assert safe_end == p.stat().st_size
+
+    def test_incremental_from_offset(self, tmp_path: Path) -> None:
+        """Parsing from a mid-file offset returns only new events."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        p.write_text(line1 + line2, encoding="utf-8")
+
+        offset = len(line1.encode("utf-8"))
+        events, safe_end = _parse_events_from_offset(p, offset)
+        assert len(events) == 1
+        assert events[0].type == "assistant.message"
+        assert safe_end == p.stat().st_size
+
+    def test_incomplete_trailing_line_excluded(self, tmp_path: Path) -> None:
+        """A line without a trailing newline is NOT included in results."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        # Write incomplete second line (no trailing newline, malformed JSON)
+        p.write_bytes(line1.encode("utf-8") + b'{"type":"assistant')
+
+        events, safe_end = _parse_events_from_offset(p, 0)
+        assert len(events) == 1
+        # safe_end should not include the incomplete line
+        assert safe_end == len(line1.encode("utf-8"))
+
+    def test_blank_lines_skipped(self, tmp_path: Path) -> None:
+        """Blank and whitespace-only lines advance safe_end but produce no events."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p.write_text(line1 + "\n\n  \n", encoding="utf-8")
+
+        events, safe_end = _parse_events_from_offset(p, 0)
+        assert len(events) == 1
+        assert safe_end == p.stat().st_size
+
+    def test_malformed_complete_line_skipped(self, tmp_path: Path) -> None:
+        """A malformed but newline-terminated line is skipped; parsing continues."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        bad_line = "{not valid json}\n"
+        line3 = _make_event_line("assistant.message", "m1") + "\n"
+        p.write_text(line1 + bad_line + line3, encoding="utf-8")
+
+        events, safe_end = _parse_events_from_offset(p, 0)
+        assert len(events) == 2
+        assert safe_end == p.stat().st_size
+
+
+class TestIncrementalEventsCaching:
+    """Tests for incremental cache behaviour in get_cached_events."""
+
+    def _make_events_file(self, tmp_path: Path, lines: list[str]) -> Path:
+        p = tmp_path / "events.jsonl"
+        p.write_text("".join(lines), encoding="utf-8")
+        return p
+
+    def setup_method(self) -> None:
+        _EVENTS_CACHE.clear()
+
+    def test_append_uses_incremental_path(self, tmp_path: Path) -> None:
+        """Appending to a file triggers incremental parse, not full re-read."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        first = get_cached_events(p)
+        assert len(first) == 1
+
+        # Append a new event
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(line2)
+
+        # Bump mtime to ensure cache invalidation
+        import os
+
+        stat = p.stat()
+        os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            second = get_cached_events(p)
+            assert len(second) == 2
+            # Should be called with the offset of the first line's end
+            spy.assert_called_once()
+            call_offset = spy.call_args[0][1]
+            assert call_offset == len(line1.encode("utf-8"))
+
+    def test_truncation_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """Shrinking a file triggers a full reparse from offset 0."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        p = self._make_events_file(tmp_path, [line1, line2])
+
+        first = get_cached_events(p)
+        assert len(first) == 2
+
+        # Truncate: rewrite with only one line
+        p.write_text(line1, encoding="utf-8")
+
+        import os
+
+        stat = p.stat()
+        os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            second = get_cached_events(p)
+            assert len(second) == 1
+            spy.assert_called_once()
+            call_offset = spy.call_args[0][1]
+            assert call_offset == 0  # Full reparse
+
+    def test_same_size_rewrite_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """File rewritten to the exact same size triggers full reparse."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        first = get_cached_events(p)
+        assert len(first) == 1
+        original_size = p.stat().st_size
+
+        # Rewrite with a different event of the exact same byte length
+        line2 = _make_event_line("session.start", "s2") + "\n"
+        # Pad or trim to match original size
+        line2_bytes = line2.encode("utf-8")
+        if len(line2_bytes) < original_size:
+            line2_bytes += b" " * (original_size - len(line2_bytes))
+        elif len(line2_bytes) > original_size:
+            line2_bytes = line2_bytes[:original_size]
+        p.write_bytes(line2_bytes)
+        assert p.stat().st_size == original_size
+
+        import os
+
+        stat = p.stat()
+        os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        with patch(
+            "copilot_usage.parser._parse_events_from_offset",
+            wraps=_parse_events_from_offset,
+        ) as spy:
+            _second = get_cached_events(p)
+            spy.assert_called_once()
+            call_offset = spy.call_args[0][1]
+            # Must be a full reparse (offset 0) because size didn't grow
+            assert call_offset == 0
+
+    def test_cached_end_offset_stored(self, tmp_path: Path) -> None:
+        """After parsing, the cache entry stores end_offset."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        get_cached_events(p)
+        entry = _EVENTS_CACHE[p]
+        assert entry.end_offset == len(line1.encode("utf-8"))
+        assert entry.end_offset > 0
