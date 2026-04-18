@@ -2686,7 +2686,7 @@ class TestVSCodeDiscoveryCacheIsFrozen:
 
 
 class TestSummaryAccumulatorIsDataclass:
-    """_SummaryAccumulator must be a @dataclass(slots=True)."""
+    """_SummaryAccumulator must be a @dataclass(slots=True, kw_only=True)."""
 
     def test_is_a_dataclass(self) -> None:
         """Verify _SummaryAccumulator is decorated with @dataclass."""
@@ -2701,3 +2701,15 @@ class TestSummaryAccumulatorIsDataclass:
         acc = _SummaryAccumulator()
         acc.total_requests = 42
         assert acc.total_requests == 42
+
+    def test_init_accepts_only_log_file_fields(self) -> None:
+        """Only log_files_parsed/log_files_found are init params."""
+        init_fields = [
+            f.name for f in dataclasses.fields(_SummaryAccumulator) if f.init
+        ]
+        assert init_fields == ["log_files_parsed", "log_files_found"]
+
+    def test_internal_fields_rejected_by_init(self) -> None:
+        """Passing internal counters to the constructor must raise."""
+        with pytest.raises(TypeError):
+            _SummaryAccumulator(total_requests=1)  # type: ignore[call-arg]
