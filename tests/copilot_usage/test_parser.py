@@ -9724,6 +9724,46 @@ class TestParseEventsFromOffset:
         assert len(events) == 2
         assert safe_end == p.stat().st_size
 
+    def test_validation_error_line_skipped(self, tmp_path: Path) -> None:
+        """Valid JSON that fails Pydantic validation is skipped with a warning."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        # Valid JSON but timestamp is not a valid datetime → validation error
+        bad_line = '{"type": "session.start", "data": {}, "id": "x", "timestamp": "not-a-date"}\n'
+        line3 = _make_event_line("assistant.message", "m1") + "\n"
+        p.write_text(line1 + bad_line + line3, encoding="utf-8")
+
+        events, safe_end = _parse_events_from_offset(p, 0)
+        # bad_line fails validation — skipped
+        assert len(events) == 2
+        assert safe_end == p.stat().st_size
+
+    def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
+        """A UnicodeDecodeError stops parsing and returns events so far."""
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        p.write_text(line1 + line2, encoding="utf-8")
+
+        from copilot_usage.models import SessionEvent as _SE
+
+        real_validate = _SE.model_validate_json
+        call_count = [0]
+
+        @classmethod  # type: ignore[misc]
+        def _boom(
+            cls: type[object], *args: str | bytes | bytearray, **kwargs: object
+        ) -> object:
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "simulated")
+            return real_validate(args[0], **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(_SE, "model_validate_json", _boom):
+            events, safe_end = _parse_events_from_offset(p, 0)
+            assert len(events) == 1
+            assert safe_end == len(line1.encode("utf-8"))
+
 
 class TestIncrementalEventsCaching:
     """Tests for incremental cache behaviour in get_cached_events."""
@@ -9837,3 +9877,172 @@ class TestIncrementalEventsCaching:
         entry = _EVENTS_CACHE[p]
         assert entry.end_offset == len(line1.encode("utf-8"))
         assert entry.end_offset > 0
+
+    def test_file_deleted_during_incremental_parse(self, tmp_path: Path) -> None:
+        """If file is deleted between parse and post-stat, falls back to pre-parse file_id."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        # Prime cache
+        get_cached_events(p)
+
+        # Append and bump mtime
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(line2)
+        import os
+
+        stat = p.stat()
+        os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        # Make post-parse stat return None (simulate deletion mid-parse)
+        original = safe_file_identity
+        call_count = [0]
+
+        def _fake_identity(path: Path) -> tuple[int, int] | None:
+            if path == p and call_count[0] > 0:
+                return None
+            call_count[0] += 1
+            return original(path)
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_fake_identity
+        ):
+            result = get_cached_events(p)
+            assert len(result) == 2
+
+    def test_file_grew_during_incremental_parse(self, tmp_path: Path) -> None:
+        """If file grows during incremental parse, stored id uses post-parse mtime with safe_end."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        get_cached_events(p)
+
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(line2)
+        import os
+
+        stat = p.stat()
+        os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+        expected_safe_end = len(line1.encode("utf-8")) + len(line2.encode("utf-8"))
+
+        # Make post-parse stat return a larger size (simulating growth during parse)
+        original = safe_file_identity
+        inflate = [True]
+
+        def _bigger_identity(path: Path) -> tuple[int, int] | None:
+            result = original(path)
+            if path == p and result is not None and inflate[0]:
+                inflate[0] = False
+                return (result[0], result[1] + 100)
+            return result
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_bigger_identity
+        ):
+            result = get_cached_events(p)
+            assert len(result) == 2
+            entry = _EVENTS_CACHE[p]
+            assert entry.end_offset == expected_safe_end
+
+    def test_file_deleted_during_cold_start(self, tmp_path: Path) -> None:
+        """If file is deleted during cold-start full reparse, falls back to pre-parse file_id."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        original = safe_file_identity
+        call_count = [0]
+
+        def _delete_on_second(path: Path) -> tuple[int, int] | None:
+            result = original(path)
+            if path == p:
+                call_count[0] += 1
+                if call_count[0] > 1:
+                    return None
+            return result
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_delete_on_second
+        ):
+            result = get_cached_events(p)
+            assert len(result) == 1
+
+    def test_file_grew_during_cold_start(self, tmp_path: Path) -> None:
+        """If file grows during cold-start, stored id uses post-parse mtime with safe_end."""
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        p = self._make_events_file(tmp_path, [line1])
+
+        original = safe_file_identity
+        call_count = [0]
+
+        def _bigger_on_second(path: Path) -> tuple[int, int] | None:
+            result = original(path)
+            if path == p:
+                call_count[0] += 1
+                if call_count[0] > 1 and result is not None:
+                    return (result[0], result[1] + 100)
+            return result
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_bigger_on_second
+        ):
+            result = get_cached_events(p)
+            assert len(result) == 1
+            entry = _EVENTS_CACHE[p]
+            assert entry.end_offset == len(line1.encode("utf-8"))
+
+
+class TestGetAllSessionsPostParseStat:
+    """Tests for get_all_sessions post-parse stat edge cases."""
+
+    def setup_method(self) -> None:
+        _EVENTS_CACHE.clear()
+        _SESSION_CACHE.clear()
+        _DISCOVERY_CACHE.clear()
+
+    def test_file_deleted_during_parse(self, tmp_path: Path) -> None:
+        """If file vanishes during parse, stored_id falls back to discovery file_id."""
+        p = _make_completed_session(tmp_path, "sess-a", "a")
+
+        original = safe_file_identity
+        call_count = [0]
+
+        def _none_on_second(path: Path) -> tuple[int, int] | None:
+            if path == p:
+                call_count[0] += 1
+                if call_count[0] > 1:
+                    return None
+            return original(path)
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_none_on_second
+        ):
+            result = get_all_sessions(tmp_path)
+            assert len(result) == 1
+
+    def test_file_grew_during_parse(self, tmp_path: Path) -> None:
+        """If file grows during parse, stored_id uses post-parse mtime with safe_end."""
+        p = _make_completed_session(tmp_path, "sess-a", "a")
+
+        original = safe_file_identity
+        call_count = [0]
+
+        def _bigger_on_second(path: Path) -> tuple[int, int] | None:
+            result = original(path)
+            if path == p:
+                call_count[0] += 1
+                if call_count[0] > 1 and result is not None:
+                    return (result[0], result[1] + 200)
+            return result
+
+        with patch(
+            "copilot_usage.parser.safe_file_identity", side_effect=_bigger_on_second
+        ):
+            result = get_all_sessions(tmp_path)
+            assert len(result) == 1
+            entry = _EVENTS_CACHE[p]
+            assert entry.end_offset > 0
+            # stored file_id size should NOT be the inflated value
+            assert entry.file_id is not None
+            assert entry.file_id[1] == entry.end_offset
