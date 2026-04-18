@@ -9927,15 +9927,19 @@ class TestIncrementalEventsCaching:
         os.utime(p, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
         expected_safe_end = len(line1.encode("utf-8")) + len(line2.encode("utf-8"))
 
-        # Make post-parse stat return a larger size (simulating growth during parse)
+        # Make post-parse stat return a larger size (simulating growth during parse).
+        # The incremental path calls safe_file_identity twice for this file:
+        # once at the top (pre-parse) and once after _parse_events_from_offset
+        # (post-parse). We inflate only the second call.
         original = safe_file_identity
-        inflate = [True]
+        call_count_for_p = [0]
 
         def _bigger_identity(path: Path) -> tuple[int, int] | None:
             result = original(path)
-            if path == p and result is not None and inflate[0]:
-                inflate[0] = False
-                return (result[0], result[1] + 100)
+            if path == p and result is not None:
+                call_count_for_p[0] += 1
+                if call_count_for_p[0] == 2:
+                    return (result[0], result[1] + 100)
             return result
 
         with patch(
