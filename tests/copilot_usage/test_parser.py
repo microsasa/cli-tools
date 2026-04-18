@@ -1548,12 +1548,10 @@ class TestParseEvents:
         bad_line = b"\xff\xfe invalid utf-8 bytes\n"
         p.write_bytes(valid_line + bad_line)
         events = parse_events(p)
-        # The bad line is skipped; only the valid start event survives.
+        # The bad line is skipped; the valid start event always survives.
         assert isinstance(events, list)
-        assert len(events) <= 1
-        if events:
-            assert len(events) == 1
-            assert events[0].type == "session.start"
+        assert len(events) == 1
+        assert events[0].type == "session.start"
 
     def test_entirely_invalid_utf8_returns_empty_list(self, tmp_path: Path) -> None:
         """events.jsonl that is entirely invalid UTF-8 bytes returns empty list."""

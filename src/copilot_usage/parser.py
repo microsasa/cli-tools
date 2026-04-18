@@ -662,9 +662,15 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
 
+    If a ``UnicodeDecodeError`` is raised during parsing (e.g. from a
+    Pydantic validator), parsing stops early and the events parsed so
+    far are returned as a partial session.
+
     Raises:
         OSError: If the file cannot be opened or read (e.g., deleted
             between discovery and parsing, or I/O error while streaming).
+            ``UnicodeDecodeError`` is caught internally; callers only
+            need to handle ``OSError``.
     """
     events, _ = _parse_events_from_offset(events_path, 0, include_partial_tail=True)
     return events
