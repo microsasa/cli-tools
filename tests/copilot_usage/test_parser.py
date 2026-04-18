@@ -2873,6 +2873,49 @@ class TestGetAllSessions:
         returned_paths = {s.events_path for s in result}
         assert returned_paths == {s1, s2}
 
+    def test_plan_only_path_does_not_leak_cache_reference(self, tmp_path: Path) -> None:
+        """Mutating the list returned by the plan-only fast path must not corrupt the cache.
+
+        Regression test for issue #984: the plan-only fast path previously
+        returned the same list object stored in ``_SortedSessionsCache``,
+        allowing callers to silently corrupt the cached sort order.
+        """
+        s1 = tmp_path / "a" / "events.jsonl"
+        plan = tmp_path / "a" / "plan.md"
+        _write_events(s1, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        plan.write_text("# Initial plan\n", encoding="utf-8")
+        initial_plan_identity = safe_file_identity(plan)
+
+        # First call: primes the cache (normal sort path).
+        first = get_all_sessions(tmp_path)
+        assert len(first) == 1
+        first_name = first[0].name
+
+        # Change plan.md so the second call hits the plan-only fast path.
+        # Use different-sized content and explicitly bump mtime so the file
+        # identity changes even on filesystems with coarse timestamp resolution.
+        plan.write_text("# Updated plan with more detail\n", encoding="utf-8")
+        plan_stat = plan.stat()
+        os.utime(
+            plan,
+            ns=(plan_stat.st_atime_ns, max(time.time_ns(), plan_stat.st_mtime_ns + 1)),
+        )
+        assert safe_file_identity(plan) != initial_plan_identity
+
+        # Second call: exercises the plan-only fast path.
+        second = get_all_sessions(tmp_path)
+        assert len(second) == 1
+        second_name = second[0].name
+        assert second_name != first_name
+
+        # Mutate the returned list — must not affect the cache.
+        second.pop()
+        assert len(second) == 0
+
+        # Third call: should still return the correct result from cache.
+        third = get_all_sessions(tmp_path)
+        assert len(third) == 1
+
 
 # ---------------------------------------------------------------------------
 # Real data smoke test (against ~/.copilot/session-state/)
@@ -9425,7 +9468,7 @@ class TestSortedSessionsCacheIsFrozen:
         cache = _SortedSessionsCache(
             root=Path("sessions"),
             fingerprint=frozenset(),
-            summaries=[],
+            summaries=(),
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             cache.root = Path("/other")  # type: ignore[misc]
