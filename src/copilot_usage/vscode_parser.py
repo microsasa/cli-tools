@@ -211,29 +211,12 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
 
     If only one variant exists on disk the behaviour is identical to before.
     When both exist, files from both are returned and sorted together.
-    """
-    if base_path is not None:
-        if not base_path.is_dir():
-            logger.debug("VS Code logs directory not found: {}", base_path)
-            return []
-        logs = sorted(base_path.glob(_GLOB_PATTERN))
-        logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
-        return logs
 
-    candidates = _default_log_candidates()
-    all_logs: list[Path] = []
-    for candidate in candidates:
-        if not candidate.is_dir():
-            logger.debug("VS Code logs directory not found: {}", candidate)
-            continue
-        all_logs.extend(candidate.glob(_GLOB_PATTERN))
-    all_logs.sort()
-    logger.debug(
-        "Discovered {} VS Code log file(s) across {} candidate(s)",
-        len(all_logs),
-        len(candidates),
-    )
-    return all_logs
+    Results are cached per candidate root directory.  Steady-state cost is
+    O(1) — two ``stat`` calls per root (root + newest child sentinel) —
+    instead of a full multi-level glob traversal.
+    """
+    return _cached_discover_vscode_logs(base_path)
 
 
 def _newest_child_from_ids(
