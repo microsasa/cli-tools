@@ -210,7 +210,10 @@ def _insert_events_entry(
 
 
 def _parse_events_from_offset(
-    events_path: Path, offset: int
+    events_path: Path,
+    offset: int,
+    *,
+    include_partial_tail: bool = False,
 ) -> tuple[list[SessionEvent], int]:
     """Parse events from *events_path* starting at byte *offset*.
 
@@ -222,6 +225,11 @@ def _parse_events_from_offset(
     fail JSON decoding are treated as still-in-progress and stop
     parsing — the returned *safe_end* does not advance past them so
     the caller can retry on the next refresh.
+
+    When *include_partial_tail* is ``True`` (used by :func:`parse_events`
+    for one-shot full parsing), a final non-newline-terminated line is
+    **included** in the results, and ``safe_end`` advances past that
+    consumed partial tail as well to preserve full-file read semantics.
 
     Returns:
         ``(new_events, safe_end)`` where *safe_end* is the byte
@@ -250,7 +258,7 @@ def _parse_events_from_offset(
                 except ValidationError as exc:
                     errors = exc.errors(include_url=False)
                     if errors and errors[0].get("type") == "json_invalid":
-                        if not raw_line.endswith(b"\n"):
+                        if not raw_line.endswith(b"\n") and not include_partial_tail:
                             break
                         logger.warning(
                             "{}:offset {} — malformed JSON, skipping",
@@ -644,52 +652,19 @@ def discover_sessions(base_path: Path | None = None) -> list[Path]:
 def parse_events(events_path: Path) -> list[SessionEvent]:
     """Parse an ``events.jsonl`` file into a list of :class:`SessionEvent`.
 
-    Uses ``SessionEvent.model_validate_json`` (Rust-based parser) for each
-    line, bypassing the intermediate ``dict`` allocation of
-    ``json.loads`` + ``model_validate``.
+    Delegates to :func:`_parse_events_from_offset` (the same binary-mode
+    implementation used by the production cache layer) with
+    ``include_partial_tail=True`` so that a final line lacking a trailing
+    newline is still included — matching one-shot full-file read semantics.
 
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
 
-    If a UTF-8 decode error occurs while reading the file, parsing stops
-    early and the events parsed so far are returned (a partial session).
-
     Raises:
         OSError: If the file cannot be opened or read (e.g., deleted
             between discovery and parsing, or I/O error while streaming).
-            UnicodeDecodeError is caught internally; callers only need to
-            handle OSError.
     """
-    events: list[SessionEvent] = []
-    try:
-        with events_path.open(encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, start=1):
-                if not line or line.isspace():
-                    continue
-                try:
-                    events.append(SessionEvent.model_validate_json(line))
-                except ValidationError as exc:
-                    errors = exc.errors(include_url=False)
-                    if errors and errors[0].get("type") == "json_invalid":
-                        logger.warning(
-                            "{}:{} — malformed JSON, skipping",
-                            events_path,
-                            lineno,
-                        )
-                    else:
-                        logger.warning(
-                            "{}:{} — validation error ({}), skipping",
-                            events_path,
-                            lineno,
-                            exc.error_count(),
-                        )
-    except UnicodeDecodeError as exc:
-        logger.warning(
-            "{} — UTF-8 decode error while reading; returning {} parsed events so far (partial session): {}",
-            events_path,
-            len(events),
-            exc,
-        )
+    events, _ = _parse_events_from_offset(events_path, 0, include_partial_tail=True)
     return events
 
 

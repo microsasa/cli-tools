@@ -1500,10 +1500,10 @@ class TestParseEvents:
         # error_count() must be passed as positional arg after format string
         assert warning_spy.call_args.args[3] == expected_error_count
 
-    def test_validation_error_warning_includes_file_and_lineno(
+    def test_validation_error_warning_includes_file_and_offset(
         self, tmp_path: Path
     ) -> None:
-        """Validation-error warning includes the file path and line number."""
+        """Validation-error warning includes the file path and byte offset."""
         bad_event = json.dumps({"no_type_field": True})
         p = tmp_path / "s" / "events.jsonl"
         _write_events(p, _START_EVENT, bad_event)
@@ -1512,10 +1512,12 @@ class TestParseEvents:
         warning_spy.assert_called_once()
         args = warning_spy.call_args.args
         assert args[1] == p  # file path
-        assert args[2] == 2  # line number (bad event is the second line)
+        # byte offset of the second line (after _START_EVENT + newline separator)
+        expected_offset = len(_START_EVENT.encode("utf-8")) + 1
+        assert args[2] == expected_offset
 
     def test_multiple_validation_errors_each_warned(self, tmp_path: Path) -> None:
-        """Two bad lines emit two separate warnings with correct line numbers."""
+        """Two bad lines emit two separate warnings with correct byte offsets."""
         bad1 = json.dumps({"no_type_field": True})
         bad2 = json.dumps({"also_invalid": 42})
         p = tmp_path / "s" / "events.jsonl"
@@ -1524,9 +1526,11 @@ class TestParseEvents:
             events = parse_events(p)
         assert len(events) == 1  # only the start event survives
         assert warning_spy.call_count == 2
-        # Each warning should reference its own line number
-        line_numbers = [call.args[2] for call in warning_spy.call_args_list]
-        assert line_numbers == [2, 3]
+        # Each warning should reference its own byte offset
+        offsets = [call.args[2] for call in warning_spy.call_args_list]
+        offset1 = len(_START_EVENT.encode("utf-8")) + 1
+        offset2 = offset1 + len(bad1.encode("utf-8")) + 1
+        assert offsets == [offset1, offset2]
 
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
         """events.jsonl with invalid UTF-8 bytes returns what was parsed so far.
@@ -1558,12 +1562,14 @@ class TestParseEvents:
         events = parse_events(p)
         assert events == []
 
-    def test_unicode_decode_error_returns_partial_results(self, tmp_path: Path) -> None:
-        """Valid events before an invalid UTF-8 sequence are returned.
+    def test_embedded_invalid_utf8_skips_malformed_line(self, tmp_path: Path) -> None:
+        """Embedded invalid UTF-8 bytes produce a malformed-JSON skip, not a crash.
 
-        Python's TextIOWrapper reads in buffer-sized chunks, so the valid
-        content must exceed one buffer to guarantee the first lines are
-        yielded before the decode error fires on the next chunk.
+        Because ``parse_events`` delegates to ``_parse_events_from_offset``
+        (binary mode), raw invalid UTF-8 bytes don't raise
+        ``UnicodeDecodeError`` at the file-I/O layer.  Instead the
+        affected line fails JSON parsing and is skipped; lines on both
+        sides of the bad bytes still parse successfully.
         """
         p = tmp_path / "s" / "events.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1573,23 +1579,22 @@ class TestParseEvents:
         # First block: repeat valid lines enough to exceed the default read buffer.
         first_repeat = (io.DEFAULT_BUFFER_SIZE // len(valid_line)) + 2
         first_block = valid_line * first_repeat
-        # Second block: additional valid lines that should never be returned.
+        # Second block: additional valid lines after the bad bytes.
         second_repeat = 5
         second_block = valid_line * second_repeat
-        total_valid_lines = first_repeat + second_repeat
-        # Insert invalid UTF-8 bytes between the two valid blocks so the decode
-        # error occurs in the middle of the file, after some events were yielded.
+        # Insert invalid UTF-8 bytes between the two valid blocks.
+        # Binary-mode reading absorbs these into the preceding line's
+        # tail; that line becomes malformed JSON and is skipped.
         invalid_bytes = b"\xff\xfe"
         p.write_bytes(first_block + invalid_bytes + second_block)
         result = parse_events(p)
-        # Partial parse: at least the first event must survive.
         assert isinstance(result, list)
         assert len(result) >= 1
         assert result[0].type == EventType.SESSION_START
-        # Not everything was returned (error cut parsing short in the middle).
-        assert len(result) < total_valid_lines
-        # All returned events should be from the first valid block.
-        assert len(result) <= first_repeat
+        # Binary mode recovers: all valid lines parse, only the one
+        # line containing the invalid bytes is skipped.
+        total_valid_lines = first_repeat + second_repeat
+        assert len(result) == total_valid_lines - 1
 
 
 class TestParseEventsModelValidateJson:
@@ -9763,6 +9768,32 @@ class TestParseEventsFromOffset:
             events, safe_end = _parse_events_from_offset(p, 0)
             assert len(events) == 1
             assert safe_end == len(line1.encode("utf-8"))
+
+
+class TestParseEventsPartialTailParity:
+    """Regression: parse_events and get_cached_events agree on partial-tail files."""
+
+    def test_no_trailing_newline_same_events(self, tmp_path: Path) -> None:
+        """File whose last line is valid JSON without trailing newline.
+
+        Both ``parse_events`` (one-shot) and ``get_cached_events`` (cache
+        layer) must return the same set of events, including the
+        partial-tail line.
+        """
+        p = tmp_path / "sess" / "events.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        line2 = _make_event_line("assistant.message", "m1")  # no trailing newline
+        p.write_bytes(line1.encode("utf-8") + line2.encode("utf-8"))
+
+        one_shot = parse_events(p)
+        cached = list(get_cached_events(p))
+
+        assert len(one_shot) == 2
+        assert one_shot[0].type == "session.start"
+        assert one_shot[1].type == "assistant.message"
+        assert len(cached) == len(one_shot)
+        assert [e.type for e in cached] == [e.type for e in one_shot]
 
 
 class TestIncrementalEventsCaching:
