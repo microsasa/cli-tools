@@ -312,16 +312,61 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
     """Parse a single VS Code Copilot Chat log file into request objects.
 
     Returns a list of parsed requests (possibly empty when no lines match).
+    Unlike incremental parsing via :func:`_parse_vscode_log_from_offset`,
+    this performs a complete one-shot read and includes the final line even
+    when it is not newline-terminated.
+
+    Raises:
+        OSError: If the file cannot be opened or read.
+    """
+    requests, _ = _parse_vscode_log_from_offset(log_path, 0, include_partial_tail=True)
+    return requests
+
+
+def _parse_vscode_log_from_offset(
+    log_path: Path,
+    offset: int,
+    *,
+    include_partial_tail: bool = False,
+) -> tuple[list[VSCodeRequest], int]:
+    """Parse VS Code Copilot Chat log starting at *offset* bytes.
+
+    Returns ``(requests, end_offset)`` where *end_offset* is the byte
+    position immediately after the last line consumed by this call.
+    With the default ``include_partial_tail=False``, this is the end of
+    the last **complete** (newline-terminated) line read; a partial line
+    at EOF is intentionally excluded so that the next incremental call
+    can re-read it once the writer finishes the line.
+
+    When *include_partial_tail* is ``True`` (used by :func:`parse_vscode_log`
+    for one-shot full parsing), a final non-newline-terminated line is
+    **included** in the results, and ``end_offset`` advances past that
+    consumed partial tail as well to preserve full-file text semantics.
 
     Raises:
         OSError: If the file cannot be opened or read.
     """
     requests: list[VSCodeRequest] = []
-    with log_path.open(encoding="utf-8", errors="replace") as f:
-        for line in f:
+    safe_end: int = offset
+    with log_path.open("rb") as fb:
+        if offset > 0:
+            # Guard against TOCTOU race: the file may have been
+            # truncated/replaced between the caller's stat() and this
+            # open().  Re-validate with fstat on the open descriptor.
+            actual_size = os.fstat(fb.fileno()).st_size
+            if actual_size < offset:
+                offset = 0
+                safe_end = 0
+            fb.seek(offset)
+        for raw_line in fb:
+            is_complete = raw_line.endswith(b"\n")
+            if not is_complete and not include_partial_tail:
+                break
+            safe_end += len(raw_line)
             # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
-            if "ccreq:" not in line:
+            if b"ccreq:" not in raw_line:
                 continue
+            line = raw_line.decode("utf-8", errors="replace")
             m = _CCREQ_RE.match(line)
             if m is None:
                 continue
@@ -339,8 +384,14 @@ def parse_vscode_log(log_path: Path) -> list[VSCodeRequest]:
                     category=category,
                 )
             )
-    logger.debug("Parsed {} request(s) from {}", len(requests), log_path)
-    return requests
+    logger.debug(
+        "Parsed {} request(s) from {} (offset {}→{})",
+        len(requests),
+        log_path,
+        offset,
+        safe_end,
+    )
+    return requests, safe_end
 
 
 # ---------------------------------------------------------------------------
@@ -355,9 +406,15 @@ _MAX_CACHED_FILE_SUMMARIES: Final[int] = 256
 
 @dataclass(frozen=True, slots=True)
 class _CachedVSCodeLog:
-    """Cache entry pairing a file identity with parsed VS Code requests."""
+    """Cache entry pairing a file identity with parsed VS Code requests.
+
+    ``end_offset`` is the byte position after the last fully consumed
+    line.  When the file grows (append-only), only bytes after
+    ``end_offset`` need to be parsed.
+    """
 
     file_id: tuple[int, int] | None
+    end_offset: int
     requests: tuple[VSCodeRequest, ...]
 
 
@@ -408,7 +465,7 @@ def _get_cached_vscode_requests(
     log_path: Path,
     file_id: tuple[int, int] | None | Literal["unset"] = _FILE_ID_UNSET,
 ) -> tuple[VSCodeRequest, ...]:
-    """Return parsed requests, re-parsing only when ``(mtime_ns, size)`` changes.
+    """Return parsed requests, incrementally parsing only new content.
 
     When *file_id* is omitted (or the sentinel ``"unset"``), the file
     identity is computed internally via :func:`safe_file_identity`.
@@ -417,36 +474,108 @@ def _get_cached_vscode_requests(
     avoid a redundant ``stat()`` call.
 
     On the first call for a given *log_path*, delegates to
-    :func:`parse_vscode_log` and stores the result.  Subsequent calls
-    return the cached tuple as long as the file identity is unchanged.
+    :func:`_parse_vscode_log_from_offset` (offset 0) and stores the
+    result together with the safe byte offset reached (``end_offset``).
+    Subsequent calls detect whether the file has **grown**
+    (append-only) by comparing the new ``st_size`` against the cached
+    ``end_offset`` — if so, only the bytes after that stored offset are
+    parsed and appended to the existing result.  This matters when a
+    previous parse stopped before EOF due to a partial trailing line:
+    ``end_offset`` is the safe resume point, not necessarily the prior
+    end of file.
+
+    When the file is **truncated or replaced** (``st_size < end_offset``)
+    or ``st_size`` cannot be determined, a full re-parse is performed.
+
     The cache is bounded to :data:`_MAX_CACHED_VSCODE_REQUESTS` entries;
     the **least-recently used** entry is evicted when the limit is
     reached.
 
-    The parsed list is converted to a ``tuple`` before storage so that
-    callers cannot accidentally append, pop, or reorder entries in the
-    cache — matching the container-level immutability pattern used by
-    :func:`copilot_usage.parser.get_cached_events`.
-
     Raises:
-        OSError: Propagated from :func:`parse_vscode_log` when the file
-            cannot be opened or read.
+        OSError: Propagated from :func:`_parse_vscode_log_from_offset`
+            when the file cannot be opened or read.
     """
     resolved_id: tuple[int, int] | None = (
         safe_file_identity(log_path) if file_id == _FILE_ID_UNSET else file_id
     )
     cached = _VSCODE_LOG_CACHE.get(log_path)
-    if cached is not None and cached.file_id == resolved_id:
-        _VSCODE_LOG_CACHE.move_to_end(log_path)
-        return cached.requests
-    requests = tuple(parse_vscode_log(log_path))
+
+    if cached is not None:
+        # Exact match: file unchanged — return cached result.
+        if cached.file_id == resolved_id:
+            _VSCODE_LOG_CACHE.move_to_end(log_path)
+            return cached.requests
+
+        # Incremental path: file grew (append-only) beyond the cached
+        # resume point.  Compare against ``end_offset`` because that is
+        # the position we will seek to when resuming parsing.
+        if (
+            resolved_id is not None
+            and cached.file_id is not None
+            and resolved_id[1] > cached.end_offset
+            and cached.end_offset > 0
+        ):
+            new_reqs, new_end = _parse_vscode_log_from_offset(
+                log_path, cached.end_offset
+            )
+            if new_end < cached.end_offset:
+                # fstat inside the parser detected truncation — the
+                # returned results are a full reparse, not a delta.
+                result = tuple(new_reqs)
+                post_id = safe_file_identity(log_path)
+                if post_id is None:
+                    trunc_id: tuple[int, int] | None = resolved_id
+                elif post_id[1] == new_end:
+                    trunc_id = post_id
+                else:
+                    trunc_id = (post_id[0], new_end)
+                lru_insert(
+                    _VSCODE_LOG_CACHE,
+                    log_path,
+                    _CachedVSCodeLog(
+                        file_id=trunc_id, end_offset=new_end, requests=result
+                    ),
+                    _MAX_CACHED_VSCODE_REQUESTS,
+                )
+                return result
+            combined = cached.requests + tuple(new_reqs)
+            post_id = safe_file_identity(log_path)
+            if post_id is None:
+                stored_id = resolved_id
+            elif post_id[1] == new_end:
+                stored_id = post_id
+            else:
+                stored_id = (post_id[0], new_end)
+            lru_insert(
+                _VSCODE_LOG_CACHE,
+                log_path,
+                _CachedVSCodeLog(
+                    file_id=stored_id, end_offset=new_end, requests=combined
+                ),
+                _MAX_CACHED_VSCODE_REQUESTS,
+            )
+            return combined
+
+    # Full parse: first call or file was truncated/replaced.
+    requests, end_offset = _parse_vscode_log_from_offset(log_path, 0)
+    result = tuple(requests)
+    if resolved_id is None:
+        stored_id = None
+    else:
+        post_id = safe_file_identity(log_path)
+        if post_id is None:
+            stored_id = resolved_id
+        elif post_id[1] == end_offset:
+            stored_id = post_id
+        else:
+            stored_id = (post_id[0], end_offset)
     lru_insert(
         _VSCODE_LOG_CACHE,
         log_path,
-        _CachedVSCodeLog(file_id=resolved_id, requests=requests),
+        _CachedVSCodeLog(file_id=stored_id, end_offset=end_offset, requests=result),
         _MAX_CACHED_VSCODE_REQUESTS,
     )
-    return requests
+    return result
 
 
 @dataclass(slots=True, kw_only=True)

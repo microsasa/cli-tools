@@ -28,6 +28,7 @@ from copilot_usage.vscode_parser import (
     _default_log_candidates,
     _get_cached_vscode_requests,
     _merge_partial,
+    _parse_vscode_log_from_offset,
     _scan_child_ids,
     _SummaryAccumulator,
     _update_vscode_summary,
@@ -44,20 +45,20 @@ from copilot_usage.vscode_parser import (
 
 _LOG_OPUS = (
     "2026-03-13 22:10:24.523 [info] ccreq:c0c8885e.copilotmd"
-    " | success | claude-opus-4.6 | 8003ms | [panel/editAgent]"
+    " | success | claude-opus-4.6 | 8003ms | [panel/editAgent]\n"
 )
 _LOG_REDIRECT = (
     "2026-03-13 22:10:48.752 [info] ccreq:e120f69a.copilotmd"
     " | success | gpt-4o-mini -> gpt-4o-mini-2024-07-18 | 481ms"
-    " | [copilotLanguageModelWrapper]"
+    " | [copilotLanguageModelWrapper]\n"
 )
 _LOG_GPT4O = (
     "2026-03-13 22:10:16.597 [info] ccreq:2fad3591.copilotmd"
-    " | success | gpt-4o-mini-2024-07-18 | 432ms | [title]"
+    " | success | gpt-4o-mini-2024-07-18 | 432ms | [title]\n"
 )
 _LOG_NOISE = (
     "2026-03-13 21:48:39.404 [info] [GitExtensionServiceImpl]"
-    " Initializing Git extension service."
+    " Initializing Git extension service.\n"
 )
 
 
@@ -120,7 +121,7 @@ class TestParseVscodeLog:
     def test_parses_real_lines(self, tmp_path: Path) -> None:
         log_file = tmp_path / "test.log"
         log_file.write_text(
-            "\n".join([_LOG_OPUS, _LOG_NOISE, _LOG_REDIRECT, _LOG_GPT4O]),
+            "".join([_LOG_OPUS, _LOG_NOISE, _LOG_REDIRECT, _LOG_GPT4O]),
             encoding="utf-8",
         )
         requests = parse_vscode_log(log_file)
@@ -567,7 +568,7 @@ class TestGetVscodeSummary:
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         (log_dir / "GitHub Copilot Chat.log").write_text(
-            "\n".join([_LOG_OPUS, _LOG_REDIRECT, _LOG_NOISE, _LOG_GPT4O]),
+            "".join([_LOG_OPUS, _LOG_REDIRECT, _LOG_NOISE, _LOG_GPT4O]),
             encoding="utf-8",
         )
         summary = get_vscode_summary(tmp_path)
@@ -608,7 +609,6 @@ class TestGetVscodeSummary:
         from the earliest and latest batches respectively.
         """
         from datetime import datetime
-        from unittest.mock import call
 
         file_a = Path("/fake/log_a.log")
         file_b = Path("/fake/log_b.log")
@@ -638,10 +638,11 @@ class TestGetVscodeSummary:
             ),
         ]
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
-            if path == file_a:
-                return list(requests_a)
-            return list(requests_b)
+        def _fake_parse(
+            path: Path, offset: int = 0, **_kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
+            reqs = list(requests_a) if path == file_a else list(requests_b)
+            return reqs, offset + 100
 
         with (
             patch(
@@ -649,7 +650,7 @@ class TestGetVscodeSummary:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ) as mock_parse,
             patch(
@@ -661,7 +662,6 @@ class TestGetVscodeSummary:
         assert summary.total_requests == 3
         assert summary.log_files_parsed == 2
         assert mock_parse.call_count == 2
-        mock_parse.assert_has_calls([call(file_a), call(file_b)])
         # Verify the incremental path is used: build_vscode_summary must NOT
         # be called because get_vscode_summary now aggregates per-file via
         # _update_vscode_summary instead of collecting all requests first.
@@ -686,10 +686,12 @@ class TestGetVscodeSummary:
             ),
         ]
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(
+            path: Path, offset: int = 0, **_kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
             if path == file_a:
                 raise OSError("Permission denied")
-            return list(requests_b)
+            return list(requests_b), offset + 100
 
         with (
             patch(
@@ -697,7 +699,7 @@ class TestGetVscodeSummary:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ),
         ):
@@ -726,8 +728,8 @@ class TestGetVscodeSummary:
                 return_value=paths,
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
-                return_value=[req],
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+                return_value=([req], 100),
             ),
         ):
             summary = get_vscode_summary()
@@ -749,10 +751,12 @@ class TestGetVscodeSummary:
             category="inline",
         )
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(
+            path: Path, offset: int = 0, **_kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
             if path == path1:
                 raise OSError("Permission denied")
-            return [req]
+            return [req], offset + 100
 
         with (
             patch(
@@ -760,7 +764,7 @@ class TestGetVscodeSummary:
                 return_value=[path1, path2],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ),
         ):
@@ -794,23 +798,29 @@ class TestVscodeCliCommand:
             log_dir = tmp_path / session / "window1" / "exthost" / "GitHub.copilot-chat"
             log_dir.mkdir(parents=True)
             (log_dir / "GitHub Copilot Chat.log").write_text(
-                _LOG_OPUS + "\n", encoding="utf-8"
+                _LOG_OPUS, encoding="utf-8"
             )
 
-        # Make parse_vscode_log raise OSError only on the first call.
+        # Make _parse_vscode_log_from_offset raise OSError only on the first call.
         call_count = 0
-        _real_parse = parse_vscode_log
+        _real_parse = _parse_vscode_log_from_offset
 
-        def _failing_once(path: Path) -> list[VSCodeRequest]:
+        def _failing_once(
+            path: Path, offset: int = 0, **kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 msg = "Permission denied"
                 raise OSError(msg)
-            return _real_parse(path)
+            return _real_parse(
+                path,
+                offset,
+                include_partial_tail=bool(kw.get("include_partial_tail", False)),
+            )
 
         monkeypatch.setattr(
-            "copilot_usage.vscode_parser.parse_vscode_log", _failing_once
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset", _failing_once
         )
 
         warnings: list[str] = []
@@ -834,16 +844,14 @@ class TestVscodeCliCommand:
         """When all discovered files fail, the CLI reports an I/O failure."""
         log_dir = tmp_path / "s1" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
-        (log_dir / "GitHub Copilot Chat.log").write_text(
-            _LOG_OPUS + "\n", encoding="utf-8"
-        )
+        (log_dir / "GitHub Copilot Chat.log").write_text(_LOG_OPUS, encoding="utf-8")
 
         def _always_raise(*_a: object, **_kw: object) -> object:
             msg = "Permission denied"
             raise OSError(msg)
 
         monkeypatch.setattr(
-            "copilot_usage.vscode_parser.parse_vscode_log", _always_raise
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset", _always_raise
         )
         runner = CliRunner()
         result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
@@ -854,7 +862,7 @@ class TestVscodeCliCommand:
         log_dir = tmp_path / "20260313" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         (log_dir / "GitHub Copilot Chat.log").write_text(
-            "\n".join([_LOG_OPUS, _LOG_GPT4O]),
+            "".join([_LOG_OPUS, _LOG_GPT4O]),
             encoding="utf-8",
         )
         runner = CliRunner()
@@ -1281,11 +1289,244 @@ def _make_log_line(*, req_idx: int = 0, model: str = "gpt-4o-mini") -> str:
     return (
         f"2026-03-13 22:10:{req_idx % 60:02d}.{req_idx:03d}"
         f" [info] ccreq:req{req_idx:05d}.copilotmd"
-        f" | success | {model} | {100 + req_idx}ms | [inline]"
+        f" | success | {model} | {100 + req_idx}ms | [inline]\n"
     )
 
 
-class TestVscodeLogCache:
+class TestParseVscodeLogFromOffset:
+    """Tests for _parse_vscode_log_from_offset incremental parsing."""
+
+    def test_full_parse_returns_all_requests(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=1))
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 2
+        assert end_offset == log_file.stat().st_size
+
+    def test_incremental_parse_from_offset(self, tmp_path: Path) -> None:
+        line0 = _make_log_line(req_idx=0)
+        line1 = _make_log_line(req_idx=1)
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(line0 + line1)
+        offset = len(line0.encode("utf-8"))
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, offset)
+        assert len(reqs) == 1
+        assert reqs[0].request_id == "req00001"
+        assert end_offset == log_file.stat().st_size
+
+    def test_partial_tail_excluded_by_default(self, tmp_path: Path) -> None:
+        """A final line without a newline is excluded (partial write)."""
+        log_file = tmp_path / "chat.log"
+        content = _make_log_line(req_idx=0) + _make_log_line(req_idx=1).rstrip("\n")
+        log_file.write_text(content)
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 1
+        assert end_offset < log_file.stat().st_size
+
+    def test_include_partial_tail(self, tmp_path: Path) -> None:
+        """With include_partial_tail=True, a final non-newline line is included."""
+        log_file = tmp_path / "chat.log"
+        content = _make_log_line(req_idx=0).rstrip("\n")
+        log_file.write_text(content)
+        reqs, end_offset = _parse_vscode_log_from_offset(
+            log_file, 0, include_partial_tail=True
+        )
+        assert len(reqs) == 1
+        assert end_offset == log_file.stat().st_size
+
+    def test_toctou_guard_resets_offset_on_truncation(self, tmp_path: Path) -> None:
+        """When file is smaller than offset, parser resets to 0."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        size = log_file.stat().st_size
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, size + 1000)
+        assert len(reqs) == 1
+        assert end_offset == size
+
+    def test_empty_file_returns_empty(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "chat.log"
+        log_file.write_text("")
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 0
+        assert end_offset == 0
+
+    def test_binary_prefilter_skips_non_ccreq_lines(self, tmp_path: Path) -> None:
+        """Non-ccreq lines are skipped without UTF-8 decode."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_LOG_NOISE + _make_log_line(req_idx=0))
+        reqs, _ = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 1
+
+
+class TestIncrementalCacheLogic:
+    """Tests for the 3-path incremental cache in _get_cached_vscode_requests."""
+
+    def test_incremental_append_uses_cached_prefix(self, tmp_path: Path) -> None:
+        """Appending to a file only parses the new portion."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 1
+
+        # Append a second line.
+        with log_file.open("a") as f:
+            f.write(_make_log_line(req_idx=1))
+
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
+        ) as spy:
+            second = _get_cached_vscode_requests(log_file)
+            assert spy.call_count == 1
+            # Verify offset > 0 (incremental, not full reparse).
+            assert spy.call_args is not None
+            assert spy.call_args[0][1] > 0
+
+        assert len(second) == 2
+
+    def test_truncated_file_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """If the file shrinks, a full reparse is done."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=1))
+        first = _get_cached_vscode_requests(log_file)
+        assert len(first) == 2
+
+        # Truncate to a shorter file.
+        log_file.write_text(_make_log_line(req_idx=5))
+        second = _get_cached_vscode_requests(log_file)
+        assert len(second) == 1
+        assert second[0].request_id == "req00005"
+
+    def test_replaced_file_triggers_full_reparse(self, tmp_path: Path) -> None:
+        """A completely replaced file (different identity) triggers full reparse."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        _get_cached_vscode_requests(log_file)
+
+        # Replace content entirely — write different data with same or different size.
+        log_file.write_text(_make_log_line(req_idx=7))
+        result = _get_cached_vscode_requests(log_file)
+        assert len(result) == 1
+        assert result[0].request_id == "req00007"
+
+    def test_cache_stores_end_offset(self, tmp_path: Path) -> None:
+        """After parsing, the cache entry contains the correct end_offset."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        _get_cached_vscode_requests(log_file)
+        entry = _VSCODE_LOG_CACHE[log_file]
+        assert entry.end_offset == log_file.stat().st_size
+
+    def test_incremental_truncation_during_parse(self, tmp_path: Path) -> None:
+        """If fstat inside parser detects truncation, result is a full reparse."""
+        log_file = tmp_path / "chat.log"
+        # Write a large initial file so end_offset is well beyond the truncated size.
+        log_file.write_text("".join(_make_log_line(req_idx=i) for i in range(20)))
+        _get_cached_vscode_requests(log_file)
+        old_end = _VSCODE_LOG_CACHE[log_file].end_offset
+        assert old_end > 500  # sanity: 20 lines × ~100 bytes
+
+        # Fabricate a bigger_id that triggers the incremental path.
+        bigger_id = (99999, old_end + 1000)
+
+        # Truncate the file to a single line (much smaller than old_end).
+        log_file.write_text(_make_log_line(req_idx=9))
+        assert log_file.stat().st_size < old_end
+
+        # Pass the stale bigger_id to force the incremental entry condition.
+        result = _get_cached_vscode_requests(log_file, file_id=bigger_id)
+        # Parser's fstat detects actual_size < offset → resets to 0.
+        # new_end < cached.end_offset → truncation branch.
+        assert len(result) == 1
+        assert result[0].request_id == "req00009"
+
+    def test_incremental_post_stat_none(self, tmp_path: Path) -> None:
+        """If post-parse safe_file_identity returns None, resolved_id is used."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        _get_cached_vscode_requests(log_file)
+
+        # Append so incremental path is entered.
+        with log_file.open("a") as f:
+            f.write(_make_log_line(req_idx=1))
+
+        # Mock post-parse stat to return None (e.g. file deleted after parse).
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=[safe_file_identity(log_file), None],
+        ):
+            result = _get_cached_vscode_requests(log_file)
+
+        assert len(result) == 2
+        entry = _VSCODE_LOG_CACHE[log_file]
+        # stored_id falls back to resolved_id (not None).
+        assert entry.file_id is not None
+
+    def test_incremental_post_stat_size_mismatch(self, tmp_path: Path) -> None:
+        """If file grows between parse and post-stat, stored size equals end_offset."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+        _get_cached_vscode_requests(log_file)
+
+        # Append so incremental path is entered.
+        with log_file.open("a") as f:
+            f.write(_make_log_line(req_idx=1))
+
+        new_id = safe_file_identity(log_file)
+        assert new_id is not None
+        new_size = new_id[1]
+
+        # Mock post-stat to return a BIGGER size (file grew during parse).
+        grown_id = (new_id[0] + 1, new_size + 500)
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=[new_id, grown_id],
+        ):
+            result = _get_cached_vscode_requests(log_file)
+
+        assert len(result) == 2
+        entry = _VSCODE_LOG_CACHE[log_file]
+        # Stored file_id size should be clamped to end_offset, not grown size.
+        assert entry.file_id is not None
+        assert entry.file_id[1] == entry.end_offset
+
+    def test_full_parse_post_stat_none(self, tmp_path: Path) -> None:
+        """Full-parse path: if post-stat returns None, resolved_id is stored."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        real_id = safe_file_identity(log_file)
+        # First stat returns real_id, post-parse stat returns None.
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=[real_id, None],
+        ):
+            result = _get_cached_vscode_requests(log_file)
+
+        assert len(result) == 1
+        entry = _VSCODE_LOG_CACHE[log_file]
+        assert entry.file_id == real_id
+
+    def test_full_parse_post_stat_size_mismatch(self, tmp_path: Path) -> None:
+        """Full-parse path: if file grew during parse, stored size equals end_offset."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        real_id = safe_file_identity(log_file)
+        assert real_id is not None
+        grown_id = (real_id[0] + 1, real_id[1] + 500)
+        # First stat returns real_id, post-parse stat returns grown_id.
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            side_effect=[real_id, grown_id],
+        ):
+            result = _get_cached_vscode_requests(log_file)
+
+        assert len(result) == 1
+        entry = _VSCODE_LOG_CACHE[log_file]
+        assert entry.file_id is not None
+        assert entry.file_id[1] == entry.end_offset
+
     """Tests for the module-level _VSCODE_LOG_CACHE and _get_cached_vscode_requests."""
 
     def test_first_call_populates_cache(self, tmp_path: Path) -> None:
@@ -1301,8 +1542,8 @@ class TestVscodeLogCache:
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             first = _get_cached_vscode_requests(log_file)
             second = _get_cached_vscode_requests(log_file)
@@ -1322,9 +1563,7 @@ class TestVscodeLogCache:
         # Mutate the file by adding a second request line. The rewritten file
         # has different contents and size, so its identity changes and the
         # next cache lookup should re-parse it.
-        log_file.write_text(
-            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
-        )
+        log_file.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=1))
 
         second = _get_cached_vscode_requests(log_file)
         assert len(second) == 2
@@ -1369,8 +1608,8 @@ class TestVscodeLogCache:
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             s1 = get_vscode_summary(tmp_path)
             s2 = get_vscode_summary(tmp_path)
@@ -1405,8 +1644,8 @@ class TestVscodeLogCache:
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             first = _get_cached_vscode_requests(log_file, file_id=None)
             second = _get_cached_vscode_requests(log_file, file_id=None)
@@ -1421,8 +1660,8 @@ class TestVscodeLogCache:
         log_file.write_text(_make_log_line(req_idx=0))
 
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             _get_cached_vscode_requests(log_file, file_id=(0, 0))
             assert spy.call_count == 1
@@ -1453,7 +1692,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
 
         # Write 500 synthetic request lines.
         lines = [_make_log_line(req_idx=i) for i in range(500)]
-        log_file.write_text("\n".join(lines))
+        log_file.write_text("".join(lines))
 
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
@@ -1481,9 +1720,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
         assert s1.total_requests == 1
 
         # Mutate the file — summary cache should be invalidated.
-        log_file.write_text(
-            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=1)
-        )
+        log_file.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=1))
 
         with patch(
             "copilot_usage.vscode_parser._update_vscode_summary",
@@ -1521,7 +1758,7 @@ class TestVscodeSummaryCacheSkipsReaggregation:
 
         # Append to the file (no new files, no directory changes).
         with log_file.open("a") as f:
-            f.write("\n" + _make_log_line(req_idx=1))
+            f.write(_make_log_line(req_idx=1))
 
         # Discovery cache is still valid (same root mtime, same sentinel),
         # but the file-level stat detects the size/mtime change.
@@ -1668,8 +1905,8 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
         log_file2 = log_dir2 / "GitHub Copilot Chat.log"
 
         # Write N lines to each file.
-        log_file1.write_text("\n".join(_make_log_line(req_idx=i) for i in range(n)))
-        log_file2.write_text("\n".join(_make_log_line(req_idx=i + n) for i in range(n)))
+        log_file1.write_text("".join(_make_log_line(req_idx=i) for i in range(n)))
+        log_file2.write_text("".join(_make_log_line(req_idx=i + n) for i in range(n)))
 
         # Warm both caches (summary + per-file).
         s1 = get_vscode_summary(tmp_path)
@@ -1677,8 +1914,8 @@ class TestPerFileSummaryCacheSkipsUnchangedFiles:
 
         # Append M new lines to file2 only; file1 is unchanged.
         existing = log_file2.read_text()
-        extra = "\n".join(_make_log_line(req_idx=i + n * 2) for i in range(m))
-        log_file2.write_text(existing + "\n" + extra)
+        extra = "".join(_make_log_line(req_idx=i + n * 2) for i in range(m))
+        log_file2.write_text(existing + extra)
 
         # Spy on _update_vscode_summary and call again.
         with patch(
@@ -1728,7 +1965,12 @@ class TestSafeFileIdentityCalledOncePerFile:
         return paths
 
     def test_cold_cache_stats_each_file_once(self, tmp_path: Path) -> None:
-        """On a cold summary + per-file cache, each file is stat'd once."""
+        """On a cold summary + per-file cache, each file is stat'd at most twice.
+
+        The first stat happens in ``get_vscode_summary`` to compute file
+        identity, and the second in ``_get_cached_vscode_requests`` as a
+        post-parse re-stat for TOCTOU safety.
+        """
         log_files = self._make_log_tree(tmp_path, n_files=5)
         call_counts: dict[Path, int] = {}
         real_fn = safe_file_identity
@@ -1745,9 +1987,9 @@ class TestSafeFileIdentityCalledOncePerFile:
 
         assert summary.total_requests == len(log_files)
         for log_file in log_files:
-            assert call_counts.get(log_file, 0) <= 1, (
+            assert call_counts.get(log_file, 0) <= 2, (
                 f"safe_file_identity called {call_counts[log_file]} times "
-                f"for {log_file.name}, expected at most 1"
+                f"for {log_file.name}, expected at most 2"
             )
 
     def test_warm_per_file_cache_stats_each_file_once(self, tmp_path: Path) -> None:
@@ -1872,8 +2114,8 @@ class TestPerFileSummaryCacheSurvivesBeyondRequestCacheLimit:
 
         # First call: populate caches.  parse_vscode_log called once per file.
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             s1 = get_vscode_summary(tmp_path)
             assert s1.total_requests == num_files
@@ -1881,14 +2123,12 @@ class TestPerFileSummaryCacheSurvivesBeyondRequestCacheLimit:
 
         # Modify exactly one file so its safe_file_identity changes.
         changed = log_files[0]
-        changed.write_text(
-            _make_log_line(req_idx=0) + "\n" + _make_log_line(req_idx=9999)
-        )
+        changed.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=9999))
 
         # Second call: only the changed file should be re-parsed.
         with patch(
-            "copilot_usage.vscode_parser.parse_vscode_log",
-            wraps=parse_vscode_log,
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
         ) as spy:
             s2 = get_vscode_summary(tmp_path)
             assert spy.call_count == 1
@@ -1914,7 +2154,7 @@ class TestImmutableSummaryFields:
         log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_LOG_OPUS + "\n")
+        log_file.write_text(_LOG_OPUS)
 
         first = get_vscode_summary(tmp_path)
         second = get_vscode_summary(tmp_path)
@@ -1925,7 +2165,7 @@ class TestImmutableSummaryFields:
         log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_LOG_OPUS + "\n")
+        log_file.write_text(_LOG_OPUS)
 
         summary = get_vscode_summary(tmp_path)
         with pytest.raises(TypeError):
@@ -1936,7 +2176,7 @@ class TestImmutableSummaryFields:
         log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_LOG_OPUS + "\n")
+        log_file.write_text(_LOG_OPUS)
 
         summary = get_vscode_summary(tmp_path)
         with pytest.raises(TypeError):
@@ -1947,7 +2187,7 @@ class TestImmutableSummaryFields:
         log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_LOG_OPUS + "\n")
+        log_file.write_text(_LOG_OPUS)
 
         summary = get_vscode_summary(tmp_path)
         with pytest.raises(TypeError):
@@ -1958,7 +2198,7 @@ class TestImmutableSummaryFields:
         log_dir = tmp_path / "session" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
-        log_file.write_text(_LOG_OPUS + "\n")
+        log_file.write_text(_LOG_OPUS)
 
         summary = get_vscode_summary(tmp_path)
         with pytest.raises(TypeError):
@@ -2131,10 +2371,12 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
             category="inline",
         )
 
-        def _fake_parse(path: Path) -> list[VSCodeRequest]:
+        def _fake_parse(
+            path: Path, offset: int = 0, **_kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
             if path == file_a:
                 raise OSError("Permission denied")
-            return [ok_req]
+            return [ok_req], offset + 100
 
         with (
             patch(
@@ -2142,7 +2384,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fake_parse,
             ),
         ):
@@ -2167,10 +2409,12 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
             category="inline",
         )
 
-        def _fail_a(path: Path) -> list[VSCodeRequest]:
+        def _fail_a(
+            path: Path, offset: int = 0, **_kw: object
+        ) -> tuple[list[VSCodeRequest], int]:
             if path == file_a:
                 raise OSError("Permission denied")
-            return [ok_req]
+            return [ok_req], offset + 100
 
         # First call: partial failure — cache stays None.
         with (
@@ -2179,7 +2423,7 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
                 side_effect=_fail_a,
             ),
         ):
@@ -2194,8 +2438,8 @@ class TestVscodeSummaryCacheNotPopulatedOnPartialFailure:
                 return_value=[file_a, file_b],
             ),
             patch(
-                "copilot_usage.vscode_parser.parse_vscode_log",
-                return_value=[ok_req],
+                "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+                return_value=([ok_req], 100),
             ),
         ):
             summary2 = get_vscode_summary()
