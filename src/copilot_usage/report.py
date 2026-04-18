@@ -681,19 +681,25 @@ def render_cost_view(
 
         session_output = 0
         if s.model_metrics:
+            # Pure-active sessions (still running, no prior shutdown) have
+            # synthetic zeros in requests/cost — display "—" instead.
+            show_requests = s.has_shutdown_metrics or not s.is_active
             for model_name in sorted(s.model_metrics):
                 mm = s.model_metrics[model_name]
                 session_output += mm.usage.outputTokens
+                requests_display = str(mm.requests.count) if show_requests else "—"
+                premium_display = str(mm.requests.cost) if show_requests else "—"
                 table.add_row(
                     name,
                     model_name,
-                    str(mm.requests.count),
-                    str(mm.requests.cost),
+                    requests_display,
+                    premium_display,
                     model_calls_display,
                     format_tokens(mm.usage.outputTokens),
                 )
-                grand_requests += mm.requests.count
-                grand_premium += mm.requests.cost
+                if show_requests:
+                    grand_requests += mm.requests.count
+                    grand_premium += mm.requests.cost
                 # Only show session-level info once
                 name = ""
                 model_calls_display = ""
