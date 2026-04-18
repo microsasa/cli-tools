@@ -342,7 +342,9 @@ class TestDiscoverVscodeLogs:
     def test_default_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
-        with patch.object(Path, "is_dir", return_value=False):
+        with patch.object(
+            Path, "stat", autospec=True, side_effect=OSError("not found")
+        ):
             result = discover_vscode_logs()
         assert result == []
 
@@ -351,25 +353,27 @@ class TestDiscoverVscodeLogs:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "win32")
         monkeypatch.setenv("APPDATA", "")  # empty → falsy
         with patch.object(
-            Path, "is_dir", autospec=True, return_value=False
-        ) as mock_is_dir:
+            Path, "stat", autospec=True, side_effect=OSError("not found")
+        ) as mock_stat:
             result = discover_vscode_logs()
-        mock_is_dir.assert_any_call(
-            Path.home() / "AppData" / "Roaming" / "Code" / "logs"
-        )
+        mock_stat.assert_any_call(Path.home() / "AppData" / "Roaming" / "Code" / "logs")
         assert result == []
 
     def test_default_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "darwin")
         monkeypatch.delenv("APPDATA", raising=False)
-        with patch.object(Path, "is_dir", return_value=False):
+        with patch.object(
+            Path, "stat", autospec=True, side_effect=OSError("not found")
+        ):
             result = discover_vscode_logs()
         assert result == []
 
     def test_default_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("copilot_usage.vscode_parser.sys.platform", "linux")
         monkeypatch.delenv("APPDATA", raising=False)
-        with patch.object(Path, "is_dir", return_value=False):
+        with patch.object(
+            Path, "stat", autospec=True, side_effect=OSError("not found")
+        ):
             result = discover_vscode_logs()
         assert result == []
 
@@ -1489,6 +1493,43 @@ class TestVscodeSummaryCacheSkipsReaggregation:
             assert spy.call_count == 1  # re-aggregated because file changed
 
         assert s2.total_requests == 2
+
+    def test_appended_file_detected_without_discovery_change(
+        self, tmp_path: Path
+    ) -> None:
+        """Appending to a log file is detected even when discovery is cached.
+
+        Regression guard for #898: the stat-before-cache-check pattern in
+        get_vscode_summary is what detects file modifications.  If someone
+        removed those stats to "optimise" the cache-hit path, this test
+        would fail because the summary would show stale data (1 request
+        instead of 2) despite the file having grown.
+        """
+        log_dir = (
+            tmp_path / "20260313T211400" / "window1" / "exthost" / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        s1 = get_vscode_summary(tmp_path)
+        assert s1.total_requests == 1
+
+        # Call again — discovery cache is now warm and unchanged.
+        s1b = get_vscode_summary(tmp_path)
+        assert s1b is s1  # exact same cached object
+
+        # Append to the file (no new files, no directory changes).
+        with log_file.open("a") as f:
+            f.write("\n" + _make_log_line(req_idx=1))
+
+        # Discovery cache is still valid (same root mtime, same sentinel),
+        # but the file-level stat detects the size/mtime change.
+        s2 = get_vscode_summary(tmp_path)
+        assert s2.total_requests == 2, (
+            "Appended request not detected — stat-before-cache-check may "
+            "have been removed (see #898)"
+        )
 
     def test_cache_invalidated_on_new_file(self, tmp_path: Path) -> None:
         """Adding a new log file invalidates the summary cache."""

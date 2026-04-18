@@ -713,8 +713,6 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 )
                 continue
             current_model = ev.currentModel or data.currentModel
-            if not current_model and data.modelMetrics:
-                current_model = _infer_model_from_metrics(data.modelMetrics)
             _shutdowns.append((idx, data))
             end_time = ev.timestamp
             model = current_model
@@ -850,7 +848,7 @@ def _build_completed_summary(
         end_time=None if resume.session_resumed else fp.end_time,
         name=name,
         cwd=fp.cwd,
-        model=fp.model,
+        model=fp.model or _infer_model_from_metrics(merged_metrics),
         total_premium_requests=total_premium,
         total_api_duration_ms=total_api_duration,
         model_metrics=merged_metrics,
@@ -1054,6 +1052,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     deferred_events: list[tuple[Path, tuple[int, int] | None, list[SessionEvent]]] = []
     deferred_sessions: list[tuple[Path, _CachedSession]] = []
     cache_hit_paths: list[Path] = []
+    any_events_changed = False
     for events_path, file_id, plan_id in discovered:
         cached = _SESSION_CACHE.get(events_path)
         # Config changes only invalidate cached entries that declared a
@@ -1086,6 +1085,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
                 cache_hit_paths.append(events_path)
             summaries.append(summary)
             continue
+        any_events_changed = True
         try:
             events = parse_events(events_path)
         except OSError as exc:
@@ -1175,6 +1175,29 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         and _sorted_sessions_cache.root == resolved_root
     ):
         return list(_sorted_sessions_cache.summaries)
+
+    # Plan-only fast path: discovery cache hit, no events.jsonl changed,
+    # only plan.md names differ.  Sort key is start_time (from events),
+    # so the existing sorted order is still valid — just substitute the
+    # updated summaries by events_path.
+    if (
+        is_cache_hit
+        and not any_events_changed
+        and len(summaries) == len(discovered)
+        and _sorted_sessions_cache is not None
+        and _sorted_sessions_cache.root == resolved_root
+    ):
+        updated: dict[Path, SessionSummary] = {
+            ep: entry.summary for ep, entry in deferred_sessions
+        }
+        new_sorted: list[SessionSummary] = [
+            updated.get(s.events_path, s) if s.events_path is not None else s
+            for s in _sorted_sessions_cache.summaries
+        ]
+        _sorted_sessions_cache = _SortedSessionsCache(
+            resolved_root, _sorted_sessions_cache.fingerprint, new_sorted
+        )
+        return new_sorted
 
     # Fingerprint fallback: when the discovery cache missed but the
     # discovered session set is identical, skip the O(n log n) sort.

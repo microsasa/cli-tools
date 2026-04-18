@@ -2476,6 +2476,128 @@ class TestBuildSessionSummaryMultiShutdownResumed:
 
 
 # ---------------------------------------------------------------------------
+# build_session_summary — multi-shutdown model inference from merged metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMultiShutdownModelInference:
+    """When shutdown cycles report different models, the session-level model
+    should be the dominant one across all cycles (highest requests.count in
+    merged metrics), not just whichever shutdown happened last."""
+
+    def test_dominant_model_wins_over_last_shutdown(self, tmp_path: Path) -> None:
+        shutdown_gpt = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 5,
+                    "totalApiDurationMs": 8000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "gpt-4o": {
+                            "requests": {"count": 20, "cost": 10},
+                            "usage": {
+                                "inputTokens": 5000,
+                                "outputTokens": 500,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                },
+                "id": "ev-sd-gpt",
+                "timestamp": "2026-03-07T09:00:00.000Z",
+            }
+        )
+        shutdown_sonnet = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 4000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "claude-sonnet-4": {
+                            "requests": {"count": 5, "cost": 3},
+                            "usage": {
+                                "inputTokens": 2000,
+                                "outputTokens": 200,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                },
+                "id": "ev-sd-sonnet",
+                "timestamp": "2026-03-07T10:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            shutdown_gpt,
+            _RESUME_EVENT,
+            _POST_RESUME_USER_MSG,
+            _POST_RESUME_ASSISTANT_MSG,
+            shutdown_sonnet,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # gpt-4o had 20 requests vs claude-sonnet-4's 5 — gpt-4o is dominant
+        assert summary.model == "gpt-4o"
+        # Both models present in merged metrics
+        assert "gpt-4o" in summary.model_metrics
+        assert "claude-sonnet-4" in summary.model_metrics
+
+    def test_explicit_current_model_takes_priority(self, tmp_path: Path) -> None:
+        """When a shutdown event has an explicit currentModel, it should take
+        priority over inference from merged metrics."""
+        shutdown_with_model = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 2,
+                    "totalApiDurationMs": 3000,
+                    "sessionStartTime": 0,
+                    "modelMetrics": {
+                        "gpt-4o": {
+                            "requests": {"count": 50, "cost": 25},
+                            "usage": {
+                                "inputTokens": 10000,
+                                "outputTokens": 1000,
+                                "cacheReadTokens": 0,
+                                "cacheWriteTokens": 0,
+                            },
+                        }
+                    },
+                    "currentModel": "claude-sonnet-4",
+                },
+                "id": "ev-sd-explicit",
+                "timestamp": "2026-03-07T09:00:00.000Z",
+                "currentModel": "claude-sonnet-4",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            shutdown_with_model,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        # Explicit currentModel wins even though gpt-4o has more requests
+        assert summary.model == "claude-sonnet-4"
+
+
+# ---------------------------------------------------------------------------
 # build_session_summary — multi-shutdown code_changes preservation
 # ---------------------------------------------------------------------------
 
@@ -9012,9 +9134,9 @@ class TestSortedSessionsCacheSkipsRedundantSort:
         with patch.object(_parser_module, "session_sort_key", tracking_key):
             result = get_all_sessions(tmp_path)
 
-        assert len(sort_key_calls) > 0, (
-            "session_sort_key must be called when plan.md changes "
-            "(deferred_sessions is non-empty)"
+        assert len(sort_key_calls) == 0, (
+            "session_sort_key must NOT be called when only plan.md changes "
+            "(sort key is start_time from events, unaffected by plan.md)"
         )
 
         # The session with the new plan.md should carry the extracted name.

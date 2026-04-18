@@ -211,29 +211,12 @@ def discover_vscode_logs(base_path: Path | None = None) -> list[Path]:
 
     If only one variant exists on disk the behaviour is identical to before.
     When both exist, files from both are returned and sorted together.
-    """
-    if base_path is not None:
-        if not base_path.is_dir():
-            logger.debug("VS Code logs directory not found: {}", base_path)
-            return []
-        logs = sorted(base_path.glob(_GLOB_PATTERN))
-        logger.debug("Discovered {} VS Code log file(s) under {}", len(logs), base_path)
-        return logs
 
-    candidates = _default_log_candidates()
-    all_logs: list[Path] = []
-    for candidate in candidates:
-        if not candidate.is_dir():
-            logger.debug("VS Code logs directory not found: {}", candidate)
-            continue
-        all_logs.extend(candidate.glob(_GLOB_PATTERN))
-    all_logs.sort()
-    logger.debug(
-        "Discovered {} VS Code log file(s) across {} candidate(s)",
-        len(all_logs),
-        len(candidates),
-    )
-    return all_logs
+    Results are cached per candidate root directory.  Steady-state cost is
+    O(1) — two ``stat`` calls per root (root + newest child sentinel) —
+    instead of a full multi-level glob traversal.
+    """
+    return _cached_discover_vscode_logs(base_path)
 
 
 def _newest_child_from_ids(
@@ -512,13 +495,17 @@ def _update_vscode_summary(
     dbm = acc.duration_by_model
     rbc = acc.requests_by_category
     rbd = acc.requests_by_date
+    total_req = acc.total_requests
+    total_dur = acc.total_duration_ms
+    first_ts = acc.first_timestamp
+    last_ts = acc.last_timestamp
     last_date_key: str = ""
     last_date_val: date | None = None
 
     for req in requests:
-        acc.total_requests += 1
+        total_req += 1
         dur = req.duration_ms
-        acc.total_duration_ms += dur
+        total_dur += dur
 
         model = req.model
         rbm[model] += 1
@@ -534,12 +521,15 @@ def _update_vscode_summary(
 
         # Timestamp bounds: full min/max scan so callers (especially
         # build_vscode_summary) need not pre-sort their input.
-        first = acc.first_timestamp
-        if first is None or ts < first:
-            acc.first_timestamp = ts
-        last_ts = acc.last_timestamp
+        if first_ts is None or ts < first_ts:
+            first_ts = ts
         if last_ts is None or ts > last_ts:
-            acc.last_timestamp = ts
+            last_ts = ts
+
+    acc.total_requests = total_req
+    acc.total_duration_ms = total_dur
+    acc.first_timestamp = first_ts
+    acc.last_timestamp = last_ts
 
 
 def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
@@ -576,16 +566,17 @@ def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
 def _finalize_summary(acc: _SummaryAccumulator) -> VSCodeLogSummary:
     """Convert a mutable accumulator into a frozen ``VSCodeLogSummary``.
 
-    Plain ``dict`` values are passed to the constructor;
-    ``VSCodeLogSummary.__post_init__`` wraps them in ``MappingProxyType``.
+    Accumulator ``defaultdict`` fields are passed directly;
+    ``VSCodeLogSummary.__post_init__`` copies them once into
+    ``MappingProxyType`` wrappers.
     """
     return VSCodeLogSummary(
         total_requests=acc.total_requests,
         total_duration_ms=acc.total_duration_ms,
-        requests_by_model=dict(acc.requests_by_model),
-        duration_by_model=dict(acc.duration_by_model),
-        requests_by_category=dict(acc.requests_by_category),
-        requests_by_date=dict(acc.requests_by_date),
+        requests_by_model=acc.requests_by_model,
+        duration_by_model=acc.duration_by_model,
+        requests_by_category=acc.requests_by_category,
+        requests_by_date=acc.requests_by_date,
         first_timestamp=acc.first_timestamp,
         last_timestamp=acc.last_timestamp,
         log_files_parsed=acc.log_files_parsed,
