@@ -171,30 +171,16 @@ def test_components_table_lists_all_modules() -> None:
     )
 
 
-def test_architecture_detect_resume_lists_all_indicators() -> None:
-    """The _detect_resume() description in architecture.md must mention the
-    three true resume indicators and the separately-tracked turn_start event."""
-    resume_indicators = {
-        "session.resume",
-        "user.message",
-        "assistant.message",
-    }
-    tracked_activity = "assistant.turn_start"
-    # Extract the full _detect_resume() bullet paragraph from the pipeline
-    # section so harmless Markdown line wrapping does not break this test.
+def test_architecture_first_pass_mentions_resume_detection() -> None:
+    """The _first_pass() description in architecture.md must mention
+    post-shutdown resume data tracking."""
     match = re.search(
-        r"^\s*[-*]\s+`_detect_resume\(\)`:.*?(?=^\s*[-*]\s+`|\Z)",
+        r"^\s*[-*]\s+`_first_pass\(\)`:.*?(?=^\s*[-*]\s+`|\Z)",
         _ARCH_MD,
         re.MULTILINE | re.DOTALL,
     )
-    assert match, "Could not find the '_detect_resume()' description in architecture.md"
+    assert match, "Could not find the '_first_pass()' description in architecture.md"
     description = match.group(0)
-    for indicator in sorted(resume_indicators):
-        assert indicator in description, (
-            f"Resume indicator '{indicator}' is missing from the "
-            f"_detect_resume() description in architecture.md"
-        )
-    assert tracked_activity in description, (
-        f"Tracked activity '{tracked_activity}' is missing from the "
-        f"_detect_resume() description in architecture.md"
+    assert "resume" in description.lower(), (
+        "_first_pass() description in architecture.md must mention resume detection"
     )

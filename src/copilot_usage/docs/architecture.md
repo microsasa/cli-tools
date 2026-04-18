@@ -34,7 +34,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | Module | Responsibility |
 |--------|---------------|
 | `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Also contains the interactive loop (invoked when no subcommand is given) with watchdog-based auto-refresh (2-second debounce). |
-| `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session via focused helpers: `_first_pass()` (extract identity/shutdowns/counters), `_detect_resume()` (post-shutdown scan), `_build_completed_summary()`, `_build_active_summary()`. |
+| `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session via focused helpers: `_first_pass()` (extract identity/shutdowns/counters/post-shutdown resume data in a single pass), `_build_completed_summary()`, `_build_active_summary()`. |
 | `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
 | `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), live view, premium request breakdown. Shows raw counts and `~`-prefixed premium cost estimates for live/active sessions; historical post-shutdown views display exact API-provided numbers. |
 | `render_detail.py` | Session detail rendering — extracted from report.py. Displays event timeline, per-event metadata, and session-level aggregates. |
@@ -50,9 +50,8 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
 2. **Parsing** — `_parse_events_from_offset()` reads each line as JSON in binary mode, creates `SessionEvent` objects via Pydantic validation. The production pipeline accesses this through `get_cached_events()`, which caches results and supports incremental byte-offset parsing for append-only file growth. The public `parse_events()` delegates to the same implementation with `include_partial_tail=True` for one-shot full-file reads. Malformed lines are skipped with a warning.
 3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type. Unknown event types still validate as `SessionEvent`, but normal processing ignores them unless a caller explicitly validates `data` with `GenericEventData`.
-4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
-   - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
-   - `_detect_resume()`: scans events after the last shutdown for resume indicators (`session.resume`, `user.message`, `assistant.message`) and separately tracks post-shutdown `assistant.turn_start` activity
+4. **Summarization** — `build_session_summary()` orchestrates focused helpers:
+   - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data, and tracks rolling post-shutdown accumulators (reset on each shutdown) for resume detection
    - `_build_completed_summary()`: merges all shutdown cycles (metrics, premium requests, code changes) into a SessionSummary. Sets `is_active=True` if resumed.
    - `_build_active_summary()`: for sessions with no shutdowns — infers model from `tool.execution_complete` events or `~/.copilot/config.json`, builds synthetic metrics from output tokens
    - Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between helpers

@@ -148,30 +148,31 @@ The model name for a shutdown is resolved in priority order (in `parser.py`):
 
 ### Detection logic
 
-After the first pass, `build_session_summary()` calls `_detect_resume(events, fp.all_shutdowns)` (in `parser.py`) which scans events after the last shutdown index:
+`_first_pass()` tracks rolling post-shutdown accumulators that reset on each `session.shutdown` event. After the single-pass loop completes, these accumulators hold the post-*last*-shutdown values, making resume detection O(0) additional work:
 
 ```python
-def _detect_resume(events, all_shutdowns):
+# Inside _first_pass():
+for idx, ev in enumerate(events):
+    etype = ev.type
     # ...
-    last_shutdown_idx = all_shutdowns[-1][0]
+    if etype == EventType.SESSION_SHUTDOWN:
+        # ... parse shutdown data ...
+        # Reset rolling accumulators for new post-shutdown window
+        _ps_resumed = False
+        _ps_output_tokens = 0
+        _ps_turn_starts = 0
+        _ps_user_messages = 0
+        _ps_last_resume_time = None
 
-    for i in range(last_shutdown_idx + 1, len(events)):
-        ev = events[i]
-        etype = ev.type
-        if etype == EventType.ASSISTANT_MESSAGE:
-            session_resumed = True
-            # ... accumulate output tokens ...
-        elif etype == EventType.USER_MESSAGE:
-            session_resumed = True
-            # ... count user messages ...
-        elif etype == EventType.ASSISTANT_TURN_START:
-            # ... count turn starts ...
-        elif etype == EventType.SESSION_RESUME:
-            session_resumed = True
-            # ... capture resume timestamp ...
+    elif etype == EventType.USER_MESSAGE:
+        user_message_count += 1
+        if _shutdowns:
+            _ps_resumed = True
+            _ps_user_messages += 1
+    # ... similar for ASSISTANT_MESSAGE, ASSISTANT_TURN_START, SESSION_RESUME
 ```
 
-The helper includes a defensive guard for empty `all_shutdowns` (returns empty `_ResumeInfo`), making it safe to call independently. The `if/elif` chain short-circuits after the first match, reducing comparisons from 5 per event to 1 for the most common `ASSISTANT_MESSAGE` case.
+The result fields (`post_shutdown_resumed`, `post_shutdown_output_tokens`, etc.) are carried in `_FirstPassResult` and converted to a `_ResumeInfo` in `_build_session_summary_with_meta`.
 
 The presence of **any** `session.resume`, `user.message`, or `assistant.message` event after the last shutdown triggers `session_resumed = True`.
 

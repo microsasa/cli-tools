@@ -37,7 +37,6 @@ from copilot_usage.models import (
     UserMessageData,
 )
 from copilot_usage.parser import (
-    _DETECT_RESUME_EVENT_TYPES,
     _DISCOVERY_CACHE,
     _EVENTS_CACHE,
     _FIRST_PASS_EVENT_TYPES,
@@ -51,7 +50,6 @@ from copilot_usage.parser import (
     _CachedEvents,
     _CachedSession,
     _CopilotConfig,
-    _detect_resume,
     _discover_with_identity,
     _extract_output_tokens,
     _extract_session_name,
@@ -6259,21 +6257,24 @@ class TestFirstPassDirect:
 
 
 # ---------------------------------------------------------------------------
-# Issue #470 — _detect_resume direct unit tests
+# Issue #470 — resume detection direct unit tests
 # ---------------------------------------------------------------------------
 
 
-class TestDetectResumeDirect:
-    """Direct unit tests for _detect_resume covering untested branches."""
+class TestResumeDetectionDirect:
+    """Direct unit tests for resume detection via _first_pass."""
 
-    def test_empty_shutdowns_returns_zeroed(self) -> None:
-        """No shutdowns → zeroed _ResumeInfo."""
-        result = _detect_resume(events=[], all_shutdowns=())
-        assert result.session_resumed is False
-        assert result.post_shutdown_output_tokens == 0
-        assert result.post_shutdown_turn_starts == 0
-        assert result.post_shutdown_user_messages == 0
-        assert result.last_resume_time is None
+    def test_no_shutdowns_returns_zeroed(self, tmp_path: Path) -> None:
+        """No shutdowns → zeroed post-shutdown fields."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.post_shutdown_resumed is False
+        assert fp.post_shutdown_output_tokens == 0
+        assert fp.post_shutdown_turn_starts == 0
+        assert fp.post_shutdown_user_messages == 0
+        assert fp.last_resume_time is None
 
     def test_captures_resume_timestamp(self, tmp_path: Path) -> None:
         """SESSION_RESUME timestamp is captured into last_resume_time."""
@@ -6281,9 +6282,8 @@ class TestDetectResumeDirect:
         _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, _RESUME_EVENT)
         events = parse_events(p)
         fp = _first_pass(events)
-        result = _detect_resume(events, fp.all_shutdowns)
-        assert result.session_resumed is True
-        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
+        assert fp.post_shutdown_resumed is True
+        assert fp.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
 
     def test_accumulates_post_shutdown_tokens(self, tmp_path: Path) -> None:
         """Post-shutdown assistant messages accumulate output tokens."""
@@ -6319,8 +6319,7 @@ class TestDetectResumeDirect:
         _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst1, asst2)
         events = parse_events(p)
         fp = _first_pass(events)
-        result = _detect_resume(events, fp.all_shutdowns)
-        assert result.post_shutdown_output_tokens == 150
+        assert fp.post_shutdown_output_tokens == 150
 
     def test_counts_user_messages_and_turn_starts(self, tmp_path: Path) -> None:
         """Post-shutdown user messages and turn starts are counted separately."""
@@ -6378,73 +6377,101 @@ class TestDetectResumeDirect:
         )
         events = parse_events(p)
         fp = _first_pass(events)
-        result = _detect_resume(events, fp.all_shutdowns)
-        assert result.post_shutdown_user_messages == 2
-        assert result.post_shutdown_turn_starts == 3
+        assert fp.post_shutdown_user_messages == 2
+        assert fp.post_shutdown_turn_starts == 3
 
-
-# ---------------------------------------------------------------------------
-# Issue #553 / #640 — _detect_resume must not allocate an O(n) list slice
-# ---------------------------------------------------------------------------
-
-
-class TestDetectResumeNoListSlice:
-    """Verify _detect_resume uses index loop (zero-copy) instead of a list slice."""
-
-    def test_no_intermediate_list_allocation(self, tmp_path: Path) -> None:
-        """Build a session with an early shutdown and 1 000+ post-shutdown events.
-
-        Uses tracemalloc to assert that _detect_resume does NOT allocate a
-        list of length >= 1 000 for the post-shutdown tail.
-        """
-        import tracemalloc
-
-        # Build a synthetic events.jsonl: start → user → shutdown → 1200 user messages
-        post_events: list[str] = [
-            json.dumps(
-                {
-                    "type": "user.message",
-                    "data": {
-                        "content": f"msg-{i}",
-                        "transformedContent": f"msg-{i}",
-                        "attachments": [],
-                        "interactionId": f"int-post-{i}",
-                    },
-                    "id": f"ev-post-user-{i}",
-                    "timestamp": "2026-03-07T12:01:00.000Z",
-                    "parentId": "ev-shutdown",
-                }
-            )
-            for i in range(1_200)
-        ]
-
+    def test_assistant_message_without_tokens_still_resumes(
+        self, tmp_path: Path
+    ) -> None:
+        """Post-shutdown assistant message with no outputTokens still sets resumed."""
+        asst_no_tokens = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m1",
+                    "content": "hello",
+                    "toolRequests": [],
+                    "interactionId": "i1",
+                },
+                "id": "ev-a-no-tok",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
         p = tmp_path / "s" / "events.jsonl"
-        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, *post_events)
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst_no_tokens)
         events = parse_events(p)
         fp = _first_pass(events)
+        assert fp.post_shutdown_resumed is True
+        assert fp.post_shutdown_output_tokens == 0
 
-        # Measure peak memory during _detect_resume.
-        tracemalloc.start()
-        tracemalloc.reset_peak()
-        try:
-            result = _detect_resume(events, fp.all_shutdowns)
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-
-        # The call should have counted all post-shutdown user messages
-        assert result.post_shutdown_user_messages == 1_200
-
-        # Assert that peak memory usage stays below what we'd expect from
-        # allocating a list slice of 1000+ elements. On 64-bit, a list of
-        # 1000 pointers is ~8 KB, so a 1200-element slice would be >9.6 KB
-        # plus list overhead. Keeping the threshold at 8 KB ensures we would
-        # catch such a large temporary list allocation.
-        assert peak < 8_000, (
-            f"Unexpected high peak memory in _detect_resume: {peak} bytes"
+    def test_resume_before_first_shutdown_ignored(self, tmp_path: Path) -> None:
+        """SESSION_RESUME before any shutdown must not set post_shutdown_resumed."""
+        resume_early = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume-early",
+                "timestamp": "2026-03-07T10:30:00.000Z",
+            }
         )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, resume_early, _SHUTDOWN_EVENT)
+        events = parse_events(p)
+        fp = _first_pass(events)
+        # Shutdown resets accumulators; the pre-shutdown resume must not leak
+        assert fp.post_shutdown_resumed is False
+        assert fp.last_resume_time is None
+
+    def test_stale_resume_time_cleared_across_shutdowns(self, tmp_path: Path) -> None:
+        """last_resume_time must be None when second shutdown has no SESSION_RESUME."""
+        resume1 = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume1",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        shutdown2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "sessionId": "test-session-1",
+                    "totalApiDurationMs": 0,
+                    "totalPremiumRequests": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        user_post = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "after sd2"},
+                "id": "ev-user-post",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _SHUTDOWN_EVENT,
+            resume1,
+            shutdown2,
+            user_post,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        # Second shutdown had no SESSION_RESUME — stale timestamp must not leak
+        assert fp.post_shutdown_resumed is True  # user_post triggers resume
+        assert fp.last_resume_time is None
+        assert fp.post_shutdown_user_messages == 1
 
 
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Issue #470 — _build_active_summary model from config.json fallback
 # ---------------------------------------------------------------------------
@@ -7873,246 +7900,11 @@ class TestGetAllSessionsEventsCacheOverflow:
 
 
 # ---------------------------------------------------------------------------
-# Issue #640 — _detect_resume: replace islice with range-index loop
+# Issue #685 — non-indicator post-shutdown events must NOT set session_resumed
 # ---------------------------------------------------------------------------
 
 
-class TestDetectResumeRangeIndex:
-    """Verify _detect_resume correctness and O(n_remaining) index access.
-
-    These tests validate correctness for a large event list and ensure the
-    implementation only accesses post-shutdown indices, preventing both
-    iterator-based scanning and redundant pre-shutdown index access.
-    """
-
-    def test_correctness_with_large_event_list(self, tmp_path: Path) -> None:
-        """5 000-event session with shutdown at index 4 990.
-
-        Builds a synthetic events.jsonl and asserts _detect_resume produces
-        the correct counts for the 10 post-shutdown events (a mix of
-        user messages, assistant turns, and assistant messages with tokens).
-        """
-        # Pre-shutdown padding: 4 988 user messages (indices 2..4989 after
-        # start + first user msg).
-        pre_events: list[str] = [
-            json.dumps(
-                {
-                    "type": "user.message",
-                    "data": {
-                        "content": f"pre-{i}",
-                        "transformedContent": f"pre-{i}",
-                        "attachments": [],
-                        "interactionId": f"int-pre-{i}",
-                    },
-                    "id": f"ev-pre-{i}",
-                    "timestamp": "2026-03-07T10:05:00.000Z",
-                    "parentId": "ev-start",
-                }
-            )
-            for i in range(4_988)
-        ]
-
-        # Post-shutdown: 5 user messages, 3 assistant turn starts,
-        # 2 assistant messages with tokens.
-        post_user: list[str] = [
-            json.dumps(
-                {
-                    "type": "user.message",
-                    "data": {
-                        "content": f"post-u-{i}",
-                        "transformedContent": f"post-u-{i}",
-                        "attachments": [],
-                        "interactionId": f"int-post-u-{i}",
-                    },
-                    "id": f"ev-post-u-{i}",
-                    "timestamp": "2026-03-07T12:01:00.000Z",
-                    "parentId": "ev-shutdown",
-                }
-            )
-            for i in range(5)
-        ]
-        post_turns: list[str] = [
-            json.dumps(
-                {
-                    "type": "assistant.turn_start",
-                    "data": {},
-                    "id": f"ev-post-turn-{i}",
-                    "timestamp": "2026-03-07T12:02:00.000Z",
-                    "parentId": "ev-shutdown",
-                }
-            )
-            for i in range(3)
-        ]
-        post_asst: list[str] = [
-            json.dumps(
-                {
-                    "type": "assistant.message",
-                    "data": {
-                        "messageId": f"pm-{i}",
-                        "content": f"resp-{i}",
-                        "toolRequests": [],
-                        "interactionId": f"int-post-a-{i}",
-                        "outputTokens": 50,
-                    },
-                    "id": f"ev-post-asst-{i}",
-                    "timestamp": "2026-03-07T12:03:00.000Z",
-                    "parentId": "ev-shutdown",
-                }
-            )
-            for i in range(2)
-        ]
-
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(
-            p,
-            _START_EVENT,
-            _USER_MSG,
-            *pre_events,
-            _SHUTDOWN_EVENT,
-            *post_user,
-            *post_turns,
-            *post_asst,
-        )
-        events = parse_events(p)
-        fp = _first_pass(events)
-
-        # Sanity: total events should be exactly 5 001.
-        # start(1) + user(1) + pre(4988) + shutdown(1) + post(5+3+2) = 5001
-        assert len(events) == 5_001
-
-        result = _detect_resume(events, fp.all_shutdowns)
-
-        assert result.session_resumed is True
-        assert result.post_shutdown_user_messages == 5
-        assert result.post_shutdown_turn_starts == 3
-        assert result.post_shutdown_output_tokens == 100  # 2 × 50
-        assert result.last_resume_time is None  # no session.resume event
-
-    def test_only_iterates_remaining_events(self) -> None:
-        """Verify _detect_resume only accesses post-shutdown indices.
-
-        Uses a list subclass that raises on ``__iter__`` and on
-        ``__getitem__`` for indices ≤ ``shutdown_idx``.  This proves the
-        implementation neither uses the iterator protocol nor scans
-        pre-shutdown elements via index, and would fail if the code
-        regressed to ``itertools.islice`` or a naïve index-from-zero loop.
-        """
-        from copilot_usage.models import SessionEvent
-
-        class _NoPreScanList(list[SessionEvent]):
-            """list subclass that forbids iteration and pre-shutdown indexing."""
-
-            def __init__(
-                self,
-                items: list[SessionEvent],
-                *,
-                forbidden_up_to: int,
-            ) -> None:
-                super().__init__(items)
-                self._forbidden_up_to = forbidden_up_to
-
-            def __iter__(self) -> Iterator[SessionEvent]:
-                raise AssertionError(
-                    "_detect_resume must use index-based access, not __iter__"
-                )
-
-            @overload
-            def __getitem__(self, index: SupportsIndex, /) -> SessionEvent: ...
-
-            @overload
-            def __getitem__(self, index: slice, /) -> list[SessionEvent]: ...
-
-            def __getitem__(
-                self, index: SupportsIndex | slice, /
-            ) -> SessionEvent | list[SessionEvent]:
-                if isinstance(index, slice):
-                    return super().__getitem__(index)
-                int_idx = index.__index__()
-                if int_idx <= self._forbidden_up_to:
-                    raise AssertionError(
-                        f"_detect_resume must not access index {int_idx} "
-                        f"(<= shutdown_idx {self._forbidden_up_to})"
-                    )
-                return super().__getitem__(index)
-
-        n_total = 5_000
-        shutdown_idx = 4_990
-
-        events: list[SessionEvent] = []
-        for i in range(n_total):
-            if i < shutdown_idx:
-                events.append(
-                    SessionEvent(
-                        type=EventType.USER_MESSAGE,
-                        data={
-                            "content": f"m-{i}",
-                            "transformedContent": f"m-{i}",
-                            "attachments": [],
-                            "interactionId": f"int-{i}",
-                        },
-                        id=f"ev-{i}",
-                        timestamp=None,
-                        parentId=None,
-                    )
-                )
-            elif i == shutdown_idx:
-                events.append(
-                    SessionEvent(
-                        type=EventType.SESSION_SHUTDOWN,
-                        data={
-                            "shutdownType": "routine",
-                            "totalPremiumRequests": 0,
-                            "totalApiDurationMs": 0,
-                            "sessionStartTime": 0,
-                        },
-                        id=f"ev-shutdown-{i}",
-                        timestamp=None,
-                        parentId=None,
-                    )
-                )
-            else:
-                events.append(
-                    SessionEvent(
-                        type=EventType.USER_MESSAGE,
-                        data={
-                            "content": f"post-{i}",
-                            "transformedContent": f"post-{i}",
-                            "attachments": [],
-                            "interactionId": f"int-post-{i}",
-                        },
-                        id=f"ev-post-{i}",
-                        timestamp=None,
-                        parentId=None,
-                    )
-                )
-
-        shutdowns: tuple[tuple[int, SessionShutdownData], ...] = (
-            (
-                shutdown_idx,
-                SessionShutdownData(
-                    shutdownType="routine",
-                    totalPremiumRequests=0,
-                    totalApiDurationMs=0,
-                ),
-            ),
-        )
-
-        no_iter_events = _NoPreScanList(events, forbidden_up_to=shutdown_idx)
-        result = _detect_resume(no_iter_events, shutdowns)
-
-        # Only the 9 post-shutdown user messages should be counted
-        expected_remaining = n_total - shutdown_idx - 1  # 9
-        assert result.post_shutdown_user_messages == expected_remaining
-        assert result.session_resumed is True
-
-
-# ---------------------------------------------------------------------------
-# Issue #685 — _detect_resume: non-indicator post-shutdown events must NOT
-#              set session_resumed
-# ---------------------------------------------------------------------------
-
-
-class TestDetectResumeNonIndicatorEvents:
+class TestNonIndicatorEventsNoResume:
     """Non-indicator events after shutdown must not trigger resume."""
 
     def test_post_shutdown_non_indicator_events_do_not_resume(
@@ -8147,12 +7939,10 @@ class TestDetectResumeNonIndicatorEvents:
         events = parse_events(p)
         fp = _first_pass(events)
 
-        result = _detect_resume(events, fp.all_shutdowns)
-
-        assert result.session_resumed is False
-        assert result.post_shutdown_user_messages == 0
-        assert result.post_shutdown_turn_starts == 0
-        assert result.last_resume_time is None
+        assert fp.post_shutdown_resumed is False
+        assert fp.post_shutdown_user_messages == 0
+        assert fp.post_shutdown_turn_starts == 0
+        assert fp.last_resume_time is None
 
     def test_build_session_summary_not_active_with_non_indicator_events(
         self, tmp_path: Path
@@ -8384,7 +8174,7 @@ class TestFirstPassPreFilter:
     """Verify the _FIRST_PASS_EVENT_TYPES frozenset guard works correctly."""
 
     def test_frozenset_contains_all_handled_types(self) -> None:
-        """_FIRST_PASS_EVENT_TYPES covers exactly the five elif-chain types.
+        """_FIRST_PASS_EVENT_TYPES covers exactly the six elif-chain types.
 
         TOOL_EXECUTION_COMPLETE is handled separately before the frozenset
         filter (issue #772) and is intentionally excluded.
@@ -8396,6 +8186,7 @@ class TestFirstPassPreFilter:
                 EventType.USER_MESSAGE,
                 EventType.ASSISTANT_TURN_START,
                 EventType.ASSISTANT_MESSAGE,
+                EventType.SESSION_RESUME,
             }
         )
         assert expected == _FIRST_PASS_EVENT_TYPES
@@ -8405,7 +8196,6 @@ class TestFirstPassPreFilter:
         unhandled = [
             EventType.TOOL_EXECUTION_START,
             EventType.ASSISTANT_TURN_END,
-            EventType.SESSION_RESUME,
             EventType.SESSION_ERROR,
             EventType.SESSION_PLAN_CHANGED,
             EventType.SESSION_WORKSPACE_FILE_CHANGED,
@@ -8699,247 +8489,6 @@ class TestToolCompleteShortCircuit:
         )
         assert fp.tool_model == "gpt-4o"
         assert fp.session_id == "tool-bypass"
-
-
-# ---------------------------------------------------------------------------
-# Issue #756 — _detect_resume: if/elif chain short-circuits after first match
-# ---------------------------------------------------------------------------
-
-
-class TestDetectResumeElifShortCircuit:
-    """Verify _detect_resume uses a short-circuiting if/elif chain.
-
-    With the old implementation, every event triggered 5 unconditional ``if``
-    checks.  The ``if/elif`` chain with frozenset pre-filter evaluates at most
-    5 comparisons per interesting event (1 for the ``in`` membership test plus
-    up to 4 for the elif branches) and exactly 2 for the most common
-    ``ASSISTANT_MESSAGE`` case (1 membership + 1 branch match).  Uninteresting
-    events are skipped via an O(1) hash lookup with no additional branch
-    comparisons (``__eq__`` is only invoked on rare hash collisions).
-    """
-
-    def test_comparison_count_500_assistant_messages(self, tmp_path: Path) -> None:
-        """500 post-shutdown ASSISTANT_MESSAGE events → ≤ 1000 type comparisons.
-
-        Uses a spy wrapper around ``ev.type`` access to count the total number
-        of equality comparisons performed inside the _detect_resume loop.
-        With the frozenset pre-filter, each interesting event typically costs 2
-        ``__eq__`` calls: one for the ``in`` membership test and one for the
-        if/elif branch match (rare hash collisions may add a few more).
-        """
-        # Build a minimal session: start → user → shutdown → 500 assistant msgs
-        start_raw = json.dumps(
-            {
-                "type": "session.start",
-                "data": {
-                    "sessionId": "cmp-bench",
-                    "machineId": "m1",
-                    "parentSessionId": None,
-                    "repoName": "test-repo",
-                    "repoUrl": "https://example.com/repo",
-                    "clientVersion": "1.0.0",
-                    "extensionVersion": "1.0.0",
-                    "userAgent": "test",
-                    "repoDevcontainerConfig": None,
-                },
-                "id": "ev-start",
-                "timestamp": "2026-03-07T10:00:00.000Z",
-            }
-        )
-        user_raw = json.dumps(
-            {
-                "type": "user.message",
-                "data": {"content": "hello"},
-                "id": "ev-u0",
-                "timestamp": "2026-03-07T10:01:00.000Z",
-            }
-        )
-        shutdown_raw = json.dumps(
-            {
-                "type": "session.shutdown",
-                "data": {
-                    "totalPremiumRequests": 0,
-                    "totalApiDurationMs": 0,
-                    "modelMetrics": {},
-                },
-                "id": "ev-sd",
-                "timestamp": "2026-03-07T11:00:00.000Z",
-            }
-        )
-        asst_events: list[str] = [
-            json.dumps(
-                {
-                    "type": "assistant.message",
-                    "data": {
-                        "messageId": f"m{n}",
-                        "content": f"reply{n}",
-                        "toolRequests": [],
-                        "interactionId": f"i{n}",
-                        "outputTokens": 10,
-                    },
-                    "id": f"ev-a{n}",
-                    "timestamp": "2026-03-07T12:00:00.000Z",
-                }
-            )
-            for n in range(500)
-        ]
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(p, start_raw, user_raw, shutdown_raw, *asst_events)
-        events = parse_events(p)
-        fp = _first_pass(events)
-
-        # Spy: wrap each post-shutdown event's type to count == comparisons
-        eq_count = 0
-        last_sd_idx = fp.all_shutdowns[-1][0]
-
-        class _SpyType:
-            """Proxy around EventType that counts __eq__ calls."""
-
-            __slots__ = ("_real",)
-
-            def __init__(self, real: str) -> None:
-                object.__setattr__(self, "_real", real)
-
-            def __eq__(self, other: object) -> bool:
-                nonlocal eq_count
-                eq_count += 1
-                return self._real == other
-
-            def __hash__(self) -> int:
-                return hash(self._real)
-
-        for idx in range(last_sd_idx + 1, len(events)):
-            object.__setattr__(events[idx], "type", _SpyType(events[idx].type))
-
-        result = _detect_resume(events, fp.all_shutdowns)
-
-        # Correctness: all 500 assistant messages recognised
-        assert result.session_resumed is True
-        assert result.post_shutdown_output_tokens == 5000
-        assert result.post_shutdown_turn_starts == 0
-        assert result.post_shutdown_user_messages == 0
-
-        # Performance: with the frozenset pre-filter and elif chain,
-        # ASSISTANT_MESSAGE events cost at most 2 __eq__ calls each
-        # (1 for frozenset membership + 1 for the first elif branch).
-        # 500 events × 2 = 1000 maximum.
-        assert eq_count <= 1000, (
-            f"Expected ≤ 1000 ev.type comparisons for 500 ASSISTANT_MESSAGE "
-            f"events with frozenset pre-filter + if/elif chain, got {eq_count}"
-        )
-
-    def test_correctness_mixed_post_shutdown_events(self, tmp_path: Path) -> None:
-        """Mixed post-shutdown events produce correct counters with elif chain."""
-        start_raw = json.dumps(
-            {
-                "type": "session.start",
-                "data": {
-                    "sessionId": "mix-bench",
-                    "machineId": "m1",
-                    "parentSessionId": None,
-                    "repoName": "test-repo",
-                    "repoUrl": "https://example.com/repo",
-                    "clientVersion": "1.0.0",
-                    "extensionVersion": "1.0.0",
-                    "userAgent": "test",
-                    "repoDevcontainerConfig": None,
-                },
-                "id": "ev-start",
-                "timestamp": "2026-03-07T10:00:00.000Z",
-            }
-        )
-        user_pre = json.dumps(
-            {
-                "type": "user.message",
-                "data": {"content": "pre"},
-                "id": "ev-u-pre",
-                "timestamp": "2026-03-07T10:01:00.000Z",
-            }
-        )
-        shutdown_raw = json.dumps(
-            {
-                "type": "session.shutdown",
-                "data": {
-                    "totalPremiumRequests": 0,
-                    "totalApiDurationMs": 0,
-                    "modelMetrics": {},
-                },
-                "id": "ev-sd",
-                "timestamp": "2026-03-07T11:00:00.000Z",
-            }
-        )
-        resume_ev = json.dumps(
-            {
-                "type": "session.resume",
-                "data": {},
-                "id": "ev-resume",
-                "timestamp": "2026-03-07T12:00:00.000Z",
-            }
-        )
-        user_post = json.dumps(
-            {
-                "type": "user.message",
-                "data": {"content": "post"},
-                "id": "ev-u-post",
-                "timestamp": "2026-03-07T12:01:00.000Z",
-            }
-        )
-        turn_start = json.dumps(
-            {
-                "type": "assistant.turn_start",
-                "data": {"turnId": "t1"},
-                "id": "ev-ts",
-                "timestamp": "2026-03-07T12:01:30.000Z",
-            }
-        )
-        asst_msg = json.dumps(
-            {
-                "type": "assistant.message",
-                "data": {
-                    "messageId": "m1",
-                    "content": "hi",
-                    "toolRequests": [],
-                    "interactionId": "i1",
-                    "outputTokens": 42,
-                },
-                "id": "ev-a1",
-                "timestamp": "2026-03-07T12:02:00.000Z",
-            }
-        )
-        tool_exec = json.dumps(
-            {
-                "type": "tool.execution_complete",
-                "data": {
-                    "toolCallId": "tc1",
-                    "model": "claude-sonnet-4",
-                    "interactionId": "int-1",
-                    "success": True,
-                },
-                "id": "ev-tool",
-                "timestamp": "2026-03-07T12:03:00.000Z",
-            }
-        )
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(
-            p,
-            start_raw,
-            user_pre,
-            shutdown_raw,
-            resume_ev,
-            user_post,
-            turn_start,
-            asst_msg,
-            tool_exec,
-        )
-        events = parse_events(p)
-        fp = _first_pass(events)
-        result = _detect_resume(events, fp.all_shutdowns)
-
-        assert result.session_resumed is True
-        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
-        assert result.post_shutdown_user_messages == 1
-        assert result.post_shutdown_turn_starts == 1
-        assert result.post_shutdown_output_tokens == 42
 
 
 # ---------------------------------------------------------------------------
@@ -9458,6 +9007,11 @@ class TestOrphanedTurnStartDoesNotInflateActiveCalls:
             total_output_tokens=150,
             total_turn_starts=2,
             tool_model=None,
+            post_shutdown_resumed=False,
+            post_shutdown_output_tokens=0,
+            post_shutdown_turn_starts=3,
+            post_shutdown_user_messages=0,
+            last_resume_time=None,
         )
         resume = _ResumeInfo(
             session_resumed=False,
@@ -9528,101 +9082,6 @@ class TestSortedSessionsCacheIsFrozen:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             cache.root = Path("/other")  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
-# Issue #967 — _detect_resume: frozenset pre-filter for uninteresting events
-# ---------------------------------------------------------------------------
-
-
-class TestDetectResumeFrozensetPreFilter:
-    """Verify the _DETECT_RESUME_EVENT_TYPES frozenset pre-filter.
-
-    The frozenset guard skips events whose type is not one of the four
-    checked inside the if/elif chain, replacing 4 string comparisons
-    with a single O(1) hash lookup for each uninteresting event.
-    """
-
-    def test_many_tool_events_skipped_correctly(self, tmp_path: Path) -> None:
-        """≥100 tool events after shutdown are skipped; resume info is correct.
-
-        Builds a synthetic event list with a session.shutdown at index K
-        followed by ≥100 tool.execution_complete events, a user.message,
-        and a session.resume.  Asserts the returned _ResumeInfo has
-        session_resumed=True, post_shutdown_user_messages=1, and a
-        non-None last_resume_time.
-        """
-        num_tool_events = 120
-
-        tool_events = [
-            json.dumps(
-                {
-                    "type": "tool.execution_complete",
-                    "data": {
-                        "toolCallId": f"tc-{i}",
-                        "model": "claude-sonnet-4",
-                        "interactionId": "int-1",
-                        "success": True,
-                    },
-                    "id": f"ev-tool-{i}",
-                    "timestamp": "2026-03-07T11:01:00.000Z",
-                }
-            )
-            for i in range(num_tool_events)
-        ]
-
-        resume_ev = json.dumps(
-            {
-                "type": "session.resume",
-                "data": {},
-                "id": "ev-resume-967",
-                "timestamp": "2026-03-07T12:00:00.000Z",
-            }
-        )
-        post_user = json.dumps(
-            {
-                "type": "user.message",
-                "data": {
-                    "content": "continue",
-                    "transformedContent": "continue",
-                    "attachments": [],
-                    "interactionId": "int-2",
-                },
-                "id": "ev-user-post",
-                "timestamp": "2026-03-07T12:00:30.000Z",
-            }
-        )
-
-        p = tmp_path / "s" / "events.jsonl"
-        _write_events(
-            p,
-            _START_EVENT,
-            _USER_MSG,
-            _SHUTDOWN_EVENT,
-            *tool_events,
-            resume_ev,
-            post_user,
-        )
-        events = parse_events(p)
-        fp = _first_pass(events)
-        result = _detect_resume(events, fp.all_shutdowns)
-
-        assert result.session_resumed is True
-        assert result.post_shutdown_user_messages == 1
-        assert result.last_resume_time is not None
-        assert result.last_resume_time == datetime(2026, 3, 7, 12, 0, tzinfo=UTC)
-
-    def test_constant_contains_exactly_four_types(self) -> None:
-        """_DETECT_RESUME_EVENT_TYPES must contain exactly the 4 checked types."""
-        expected = frozenset(
-            {
-                EventType.ASSISTANT_MESSAGE,
-                EventType.USER_MESSAGE,
-                EventType.ASSISTANT_TURN_START,
-                EventType.SESSION_RESUME,
-            }
-        )
-        assert expected == _DETECT_RESUME_EVENT_TYPES
 
 
 # ---------------------------------------------------------------------------
