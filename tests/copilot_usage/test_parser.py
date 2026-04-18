@@ -9134,9 +9134,9 @@ class TestSortedSessionsCacheSkipsRedundantSort:
         with patch.object(_parser_module, "session_sort_key", tracking_key):
             result = get_all_sessions(tmp_path)
 
-        assert len(sort_key_calls) > 0, (
-            "session_sort_key must be called when plan.md changes "
-            "(deferred_sessions is non-empty)"
+        assert len(sort_key_calls) == 0, (
+            "session_sort_key must NOT be called when only plan.md changes "
+            "(sort key is start_time from events, unaffected by plan.md)"
         )
 
         # The session with the new plan.md should carry the extracted name.
