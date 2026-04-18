@@ -389,6 +389,10 @@ def _discover_with_identity(
     skipped entirely.
     When *include_plan* is ``False``, the ``plan_file_id`` element is
     always ``None`` — useful for callers that only need event ordering.
+    Note that on a cache miss the full scan is always performed with plan
+    discovery enabled so that subsequent ``include_plan=True`` calls
+    (e.g. from :func:`get_all_sessions`) can benefit from the cached
+    plan paths.
     """
     root = (base_path or DEFAULT_SESSION_PATH).resolve()
 
