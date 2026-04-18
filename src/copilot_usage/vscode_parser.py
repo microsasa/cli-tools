@@ -150,7 +150,7 @@ class _VSCodeDiscoveryCache:
     log_paths: tuple[Path, ...]
 
 
-_VSCODE_DISCOVERY_CACHE: dict[Path, _VSCodeDiscoveryCache] = {}
+_VSCODE_DISCOVERY_CACHE: Final[dict[Path, _VSCodeDiscoveryCache]] = {}
 
 
 def _scan_child_ids(root: Path) -> _ChildIds:
@@ -361,7 +361,7 @@ class _CachedVSCodeLog:
     requests: tuple[VSCodeRequest, ...]
 
 
-_VSCODE_LOG_CACHE: OrderedDict[Path, _CachedVSCodeLog] = OrderedDict()
+_VSCODE_LOG_CACHE: Final[OrderedDict[Path, _CachedVSCodeLog]] = OrderedDict()
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +398,7 @@ class _CachedFileSummary:
     partial: VSCodeLogSummary
 
 
-_PER_FILE_SUMMARY_CACHE: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
+_PER_FILE_SUMMARY_CACHE: Final[OrderedDict[Path, _CachedFileSummary]] = OrderedDict()
 
 
 _FILE_ID_UNSET: Final = "unset"
