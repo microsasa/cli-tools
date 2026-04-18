@@ -77,7 +77,7 @@ class _DiscoveryCache:
 # Module-level discovery cache: root_path → _DiscoveryCache.
 # Avoids redundant inner os.scandir calls when the root directory
 # has not changed (no sessions added or removed).
-_DISCOVERY_CACHE: dict[Path, _DiscoveryCache] = {}
+_DISCOVERY_CACHE: Final[dict[Path, _DiscoveryCache]] = {}
 
 # On cache hits, probe at most this many sessions without a cached
 # plan.md for a newly-created file.  The probe window rotates via
@@ -117,7 +117,7 @@ class _CachedSession:
 # Uses OrderedDict for LRU eviction: most-recently-used entries are at
 # the back, least-recently-used at the front.
 _MAX_CACHED_SESSIONS: Final[int] = 512
-_SESSION_CACHE: OrderedDict[Path, _CachedSession] = OrderedDict()
+_SESSION_CACHE: Final[OrderedDict[Path, _CachedSession]] = OrderedDict()
 
 
 def _insert_session_entry(
@@ -141,7 +141,7 @@ class _CachedEvents:
 # Uses OrderedDict for LRU eviction: most-recently-used entries are at
 # the back, least-recently-used at the front.
 _MAX_CACHED_EVENTS: Final[int] = 32
-_EVENTS_CACHE: OrderedDict[Path, _CachedEvents] = OrderedDict()
+_EVENTS_CACHE: Final[OrderedDict[Path, _CachedEvents]] = OrderedDict()
 
 # Persists config file identity between invocations so that the
 # _read_config_model lru_cache is only cleared when the file changes.
