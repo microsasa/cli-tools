@@ -6841,12 +6841,11 @@ class TestSessionCacheMtime:
             "copilot_usage.parser.safe_file_identity", wraps=safe_file_identity
         ) as spy:
             get_all_sessions(tmp_path)
-            # safe_file_identity called once for _CONFIG_PATH and once for
-            # the root directory (discovery cache check).  events.jsonl is
-            # stat'd directly (not via safe_file_identity) and plan.md does
-            # not exist so its absence is detected via os.scandir dir
-            # listing — no stat call is issued.
-            assert spy.call_count == 2
+            # safe_file_identity called once for _CONFIG_PATH, once for
+            # the root directory (discovery cache check), and once after
+            # parsing to capture the post-parse file identity for the
+            # events cache.
+            assert spy.call_count == 3
 
     def test_resumed_session_is_cached(self, tmp_path: Path) -> None:
         """A session that resumed after shutdown IS cached with config_model=None (model from shutdown)."""

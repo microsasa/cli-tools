@@ -318,9 +318,13 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
                 events_path, cached.end_offset
             )
             merged = cached.events + tuple(new_events)
-            inc_id: tuple[int, int] | None = file_id
-            if file_id[1] != safe_end:
-                inc_id = (file_id[0], safe_end)
+            post_inc_id = safe_file_identity(events_path)
+            if post_inc_id is None:
+                inc_id: tuple[int, int] | None = file_id
+            elif post_inc_id[1] == safe_end:
+                inc_id = post_inc_id
+            else:
+                inc_id = (post_inc_id[0], safe_end)
             _insert_events_entry(events_path, inc_id, merged, safe_end)
             return _EVENTS_CACHE[events_path].events
 
@@ -1231,7 +1235,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         if not events:
             continue
         if len(deferred_events) < _MAX_CACHED_EVENTS:
-            deferred_events.append((events_path, file_id, events, safe_end))
+            post_id = safe_file_identity(events_path)
+            if post_id is None:
+                stored_id = file_id
+            elif post_id[1] == safe_end:
+                stored_id = post_id
+            else:
+                stored_id = (post_id[0], safe_end)
+            deferred_events.append((events_path, stored_id, events, safe_end))
         meta = _build_session_summary_with_meta(
             list(events) if isinstance(events, tuple) else events,
             session_dir=events_path.parent,
