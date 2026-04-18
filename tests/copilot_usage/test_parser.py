@@ -9795,6 +9795,30 @@ class TestParseEventsPartialTailParity:
         assert len(cached) == len(one_shot)
         assert [e.type for e in cached] == [e.type for e in one_shot]
 
+    def test_malformed_partial_tail_warned_and_skipped(self, tmp_path: Path) -> None:
+        """Malformed JSON final line without trailing newline is skipped with warning.
+
+        When ``include_partial_tail=True``, a non-newline-terminated line
+        that fails JSON decoding should be warned about and skipped (not
+        trigger the early ``break``).  ``safe_end`` must advance past it.
+        """
+        p = tmp_path / "sess" / "events.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        bad_tail = b"NOT-VALID-JSON{{{"  # no trailing newline
+        p.write_bytes(line1.encode("utf-8") + bad_tail)
+
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            events, safe_end = _parse_events_from_offset(
+                p, 0, include_partial_tail=True
+            )
+
+        assert len(events) == 1
+        assert events[0].type == "session.start"
+        assert safe_end == p.stat().st_size
+        warning_spy.assert_called_once()
+        assert "json" in warning_spy.call_args.args[0].lower()
+
 
 class TestIncrementalEventsCaching:
     """Tests for incremental cache behaviour in get_cached_events."""
