@@ -240,8 +240,11 @@ def _render_shutdown_cycles(
 
     for ts, sd in summary.shutdown_cycles:
         date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "—"
-        total_requests = sum(mm.requests.count for mm in sd.modelMetrics.values())
-        total_output = sum(mm.usage.outputTokens for mm in sd.modelMetrics.values())
+        total_requests = 0
+        total_output = 0
+        for mm in sd.modelMetrics.values():
+            total_requests += mm.requests.count
+            total_output += mm.usage.outputTokens
         table.add_row(
             date_str,
             str(sd.totalPremiumRequests),
