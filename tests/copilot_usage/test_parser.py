@@ -2884,17 +2884,29 @@ class TestGetAllSessions:
         plan = tmp_path / "a" / "plan.md"
         _write_events(s1, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
         plan.write_text("# Initial plan\n", encoding="utf-8")
+        initial_plan_identity = safe_file_identity(plan)
 
         # First call: primes the cache (normal sort path).
         first = get_all_sessions(tmp_path)
         assert len(first) == 1
+        first_name = first[0].name
 
         # Change plan.md so the second call hits the plan-only fast path.
-        plan.write_text("# Updated plan\n", encoding="utf-8")
+        # Use different-sized content and explicitly bump mtime so the file
+        # identity changes even on filesystems with coarse timestamp resolution.
+        plan.write_text("# Updated plan with more detail\n", encoding="utf-8")
+        plan_stat = plan.stat()
+        os.utime(
+            plan,
+            ns=(plan_stat.st_atime_ns, max(time.time_ns(), plan_stat.st_mtime_ns + 1)),
+        )
+        assert safe_file_identity(plan) != initial_plan_identity
 
         # Second call: exercises the plan-only fast path.
         second = get_all_sessions(tmp_path)
         assert len(second) == 1
+        second_name = second[0].name
+        assert second_name != first_name
 
         # Mutate the returned list — must not affect the cache.
         second.pop()

@@ -1201,7 +1201,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         _sorted_sessions_cache = _SortedSessionsCache(
             resolved_root, _sorted_sessions_cache.fingerprint, tuple(new_sorted)
         )
-        return list(new_sorted)
+        return new_sorted
 
     # Fingerprint fallback: when the discovery cache missed but the
     # discovered session set is identical, skip the O(n log n) sort.
