@@ -2685,9 +2685,19 @@ class TestVSCodeDiscoveryCacheIsFrozen:
             cache.root_id = (1, 1)  # type: ignore[misc]
 
 
-class TestSummaryAccumulatorIsNotDataclass:
-    """_SummaryAccumulator must be a plain class, not a dataclass."""
+class TestSummaryAccumulatorIsDataclass:
+    """_SummaryAccumulator must be a @dataclass(slots=True)."""
 
-    def test_not_a_dataclass(self) -> None:
-        """Verify _SummaryAccumulator is not decorated with @dataclass."""
-        assert not dataclasses.is_dataclass(_SummaryAccumulator)
+    def test_is_a_dataclass(self) -> None:
+        """Verify _SummaryAccumulator is decorated with @dataclass."""
+        assert dataclasses.is_dataclass(_SummaryAccumulator)
+
+    def test_has_slots(self) -> None:
+        """Verify _SummaryAccumulator uses slots=True."""
+        assert hasattr(_SummaryAccumulator, "__slots__")
+
+    def test_is_not_frozen(self) -> None:
+        """Verify _SummaryAccumulator is mutable (not frozen)."""
+        acc = _SummaryAccumulator()
+        acc.total_requests = 42
+        assert acc.total_requests == 42
