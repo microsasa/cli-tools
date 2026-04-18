@@ -942,7 +942,13 @@ class TestFileChangeHandler:
         assert event.is_set()
 
     def test_concurrent_dispatch_sets_event_at_most_once(self) -> None:
-        """Concurrent dispatch calls within the debounce window set the event at most once."""
+        """Concurrent dispatch calls within the debounce window set the event at most once.
+
+        Holds ``handler._lock`` before starting workers so both threads
+        queue at the lock inside ``dispatch()``, then releases — making
+        the contention deterministic rather than relying on a lucky
+        interleaving.
+        """
         import time as _time
 
         from copilot_usage.cli import (
@@ -957,8 +963,7 @@ class TestFileChangeHandler:
         assert event.is_set()
         event.clear()
 
-        # Reset _last_trigger to a value that makes the debounce window expire,
-        # so both threads believe they should fire.
+        # Reset _last_trigger so both threads see an expired debounce window.
         handler._last_trigger = _time.monotonic() - 10.0
 
         set_count: list[int] = [0]
@@ -972,7 +977,10 @@ class TestFileChangeHandler:
 
         event.set = counting_set  # type: ignore[assignment]
 
-        barrier = threading.Barrier(2)
+        # Hold handler's lock so both workers block inside dispatch().
+        handler._lock.acquire()
+
+        barrier = threading.Barrier(2, timeout=5.0)
 
         def worker() -> None:
             barrier.wait()
@@ -982,8 +990,17 @@ class TestFileChangeHandler:
         t2 = threading.Thread(target=worker)
         t1.start()
         t2.start()
+
+        # Give threads time to pass the barrier and block at the lock.
+        _time.sleep(0.1)
+
+        # Release; the two workers now contend serially.
+        handler._lock.release()
+
         t1.join(timeout=5.0)
         t2.join(timeout=5.0)
+        assert not t1.is_alive(), "Thread 1 did not finish"
+        assert not t2.is_alive(), "Thread 2 did not finish"
 
         assert set_count[0] == 1, (
             f"Expected change_event.set() exactly once, got {set_count[0]}"
