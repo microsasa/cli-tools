@@ -130,9 +130,17 @@ def _insert_session_entry(
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CachedEvents:
-    """Cache entry pairing a file identity with parsed events."""
+    """Cache entry pairing a file identity with parsed events.
+
+    ``end_offset`` is the byte position after the last fully consumed
+    line.  When the file grows (append-only), only bytes after
+    ``end_offset`` need to be parsed — avoiding a full re-read, even if
+    some fully consumed lines were skipped due to parse or validation
+    errors.
+    """
 
     file_id: tuple[int, int] | None
+    end_offset: int
     events: tuple[SessionEvent, ...]
 
 
@@ -177,7 +185,8 @@ _sorted_sessions_cache: _SortedSessionsCache | None = None
 def _insert_events_entry(
     events_path: Path,
     file_id: tuple[int, int] | None,
-    events: list[SessionEvent],
+    events: list[SessionEvent] | tuple[SessionEvent, ...],
+    end_offset: int = 0,
 ) -> None:
     """Insert parsed events into ``_EVENTS_CACHE`` with LRU eviction.
 
@@ -185,28 +194,103 @@ def _insert_events_entry(
     old entry is removed first.  Otherwise, when the cache is full the
     least-recently-used entry (front of the ``OrderedDict``) is evicted.
 
-    The *events* list is converted to a ``tuple`` before storage so
+    The *events* sequence is converted to a ``tuple`` before storage so
     that callers cannot accidentally add, remove, or reorder entries
     in the cache.  This is **container-level** immutability only —
     individual ``SessionEvent`` objects remain mutable and must not
     be modified by callers.
     """
+    stored = events if isinstance(events, tuple) else tuple(events)
     lru_insert(
         _EVENTS_CACHE,
         events_path,
-        _CachedEvents(file_id=file_id, events=tuple(events)),
+        _CachedEvents(file_id=file_id, end_offset=end_offset, events=stored),
         _MAX_CACHED_EVENTS,
     )
+
+
+def _parse_events_from_offset(
+    events_path: Path, offset: int
+) -> tuple[list[SessionEvent], int]:
+    """Parse events from *events_path* starting at byte *offset*.
+
+    Only lines beginning at or after *offset* are decoded and
+    Pydantic-validated.  Complete malformed or invalid lines are skipped
+    with a warning, matching the behaviour of :func:`parse_events`.
+
+    Lines without a trailing newline (possible incomplete write) that
+    fail JSON decoding are treated as still-in-progress and stop
+    parsing — the returned *safe_end* does not advance past them so
+    the caller can retry on the next refresh.
+
+    Returns:
+        ``(new_events, safe_end)`` where *safe_end* is the byte
+        position after the last fully consumed line.  Callers should
+        store this as ``end_offset`` so incomplete trailing lines are
+        retried on the next refresh.
+
+    Raises:
+        OSError: If the file cannot be opened or read.
+    """
+    new_events: list[SessionEvent] = []
+    safe_offset = offset
+    try:
+        with events_path.open("rb") as fh:
+            fh.seek(offset)
+            current_offset = offset
+            for raw_line in fh:
+                line_start = current_offset
+                current_offset += len(raw_line)
+                stripped = raw_line.strip()
+                if not stripped:
+                    safe_offset = current_offset
+                    continue
+                try:
+                    new_events.append(SessionEvent.model_validate_json(stripped))
+                except ValidationError as exc:
+                    errors = exc.errors(include_url=False)
+                    if errors and errors[0].get("type") == "json_invalid":
+                        if not raw_line.endswith(b"\n"):
+                            break
+                        logger.warning(
+                            "{}:offset {} — malformed JSON, skipping",
+                            events_path,
+                            line_start,
+                        )
+                    else:
+                        logger.warning(
+                            "{}:offset {} — validation error ({}), skipping",
+                            events_path,
+                            line_start,
+                            exc.error_count(),
+                        )
+                safe_offset = current_offset
+    except UnicodeDecodeError as exc:
+        logger.warning(
+            "{} — UTF-8 decode error at offset {}; returning {} new events (partial): {}",
+            events_path,
+            safe_offset,
+            len(new_events),
+            exc,
+        )
+    return new_events, safe_offset
 
 
 def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     """Return parsed events, using cache when file identity is unchanged.
 
-    Delegates to :func:`parse_events` on a cache miss and stores the
-    result keyed by *events_path* with file-identity validation on
-    lookup.  The cache is bounded to :data:`_MAX_CACHED_EVENTS`
-    entries; the **least-recently used** entry is evicted when the
-    limit is reached.
+    On a cache miss (cold start, truncation, or unknown file) the entire
+    file is re-read via :func:`_parse_events_from_offset` at offset 0
+    and the result is stored keyed by *events_path* with file-identity
+    validation on lookup.  The cache is bounded to
+    :data:`_MAX_CACHED_EVENTS` entries; the **least-recently used** entry
+    is evicted when the limit is reached.
+
+    When the file has grown since the last read (append-only pattern),
+    only the newly appended bytes are parsed via
+    :func:`_parse_events_from_offset` and merged with the cached tuple.
+    A full reparse is performed when the file has shrunk (truncation or
+    replacement) or on cold start.
 
     The returned ``tuple`` prevents callers from adding, removing, or
     reordering cached entries (container-level immutability).  Individual
@@ -215,16 +299,45 @@ def get_cached_events(events_path: Path) -> tuple[SessionEvent, ...]:
     ``list(get_cached_events(...))``.
 
     Raises:
-        OSError: Propagated from :func:`parse_events` when the file
-            cannot be opened or read.
+        OSError: Propagated from :func:`_parse_events_from_offset`
+            when the file cannot be opened or read.
     """
     file_id = safe_file_identity(events_path)
     cached = _EVENTS_CACHE.get(events_path)
-    if cached is not None and cached.file_id == file_id:
-        _EVENTS_CACHE.move_to_end(events_path)
-        return cached.events
-    events = parse_events(events_path)
-    _insert_events_entry(events_path, file_id, events)
+
+    if cached is not None and file_id is not None:
+        if cached.file_id == file_id:
+            _EVENTS_CACHE.move_to_end(events_path)
+            return cached.events
+        new_size = file_id[1]
+        # Append-only growth: size grew beyond cached end_offset.
+        # If size == end_offset but mtime changed, the file was rewritten
+        # in-place to the same size — fall through to full reparse.
+        if new_size > cached.end_offset and cached.end_offset > 0:
+            new_events, safe_end = _parse_events_from_offset(
+                events_path, cached.end_offset
+            )
+            merged = cached.events + tuple(new_events)
+            post_inc_id = safe_file_identity(events_path)
+            if post_inc_id is None:
+                inc_id: tuple[int, int] | None = file_id
+            elif post_inc_id[1] == safe_end:
+                inc_id = post_inc_id
+            else:
+                inc_id = (post_inc_id[0], safe_end)
+            _insert_events_entry(events_path, inc_id, merged, safe_end)
+            return _EVENTS_CACHE[events_path].events
+
+    # Full reparse: cold start, truncation, same-size rewrite, or unknown.
+    events, safe_end = _parse_events_from_offset(events_path, 0)
+    post_id = safe_file_identity(events_path)
+    if post_id is None:
+        stored_id = file_id
+    elif post_id[1] == safe_end:
+        stored_id = post_id
+    else:
+        stored_id = (post_id[0], safe_end)
+    _insert_events_entry(events_path, stored_id, events, safe_end)
     return _EVENTS_CACHE[events_path].events
 
 
@@ -1053,7 +1166,14 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
     # Only the newest _MAX_CACHED_EVENTS entries are retained for
     # _EVENTS_CACHE to avoid a temporary memory spike when many sessions
     # are cache-misses.
-    deferred_events: list[tuple[Path, tuple[int, int] | None, list[SessionEvent]]] = []
+    deferred_events: list[
+        tuple[
+            Path,
+            tuple[int, int] | None,
+            list[SessionEvent] | tuple[SessionEvent, ...],
+            int,
+        ]
+    ] = []
     deferred_sessions: list[tuple[Path, _CachedSession]] = []
     cache_hit_paths: list[Path] = []
     any_events_changed = False
@@ -1091,16 +1211,40 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
             continue
         any_events_changed = True
         try:
-            events = parse_events(events_path)
+            # Incremental path: if we have a cached events entry with a
+            # valid end_offset and the file grew, parse only new bytes.
+            ev_cached = _EVENTS_CACHE.get(events_path)
+            if (
+                ev_cached is not None
+                and file_id is not None
+                and ev_cached.end_offset > 0
+                and file_id[1] > ev_cached.end_offset
+            ):
+                new_events, safe_end = _parse_events_from_offset(
+                    events_path, ev_cached.end_offset
+                )
+                events: list[SessionEvent] | tuple[SessionEvent, ...] = (
+                    ev_cached.events + tuple(new_events)
+                )
+            else:
+                parsed, safe_end = _parse_events_from_offset(events_path, 0)
+                events = parsed
         except OSError as exc:
             logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
         if not events:
             continue
         if len(deferred_events) < _MAX_CACHED_EVENTS:
-            deferred_events.append((events_path, file_id, events))
+            post_id = safe_file_identity(events_path)
+            if post_id is None:
+                stored_id = file_id
+            elif post_id[1] == safe_end:
+                stored_id = post_id
+            else:
+                stored_id = (post_id[0], safe_end)
+            deferred_events.append((events_path, stored_id, events, safe_end))
         meta = _build_session_summary_with_meta(
-            events,
+            list(events) if isinstance(events, tuple) else events,
             session_dir=events_path.parent,
             events_path=events_path,
             plan_exists=plan_id is not None,
@@ -1133,8 +1277,8 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
 
     # Populate _EVENTS_CACHE in oldest→newest order so that the newest
     # sessions sit at the back (MRU) and eviction drops the oldest.
-    for ep, fid, evts in reversed(deferred_events):
-        _insert_events_entry(ep, fid, evts)
+    for ep, fid, evts, se in reversed(deferred_events):
+        _insert_events_entry(ep, fid, evts, se)
 
     # Prune stale cache entries for sessions no longer on disk.
     # Only remove entries rooted under the *current* base_path so that
