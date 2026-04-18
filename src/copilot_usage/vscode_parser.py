@@ -495,13 +495,17 @@ def _update_vscode_summary(
     dbm = acc.duration_by_model
     rbc = acc.requests_by_category
     rbd = acc.requests_by_date
+    total_req = acc.total_requests
+    total_dur = acc.total_duration_ms
+    first_ts = acc.first_timestamp
+    last_ts = acc.last_timestamp
     last_date_key: str = ""
     last_date_val: date | None = None
 
     for req in requests:
-        acc.total_requests += 1
+        total_req += 1
         dur = req.duration_ms
-        acc.total_duration_ms += dur
+        total_dur += dur
 
         model = req.model
         rbm[model] += 1
@@ -517,12 +521,15 @@ def _update_vscode_summary(
 
         # Timestamp bounds: full min/max scan so callers (especially
         # build_vscode_summary) need not pre-sort their input.
-        first = acc.first_timestamp
-        if first is None or ts < first:
-            acc.first_timestamp = ts
-        last_ts = acc.last_timestamp
+        if first_ts is None or ts < first_ts:
+            first_ts = ts
         if last_ts is None or ts > last_ts:
-            acc.last_timestamp = ts
+            last_ts = ts
+
+    acc.total_requests = total_req
+    acc.total_duration_ms = total_dur
+    acc.first_timestamp = first_ts
+    acc.last_timestamp = last_ts
 
 
 def _merge_partial(acc: _SummaryAccumulator, partial: VSCodeLogSummary) -> None:
