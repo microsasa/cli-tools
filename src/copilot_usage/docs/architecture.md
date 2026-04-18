@@ -48,7 +48,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 ### Event Processing Pipeline
 
 1. **Discovery** — `discover_sessions()` scans `~/.copilot/session-state/*/events.jsonl`, returns paths sorted by modification time
-2. **Parsing** — `parse_events()` reads each line as JSON, creates `SessionEvent` objects via Pydantic validation. Malformed lines are skipped with a warning.
+2. **Parsing** — `_parse_events_from_offset()` reads each line as JSON in binary mode, creates `SessionEvent` objects via Pydantic validation. The production pipeline accesses this through `get_cached_events()`, which caches results and supports incremental byte-offset parsing for append-only file growth. The public `parse_events()` delegates to the same implementation with `include_partial_tail=True` for one-shot full-file reads. Malformed lines are skipped with a warning.
 3. **Typed dispatch** — callers use the narrowly-typed `as_*()` accessors (`as_session_start()`, `as_assistant_message()`, etc.) on `SessionEvent` to get a validated payload for each known event type. Unknown event types still validate as `SessionEvent`, but normal processing ignores them unless a caller explicitly validates `data` with `GenericEventData`.
 4. **Summarization** — `build_session_summary()` orchestrates four focused helpers:
    - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data
