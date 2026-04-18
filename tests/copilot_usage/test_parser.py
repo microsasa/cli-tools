@@ -1532,8 +1532,10 @@ class TestParseEvents:
         offset2 = offset1 + len(bad1.encode("utf-8")) + 1
         assert offsets == [offset1, offset2]
 
-    def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
-        """events.jsonl with invalid UTF-8 bytes returns what was parsed so far.
+    def test_invalid_utf8_line_skipped_valid_event_returned(
+        self, tmp_path: Path
+    ) -> None:
+        """Invalid UTF-8 bytes on a line are skipped; prior valid events returned.
 
         In binary mode, invalid UTF-8 bytes cause a JSON parse failure
         rather than a ``UnicodeDecodeError``, so the affected line is
@@ -1546,17 +1548,15 @@ class TestParseEvents:
         bad_line = b"\xff\xfe invalid utf-8 bytes\n"
         p.write_bytes(valid_line + bad_line)
         events = parse_events(p)
-        # Should return what was parsed before the error and not raise.
+        # The bad line is skipped; only the valid start event survives.
         assert isinstance(events, list)
-        # 0 or 1 events may be returned depending on buffered I/O behavior.
         assert len(events) <= 1
         if events:
-            # If any event is returned, it should be the initial session.start.
             assert len(events) == 1
             assert events[0].type == "session.start"
 
-    def test_unicode_decode_error_full_file(self, tmp_path: Path) -> None:
-        """events.jsonl that is entirely invalid UTF-8 returns empty list."""
+    def test_entirely_invalid_utf8_returns_empty_list(self, tmp_path: Path) -> None:
+        """events.jsonl that is entirely invalid UTF-8 bytes returns empty list."""
         p = tmp_path / "s" / "events.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"\xff\xfe\x80\x81\x82")
