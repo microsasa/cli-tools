@@ -8,6 +8,7 @@ aggregates.
 import dataclasses
 import os
 from collections import OrderedDict
+from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -15,15 +16,6 @@ from typing import Final
 
 from loguru import logger
 from pydantic import BaseModel, ValidationError
-
-__all__: Final[list[str]] = [
-    "DEFAULT_SESSION_PATH",
-    "build_session_summary",
-    "discover_sessions",
-    "get_all_sessions",
-    "get_cached_events",
-    "parse_events",
-]
 
 from copilot_usage._fs_utils import lru_insert, safe_file_identity
 from copilot_usage.models import (
@@ -39,6 +31,15 @@ from copilot_usage.models import (
     parse_token_int,
     session_sort_key,
 )
+
+__all__: Final[list[str]] = [
+    "DEFAULT_SESSION_PATH",
+    "build_session_summary",
+    "discover_sessions",
+    "get_all_sessions",
+    "get_cached_events",
+    "parse_events",
+]
 
 DEFAULT_SESSION_PATH: Final[Path] = Path.home() / ".copilot" / "session-state"
 _CONFIG_PATH: Final[Path] = Path.home() / ".copilot" / "config.json"
@@ -185,7 +186,7 @@ _sorted_sessions_cache: _SortedSessionsCache | None = None
 def _insert_events_entry(
     events_path: Path,
     file_id: tuple[int, int] | None,
-    events: list[SessionEvent] | tuple[SessionEvent, ...],
+    events: Sequence[SessionEvent],
     end_offset: int = 0,
 ) -> None:
     """Insert parsed events into ``_EVENTS_CACHE`` with LRU eviction.
@@ -200,7 +201,7 @@ def _insert_events_entry(
     individual ``SessionEvent`` objects remain mutable and must not
     be modified by callers.
     """
-    stored = events if isinstance(events, tuple) else tuple(events)
+    stored = tuple(events)
     lru_insert(
         _EVENTS_CACHE,
         events_path,
@@ -1206,12 +1207,9 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
                 new_events, safe_end = _parse_events_from_offset(
                     events_path, ev_cached.end_offset
                 )
-                events: list[SessionEvent] | tuple[SessionEvent, ...] = (
-                    ev_cached.events + tuple(new_events)
-                )
+                events: list[SessionEvent] = list(ev_cached.events) + new_events
             else:
-                parsed, safe_end = _parse_events_from_offset(events_path, 0)
-                events = parsed
+                events, safe_end = _parse_events_from_offset(events_path, 0)
         except OSError as exc:
             logger.warning("Skipping unreadable session {}: {}", events_path, exc)
             continue
@@ -1227,7 +1225,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
                 stored_id = (post_id[0], safe_end)
             deferred_events.append((events_path, stored_id, events, safe_end))
         meta = _build_session_summary_with_meta(
-            list(events) if isinstance(events, tuple) else events,
+            events,
             session_dir=events_path.parent,
             events_path=events_path,
             plan_exists=plan_id is not None,
