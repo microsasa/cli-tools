@@ -2713,6 +2713,35 @@ class TestRenderCostViewPureActiveNoShutdownRow:
         assert "Pure Active" in output
         assert "Since last shutdown" not in output
 
+    def test_pure_active_with_known_model_shows_dash_for_requests(self) -> None:
+        """Pure-active session (has_shutdown_metrics=False) with a known model
+        must show '—' in Requests and Premium Cost columns, not '0'."""
+        session = SessionSummary(
+            session_id="pure-active-with-model",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=5,
+            active_model_calls=5,
+            active_output_tokens=1200,
+            # model_metrics populated synthetically (as _build_active_summary does)
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=1200),
+                )
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # Must not show "0" in Requests/Premium Cost columns
+        lines = [ln for ln in clean.splitlines() if "claude-sonnet-4" in ln]
+        assert lines, "Expected a per-model row"
+        cols = [c.strip() for c in lines[0].split("│")]
+        assert cols[3] == "—", f"Requests column should be '—', got '{cols[3]}'"
+        assert cols[4] == "—", f"Premium Cost column should be '—', got '{cols[4]}'"
+
     def test_resumed_session_shows_shutdown_row(self) -> None:
         """Resumed session (has_shutdown_metrics=True) must render
         the '↳ Since last shutdown' sub-row."""
