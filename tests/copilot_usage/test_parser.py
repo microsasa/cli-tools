@@ -317,7 +317,7 @@ _SHUTDOWN_EVENT_2 = json.dumps(
 def _write_events(path: Path, *lines: str) -> Path:
     """Write event lines to an events.jsonl file and return the path."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return path
 
 
@@ -1535,8 +1535,9 @@ class TestParseEvents:
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
         """events.jsonl with invalid UTF-8 bytes returns what was parsed so far.
 
-        Due to buffered I/O, the UnicodeDecodeError may fire before any
-        lines are yielded, so the result is typically an empty list.
+        In binary mode, invalid UTF-8 bytes cause a JSON parse failure
+        rather than a ``UnicodeDecodeError``, so the affected line is
+        skipped and valid lines are still returned.
         """
         p = tmp_path / "s" / "events.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1583,8 +1584,9 @@ class TestParseEvents:
         second_repeat = 5
         second_block = valid_line * second_repeat
         # Insert invalid UTF-8 bytes between the two valid blocks.
-        # Binary-mode reading absorbs these into the preceding line's
-        # tail; that line becomes malformed JSON and is skipped.
+        # Because ``first_block`` ends with a newline, these bytes
+        # prefix the next line, corrupting the first line of
+        # ``second_block`` so it becomes malformed JSON and is skipped.
         invalid_bytes = b"\xff\xfe"
         p.write_bytes(first_block + invalid_bytes + second_block)
         result = parse_events(p)

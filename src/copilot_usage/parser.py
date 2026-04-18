@@ -227,9 +227,10 @@ def _parse_events_from_offset(
     the caller can retry on the next refresh.
 
     When *include_partial_tail* is ``True`` (used by :func:`parse_events`
-    for one-shot full parsing), a final non-newline-terminated line is
-    **included** in the results, and ``safe_end`` advances past that
-    consumed partial tail as well to preserve full-file read semantics.
+    for one-shot full parsing), this special case is disabled for a final
+    non-newline-terminated line that fails JSON decoding: the line is
+    warned about and skipped, and ``safe_end`` advances past it. Valid
+    final lines are parsed and returned regardless of this flag.
 
     Returns:
         ``(new_events, safe_end)`` where *safe_end* is the byte
@@ -654,8 +655,9 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
 
     Delegates to :func:`_parse_events_from_offset` (the same binary-mode
     implementation used by the production cache layer) with
-    ``include_partial_tail=True`` so that a final line lacking a trailing
-    newline is still included — matching one-shot full-file read semantics.
+    ``include_partial_tail=True`` to match full-file parsing behavior,
+    including the more permissive handling of a malformed partial tail at
+    EOF.
 
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
