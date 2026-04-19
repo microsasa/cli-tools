@@ -49,14 +49,6 @@ Read `.github/copilot-instructions.md` and follow all referenced guidelines for 
 
 Read all files in the repository. Read issue #${{ github.event.inputs.issue_number }} to understand what needs to be fixed. Implement the fix following the spec in the issue, including any testing requirements.
 
-**Self-review before pushing**: After implementing, audit your own changes for common reviewer findings:
-- **Docstrings**: Does every changed/new function have an accurate docstring? Do existing docstrings still match the new behavior?
-- **Test assertions**: Does each test actually verify what its name/docstring claims? Are assertions specific (exact match, not substring)?
-- **Dead references**: If you renamed or removed something, grep for stale references in docs, comments, imports, and tests
-- **Parallel code paths**: If you fixed a bug or added a guard, check sibling functions/paths for the same gap
-- **Naming consistency**: Do test names, variable names, and comments all match the current behavior?
-Fix any issues you find.
-
 Then run `make fix` to auto-fix lint and format issues, then run `make check` to verify all checks pass (lint, type check, security, tests):
 
 ```
