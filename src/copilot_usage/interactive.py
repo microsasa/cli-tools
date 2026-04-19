@@ -21,7 +21,7 @@ from copilot_usage.report import (
     session_display_name,
 )
 
-__all__: list[str] = []
+__all__: Final[list[str]] = []
 
 WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
@@ -69,7 +69,7 @@ def draw_home(console: Console, sessions: list[SessionSummary]) -> None:
 
 
 def write_prompt(prompt: str) -> None:
-    """Write prompt to stdout without a newline wait."""
+    """Write the prompt to stdout without a trailing newline and flush immediately."""
     import sys
 
     sys.stdout.write(prompt)
