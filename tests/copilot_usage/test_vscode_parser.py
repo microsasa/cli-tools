@@ -5,7 +5,7 @@
 import dataclasses
 import os
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -3023,3 +3023,46 @@ class TestSummaryAccumulatorIsDataclass:
         """Passing internal counters to the constructor must raise."""
         with pytest.raises(TypeError):
             _SummaryAccumulator(total_requests=1)  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Aware-datetime contract for parsed VS Code timestamps
+# ---------------------------------------------------------------------------
+
+
+class TestParsedTimestampsAreAware:
+    """Parsed VS Code log timestamps must be timezone-aware (UTC)."""
+
+    def test_parsed_request_timestamp_is_aware(self, tmp_path: Path) -> None:
+        """parse_vscode_log produces requests with aware (UTC) timestamps."""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        requests = parse_vscode_log(log_file)
+        assert len(requests) == 1
+        assert requests[0].timestamp.tzinfo is not None
+
+    def test_vscode_summary_timestamps_are_aware(self, tmp_path: Path) -> None:
+        """build_vscode_summary fed parsed requests yields aware timestamps."""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        requests = parse_vscode_log(log_file)
+        summary = build_vscode_summary(requests)
+        assert summary.first_timestamp is not None
+        assert summary.first_timestamp.tzinfo is not None
+        assert summary.last_timestamp is not None
+        assert summary.last_timestamp.tzinfo is not None
+
+    def test_vscode_timestamps_comparable_with_session_timestamps(
+        self, tmp_path: Path
+    ) -> None:
+        """Parsed VS Code timestamps can be compared with aware datetimes."""
+        log_file = tmp_path / "test.log"
+        log_file.write_text(_LOG_OPUS, encoding="utf-8")
+        requests = parse_vscode_log(log_file)
+        summary = build_vscode_summary(requests)
+        aware_dt = datetime(2026, 1, 1, tzinfo=UTC)
+        # Must not raise TypeError: can't compare offset-naive and offset-aware datetimes
+        assert summary.first_timestamp is not None
+        assert summary.first_timestamp > aware_dt
+        assert summary.last_timestamp is not None
+        assert summary.last_timestamp > aware_dt

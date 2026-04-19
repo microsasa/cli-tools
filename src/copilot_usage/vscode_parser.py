@@ -8,7 +8,7 @@ import types
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal
 
@@ -372,7 +372,7 @@ def _parse_vscode_log_from_offset(
                 continue
             ts_str, req_id, model, duration_str, category = m.groups()
             try:
-                ts = datetime.fromisoformat(ts_str)
+                ts = datetime.fromisoformat(ts_str).astimezone(UTC)
             except ValueError:
                 continue
             requests.append(
