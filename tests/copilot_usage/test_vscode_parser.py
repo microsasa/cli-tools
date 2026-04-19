@@ -2216,15 +2216,14 @@ class TestGetCachedVscodeRequestsExplicitFileId:
             wraps=safe_file_identity,
         ) as stat_spy:
             _get_cached_vscode_requests(log_file, file_id=real_id)
-            # safe_file_identity may be called post-parse to snapshot the
+            # safe_file_identity is called once post-parse to snapshot the
             # stored identity, but NOT for the initial resolved_id path
             # when file_id != _FILE_ID_UNSET.
-            # The initial resolution must skip — verify by checking the
-            # cached entry uses our pre-computed id.
+            assert stat_spy.call_count == 1
             cached = _VSCODE_LOG_CACHE[log_file]
-            # The stored id should be based on our provided real_id (or a
-            # post-parse snapshot that equals it since the file didn't change).
-            assert cached.file_id == real_id or cached.file_id is not None
+            # The stored id should equal our provided real_id since the
+            # file did not change during the test.
+            assert cached.file_id == real_id
 
         # Verify a second call with the same file_id hits the cache
         # without calling safe_file_identity at all.
