@@ -775,6 +775,59 @@ class TestGetVscodeSummary:
         assert summary.log_files_found == 2
         assert summary.log_files_parsed == 1
 
+    def test_partial_oserror_returns_data_from_surviving_files(
+        self, tmp_path: Path
+    ) -> None:
+        """OSError on one log file must not suppress data from others.
+
+        Uses real file discovery (no mock of ``_cached_discover_vscode_logs``)
+        and monkeypatches ``_get_cached_vscode_requests`` to raise
+        ``OSError`` for one specific path, verifying the partial-failure
+        continuation path in ``get_vscode_summary``.
+        """
+        for idx in range(2):
+            log_dir = (
+                tmp_path
+                / f"session_{idx}"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=idx)
+            )
+
+        # Discover files to identify which path to sabotage.
+        logs = _cached_discover_vscode_logs(tmp_path)
+        assert len(logs) == 2
+        failing_path = logs[0]
+
+        # Clear all caches so get_vscode_summary runs a full cycle.
+        _VSCODE_DISCOVERY_CACHE.clear()
+        _VSCODE_LOG_CACHE.clear()
+        _PER_FILE_SUMMARY_CACHE.clear()
+
+        original_get = _get_cached_vscode_requests
+
+        def _sabotaged_get(
+            log_path: Path,
+            file_id: tuple[int, int] | None = None,
+        ) -> tuple[VSCodeRequest, ...]:
+            if log_path == failing_path:
+                raise OSError("Simulated read failure")
+            return original_get(log_path, file_id)
+
+        with patch(
+            "copilot_usage.vscode_parser._get_cached_vscode_requests",
+            side_effect=_sabotaged_get,
+        ):
+            summary = get_vscode_summary(tmp_path)
+
+        assert summary.log_files_found == 2
+        assert summary.log_files_parsed == 1
+        assert summary.total_requests == 1
+
 
 # ---------------------------------------------------------------------------
 # CLI: vscode subcommand
@@ -2879,6 +2932,43 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             # Only older_session's log remains.
             assert len(paths2) == 1
 
+    def test_cache_misses_when_child_dir_added(self, tmp_path: Path) -> None:
+        """Adding a new child directory must invalidate the discovery cache.
+
+        Creating a child directory updates the root's ``st_mtime_ns``,
+        causing ``root_id`` to differ from the cached value and forcing a
+        re-glob that picks up log files in the new child.
+        """
+        original_glob = Path.glob
+        glob_call_count = 0
+
+        def _counting_glob(
+            self: Path,
+            pattern: str,
+        ) -> list[Path]:
+            nonlocal glob_call_count
+            glob_call_count += 1
+            return list(original_glob(self, pattern))
+
+        with patch.object(Path, "glob", _counting_glob):
+            # First call — empty root, cache is populated.
+            logs_before = _cached_discover_vscode_logs(tmp_path)
+            assert logs_before == []
+            assert glob_call_count == 1
+
+            # Create a child session dir with a matching log file.
+            log_dir = (
+                tmp_path / "session_new" / "window1" / "exthost" / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            log = log_dir / "GitHub Copilot Chat.log"
+            log.write_text(_make_log_line(req_idx=0))
+
+            # Second call — root mtime changed → cache miss → glob reruns.
+            logs_after = _cached_discover_vscode_logs(tmp_path)
+            assert glob_call_count == 2
+            assert log in logs_after
+
 
 class TestScanChildIdsEdgeCases:
     """Cover error-handling paths in _scan_child_ids."""
@@ -2922,6 +3012,24 @@ class TestScanChildIdsEdgeCases:
         missing = tmp_path / "nonexistent_path"
         ids = _scan_child_ids(missing)
         assert ids == frozenset()
+
+    def test_symlinked_directory_excluded(self, tmp_path: Path) -> None:
+        """Symlinks to directories are excluded from child_ids.
+
+        ``_scan_child_ids`` uses ``follow_symlinks=False``, so a symlink
+        entry's ``S_ISDIR`` check returns ``False`` and the symlink is
+        not treated as a child directory.  This documents the current
+        intentional behaviour.
+        """
+        real_dir = tmp_path / "real_window"
+        real_dir.mkdir()
+        link = tmp_path / "link_window"
+        link.symlink_to(real_dir)
+
+        ids = _scan_child_ids(tmp_path)
+        names = {name for name, _ in ids}
+        assert "real_window" in names
+        assert "link_window" not in names
 
 
 class TestCachedDiscoverOsErrors:
