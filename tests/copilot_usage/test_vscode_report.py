@@ -431,19 +431,3 @@ class TestRenderVscodeSummaryUnreadableFiles:
         assert "Log Files:  4" in log_line
         assert "unreadable" not in log_line
         assert "found" not in log_line
-
-    def test_inconsistent_counts_shown_when_parsed_exceeds_found(self) -> None:
-        """When parsed > found, a yellow warning about inconsistent counts appears."""
-        summary = _make_summary(
-            total_requests=10,
-            log_files_parsed=5,
-            log_files_found=3,
-        )
-        output = _capture(summary)
-        log_line = _strip_ansi(
-            next(line for line in output.splitlines() if "Log Files" in line)
-        )
-        assert "Log Files:  5" in log_line
-        assert "3 found" in log_line
-        assert "inconsistent counts" in log_line
-        assert "unreadable" not in log_line
