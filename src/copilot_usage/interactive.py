@@ -21,7 +21,20 @@ from copilot_usage.report import (
     session_display_name,
 )
 
-__all__: Final[list[str]] = []
+__all__: Final[list[str]] = [
+    "WATCHDOG_DEBOUNCE_SECS",
+    "console",
+    "print_version_header",
+    "render_session_list",
+    "draw_home",
+    "write_prompt",
+    "FileChangeEventHandler",
+    "FileChangeHandler",
+    "Stoppable",
+    "start_observer",
+    "stop_observer",
+    "build_session_index",
+]
 
 WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
