@@ -6470,6 +6470,34 @@ class TestResumeDetectionDirect:
         assert fp.last_resume_time is None
         assert fp.post_shutdown_user_messages == 1
 
+    def test_completed_session_zeroes_active_counters_despite_post_shutdown_values(
+        self, tmp_path: Path
+    ) -> None:
+        """_build_completed_summary must zero active counters when session_resumed=False."""
+        from copilot_usage.models import has_active_period_stats
+
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT)
+        events = parse_events(p)
+        fp = _first_pass(events)
+
+        # Manually construct a _ResumeInfo with session_resumed=False but
+        # non-zero post-shutdown counters — the invariant violation scenario.
+        resume = _ResumeInfo(
+            session_resumed=False,
+            post_shutdown_output_tokens=500,
+            post_shutdown_turn_starts=3,
+            post_shutdown_user_messages=2,
+            last_resume_time=None,
+        )
+        summary = _build_completed_summary(fp, name=None, resume=resume, events=events)
+
+        assert summary.is_active is False
+        assert summary.active_model_calls == 0  # already guarded
+        assert summary.active_user_messages == 0  # must be 0 regardless
+        assert summary.active_output_tokens == 0  # must be 0 regardless
+        assert not has_active_period_stats(summary)
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
