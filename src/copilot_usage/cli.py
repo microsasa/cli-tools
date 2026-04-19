@@ -283,11 +283,11 @@ def _start_observer(
     treat a ``None`` return as "auto-refresh unavailable" and continue
     without it.
     """
-    from watchdog.observers import Observer  # type: ignore[import-untyped]
+    from watchdog.observers import Observer
 
     handler: _FileChangeEventHandler = _FileChangeHandler(change_event)
     observer = Observer()
-    observer.schedule(handler, str(session_path), recursive=True)  # type: ignore[arg-type]
+    observer.schedule(handler, str(session_path), recursive=True)  # pyright: ignore[reportArgumentType]
     observer.daemon = True
     try:
         observer.start()
