@@ -542,6 +542,10 @@ def summary(
 @click.pass_context
 def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
     """Show detailed usage for a specific session."""
+    if not session_id:
+        click.echo("Error: session ID cannot be empty.", err=True)
+        sys.exit(1)
+
     _print_version_header()
     path = path or ctx.obj.get("path")
     try:
