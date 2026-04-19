@@ -3039,18 +3039,18 @@ class TestParsedTimestampsAreAware:
         log_file.write_text(_LOG_OPUS, encoding="utf-8")
         requests = parse_vscode_log(log_file)
         assert len(requests) == 1
-        assert requests[0].timestamp.tzinfo is not None
+        assert requests[0].timestamp.tzinfo == UTC
 
     def test_vscode_summary_timestamps_are_aware(self, tmp_path: Path) -> None:
-        """build_vscode_summary fed parsed requests yields aware timestamps."""
+        """build_vscode_summary fed parsed requests yields aware UTC timestamps."""
         log_file = tmp_path / "test.log"
         log_file.write_text(_LOG_OPUS, encoding="utf-8")
         requests = parse_vscode_log(log_file)
         summary = build_vscode_summary(requests)
         assert summary.first_timestamp is not None
-        assert summary.first_timestamp.tzinfo is not None
+        assert summary.first_timestamp.tzinfo == UTC
         assert summary.last_timestamp is not None
-        assert summary.last_timestamp.tzinfo is not None
+        assert summary.last_timestamp.tzinfo == UTC
 
     def test_vscode_timestamps_comparable_with_session_timestamps(
         self, tmp_path: Path
