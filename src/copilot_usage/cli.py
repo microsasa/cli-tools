@@ -43,6 +43,10 @@ from copilot_usage.report import (
     render_summary,
 )
 
+__all__: Final[list[str]] = [
+    "main",
+]
+
 type _View = Literal["home", "detail", "cost"]
 
 # (format_string, has_explicit_time) pairs — single source of truth.

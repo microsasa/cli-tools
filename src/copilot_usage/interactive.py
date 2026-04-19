@@ -4,6 +4,7 @@ Contains rendering, file-watching, and input helpers used by the
 interactive Rich-based session loop in :mod:`copilot_usage.cli`.
 """
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -83,8 +84,6 @@ def draw_home(console: Console, sessions: list[SessionSummary]) -> None:
 
 def write_prompt(prompt: str) -> None:
     """Write the prompt to stdout without a trailing newline and flush immediately."""
-    import sys
-
     sys.stdout.write(prompt)
     sys.stdout.flush()
 
