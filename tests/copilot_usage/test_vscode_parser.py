@@ -2964,6 +2964,15 @@ class TestVscodeDiscoveryCacheSkipsGlob:
             log = log_dir / "GitHub Copilot Chat.log"
             log.write_text(_make_log_line(req_idx=0))
 
+            # Force a detectable mtime change on the root directory so
+            # the cache-miss assertion is deterministic on filesystems
+            # with coarse timestamp resolution.
+            root_stat = tmp_path.stat()
+            os.utime(
+                tmp_path,
+                ns=(root_stat.st_atime_ns, root_stat.st_mtime_ns + 1_000_000_000),
+            )
+
             # Second call — root mtime changed → cache miss → glob reruns.
             logs_after = _cached_discover_vscode_logs(tmp_path)
             assert glob_call_count == 2
@@ -3024,7 +3033,10 @@ class TestScanChildIdsEdgeCases:
         real_dir = tmp_path / "real_window"
         real_dir.mkdir()
         link = tmp_path / "link_window"
-        link.symlink_to(real_dir)
+        try:
+            link.symlink_to(real_dir)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not supported in this environment: {exc}")
 
         ids = _scan_child_ids(tmp_path)
         names = {name for name, _ in ids}
