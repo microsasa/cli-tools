@@ -4948,6 +4948,11 @@ class TestExtractOutputTokens:
         )
         assert _extract_output_tokens(ev) is None
 
+    @pytest.mark.parametrize("special", [float("inf"), float("nan"), float("-inf")])
+    def test_returns_none_for_ieee_special_floats(self, special: float) -> None:
+        """IEEE 754 special floats (inf, nan, -inf) are not valid token counts."""
+        assert _extract_output_tokens(_make_assistant_event(special)) is None
+
 
 _EXTRACT_TOKENS_CASES: list[tuple[str, object, int | None]] = [
     ("valid_int", 42, 42),
@@ -5021,6 +5026,9 @@ _EQUIVALENCE_CASES: list[tuple[str, object]] = [
     ("large_positive_int", 1234),
     ("whole_float", 1234.0),
     ("fractional_float", 3.14),
+    ("float_inf", float("inf")),
+    ("float_neg_inf", float("-inf")),
+    ("float_nan", float("nan")),
 ]
 
 

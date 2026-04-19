@@ -6,6 +6,7 @@ flexible fallback for unknown ones.
 """
 
 import builtins
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -220,6 +221,7 @@ def parse_token_int(raw: object) -> int | None:
     Rules:
 
     - ``bool`` / ``str`` → ``None`` (invalid, not coerced)
+    - IEEE 754 special ``float`` (``inf``, ``-inf``, ``nan``) → ``None``
     - non-whole ``float`` → ``None``
     - zero or negative ``int`` / ``float`` → ``None``
     - positive whole-number ``float`` → coerced to ``int``
@@ -229,6 +231,8 @@ def parse_token_int(raw: object) -> int | None:
     if isinstance(raw, (bool, str)):
         return None
     if isinstance(raw, float):
+        if not math.isfinite(raw):
+            return None
         if not raw.is_integer():
             return None
         tokens = int(raw)
