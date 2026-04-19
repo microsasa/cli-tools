@@ -37,6 +37,19 @@ from copilot_usage.cli import (
 from copilot_usage.models import ensure_aware_opt
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_stdin_reader_state() -> None:
+    """Reset _read_line_nonblocking's threaded-fallback state between tests."""
+    import copilot_usage.cli as cli_mod
+
+    cli_mod._stdin_reader_queue = None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -2261,6 +2274,70 @@ def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #1012 — auto-refresh must fire in OSError fallback mode
+# ---------------------------------------------------------------------------
+
+
+def test_auto_refresh_fires_during_os_error_fallback(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _read_line_nonblocking raises OSError (simulating Windows stdin),
+    the threaded input() fallback still allows change_event auto-refresh to
+    fire between input() calls — i.e. get_all_sessions is invoked for the
+    refresh path without waiting for user input to unblock it."""
+    _write_session(tmp_path, "fb_arfr0-0000-0000-0000-000000000000", name="FbRefresh")
+
+    import copilot_usage.cli as cli_mod
+
+    # Track get_all_sessions calls (imported reference on the cli module).
+    get_all_calls: list[int] = []
+    _orig_get_all_sessions = cli_mod.get_all_sessions
+
+    def _tracking_get_all(path: Path | None = None) -> list[Any]:
+        get_all_calls.append(1)
+        return _orig_get_all_sessions(path)
+
+    monkeypatch.setattr(cli_mod, "get_all_sessions", _tracking_get_all)
+
+    # Capture the change_event via _start_observer.
+    captured_event: list[threading.Event] = []
+    orig_start_observer = cli_mod._start_observer
+
+    def _capturing_start(session_path: Path, change_event: threading.Event) -> object:
+        captured_event.append(change_event)
+        return orig_start_observer(session_path, change_event)
+
+    monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
+
+    # _read_line_nonblocking always raises OSError (simulating Windows stdin).
+    def _raise_os_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise OSError("select not supported on Windows stdin")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_os_error)
+
+    # input(): first call sets change_event and returns empty line,
+    # second call returns 'q' to exit.
+    input_call_count = 0
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        nonlocal input_call_count
+        input_call_count += 1
+        if input_call_count == 1:
+            if captured_event:
+                captured_event[0].set()
+            return ""
+        return "q"
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+    # get_all_sessions called at least twice: initial load + auto-refresh.
+    assert len(get_all_calls) >= 2
 
 
 # ---------------------------------------------------------------------------
