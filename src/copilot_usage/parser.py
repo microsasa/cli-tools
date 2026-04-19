@@ -957,8 +957,12 @@ def _build_completed_summary(
         active_model_calls=(
             resume.post_shutdown_turn_starts if resume.session_resumed else 0
         ),
-        active_user_messages=resume.post_shutdown_user_messages,
-        active_output_tokens=resume.post_shutdown_output_tokens,
+        active_user_messages=(
+            resume.post_shutdown_user_messages if resume.session_resumed else 0
+        ),
+        active_output_tokens=(
+            resume.post_shutdown_output_tokens if resume.session_resumed else 0
+        ),
         shutdown_cycles=shutdown_cycles,
         events_path=events_path,
     )
