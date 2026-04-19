@@ -53,5 +53,5 @@ def _emoji_patcher(record: _PatcherRecord) -> None:
 def setup_logging() -> None:
     """Configure loguru for CLI use: stderr only, WARNING level."""
     logger.remove()
-    logger.configure(patcher=_emoji_patcher)  # type: ignore[arg-type]  # TypedDict value invariance: _PatcherRecord is a structural subset of loguru.Record
+    logger.configure(patcher=_emoji_patcher)  # pyright: ignore[reportArgumentType]  # TypedDict value invariance: _PatcherRecord is a structural subset of loguru.Record
     logger.add(sys.stderr, format=CONSOLE_FORMAT, level="WARNING", colorize=True)

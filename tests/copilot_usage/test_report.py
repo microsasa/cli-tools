@@ -3006,6 +3006,37 @@ class TestBuildEventDetails:
         )
         assert _build_event_details(ev) == "type=normal"
 
+    def test_tool_execution_with_model_field(self) -> None:
+        """TOOL_EXECUTION_COMPLETE with model → detail string includes model=<name>."""
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "t1",
+                "success": True,
+                "model": "claude-sonnet-4",
+                "toolTelemetry": {"properties": {"tool_name": "bash"}},
+            },
+        )
+        details = _build_event_details(ev)
+        assert "model=claude-sonnet-4" in details
+        assert "bash" in details
+        assert "✓" in details
+
+    def test_tool_execution_with_empty_model_string(self) -> None:
+        """TOOL_EXECUTION_COMPLETE with model='' → model not shown in details."""
+        ev = _make_event(
+            EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "t1",
+                "success": True,
+                "model": "",
+                "toolTelemetry": {"properties": {"tool_name": "bash"}},
+            },
+        )
+        details = _build_event_details(ev)
+        assert "model=" not in details
+        assert "✓" in details
+
 
 class TestRenderShutdownCyclesEdgeCases:
     """Test _render_shutdown_cycles with edge-case summaries."""

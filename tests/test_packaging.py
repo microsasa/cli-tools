@@ -27,10 +27,11 @@ _PUBLIC_MODULES: list[str] = [
 def test_all_names_importable(module_name: str) -> None:
     """Every name listed in a module's ``__all__`` must be importable at runtime."""
     mod = importlib.import_module(module_name)
-    dunder_all: list[str] | None = getattr(mod, "__all__", None)  # noqa: B009
+    mod_vars = vars(mod)
+    dunder_all: list[str] | None = mod_vars.get("__all__")
     assert dunder_all is not None, f"{module_name} is missing __all__"
     for name in dunder_all:
-        assert hasattr(mod, name), (  # noqa: B009
+        assert name in mod_vars, (
             f"{module_name}.__all__ lists {name!r}, but it is not defined in the module"
         )
 
@@ -64,10 +65,13 @@ def test_parse_data_and_event_data_removed_from_public_api() -> None:
 
     dunder_all = models_mod.__all__
     assert "EventData" not in dunder_all, "EventData must not be in models.__all__"
-    assert not hasattr(models_mod, "EventData"), (  # noqa: B009
+    models_vars = vars(models_mod)
+    assert "EventData" not in models_vars, (
         "EventData type alias must not exist in models module"
     )
-    assert not hasattr(models_mod.SessionEvent, "parse_data"), (  # noqa: B009
+    assert not hasattr(
+        models_mod.SessionEvent, "parse_data"
+    ), (  # hasattr intentional: must check full MRO
         "SessionEvent.parse_data() must not exist — use as_*() accessors"
     )
 
