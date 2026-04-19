@@ -33,7 +33,8 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 
 | Module | Responsibility |
 |--------|---------------|
-| `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Also contains the interactive loop (invoked when no subcommand is given) with watchdog-based auto-refresh (2-second debounce). |
+| `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Contains the interactive loop (invoked when no subcommand is given) which uses helpers from `interactive.py`. |
+| `interactive.py` | Interactive-mode UI helpers — session list rendering, file-watching (watchdog with 2-second debounce), version header, and session index building. Extracted from `cli.py` to separate interactive concerns from CLI routing. |
 | `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session via focused helpers: `_first_pass()` (extract identity/shutdowns/counters/post-shutdown resume data in a single pass), `_build_completed_summary()`, `_build_active_summary()`. |
 | `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
 | `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), live view, premium request breakdown. Shows raw counts and `~`-prefixed premium cost estimates for live/active sessions; historical post-shutdown views display exact API-provided numbers. |

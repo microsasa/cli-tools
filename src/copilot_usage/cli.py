@@ -7,19 +7,28 @@ plus an interactive Rich-based session when invoked without a subcommand.
 import select
 import sys
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time
 from pathlib import Path
-from typing import Final, Literal, Protocol, cast
+from typing import Final, Literal
 
 import click
 from loguru import logger
 from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from copilot_usage import __version__
+from copilot_usage.interactive import (
+    FileChangeEventHandler as _FileChangeEventHandler,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    FileChangeHandler as _FileChangeHandler,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    Stoppable as _Stoppable,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    build_session_index as _build_session_index,
+    draw_home as _draw_home,
+    print_version_header as _print_version_header,
+    render_session_list as _render_session_list,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    start_observer as _start_observer,
+    stop_observer as _stop_observer,
+    write_prompt as _write_prompt,
+)
 from copilot_usage.logging_config import setup_logging
 from copilot_usage.models import SessionSummary, ensure_aware, ensure_aware_opt
 from copilot_usage.parser import (
@@ -29,11 +38,9 @@ from copilot_usage.parser import (
 )
 from copilot_usage.report import (
     render_cost_view,
-    render_full_summary,
     render_live_sessions,
     render_session_detail,
     render_summary,
-    session_display_name,
 )
 
 type _View = Literal["home", "detail", "cost"]
@@ -45,10 +52,6 @@ _FORMAT_SPECS: Final[list[tuple[str, bool]]] = [
 ]
 
 _DATE_FORMATS: Final[list[str]] = [fmt for fmt, _ in _FORMAT_SPECS]
-
-_WATCHDOG_DEBOUNCE_SECS: Final[float] = (
-    2.0  # Prevents rapid redraws during tool-use bursts
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,18 +146,6 @@ def _validate_since_until(
     return aware_since, aware_until
 
 
-def _print_version_header(target: Console | None = None) -> None:
-    """Print 'Copilot Usage' left-aligned with version right-aligned."""
-    c = target or console
-    title = "Copilot Usage"
-    version_text = f"v{__version__}"
-    header = Text()
-    header.append(title, style="bold")
-    header.append(" " * max(1, c.width - len(title) - len(version_text)))
-    header.append(version_text, style="dim")
-    c.print(header)
-
-
 # ---------------------------------------------------------------------------
 # Interactive mode helpers
 # ---------------------------------------------------------------------------
@@ -163,23 +154,6 @@ _HOME_PROMPT: Final[str] = (
     "\nEnter session # for detail, [c] cost, [r] refresh, [q] quit: "
 )
 _BACK_PROMPT: Final[str] = "\nPress Enter to go back... "
-
-
-def _render_session_list(console: Console, sessions: list[SessionSummary]) -> None:
-    """Print a numbered list of sessions for interactive selection."""
-    table = Table(title="Sessions", border_style="cyan")
-    table.add_column("#", style="bold cyan", justify="right", width=4)
-    table.add_column("Name", style="bold", max_width=40)
-    table.add_column("Model")
-    table.add_column("Status")
-
-    for idx, s in enumerate(sessions, start=1):
-        name = session_display_name(s)
-        model = s.model or "—"
-        status = "🟢 Active" if s.is_active else "Completed"
-        table.add_row(str(idx), name, model, status)
-
-    console.print(table)
 
 
 def _show_session_by_index(
@@ -206,21 +180,6 @@ def _show_session_by_index(
     render_session_detail(events, s, target_console=console)
 
 
-def _draw_home(console: Console, sessions: list[SessionSummary]) -> None:
-    """Clear screen and render the home view."""
-    console.clear()
-    _print_version_header(console)
-    render_full_summary(sessions, target_console=console)
-    console.print()
-    _render_session_list(console, sessions)
-
-
-def _write_prompt(prompt: str) -> None:
-    """Write prompt to stdout without a newline wait."""
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-
-
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     """Return a line from stdin if available within *timeout*, else None.
 
@@ -234,88 +193,6 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
             raise EOFError("stdin closed")
         return line.strip()
     return None
-
-
-class _FileChangeEventHandler(Protocol):
-    """Protocol for minimal filesystem event handlers used with watchdog."""
-
-    def dispatch(self, event: object) -> None:
-        """Handle a filesystem event."""
-
-
-class _FileChangeHandler:
-    """Watchdog-compatible handler that triggers refresh on session-state changes.
-
-    Implements the :class:`_FileChangeEventHandler` ``dispatch(event)``
-    Protocol expected by watchdog observers, without importing the heavy
-    ``watchdog`` package at module level.
-    """
-
-    def __init__(self, change_event: threading.Event) -> None:
-        self._change_event = change_event
-        self._last_trigger = 0.0
-        self._lock = threading.Lock()
-
-    def dispatch(self, event: object) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if now - self._last_trigger <= _WATCHDOG_DEBOUNCE_SECS:
-                return
-            self._last_trigger = now
-        self._change_event.set()
-
-
-class _Stoppable(Protocol):
-    """Minimal interface for a watchdog-style observer."""
-
-    def stop(self) -> None: ...
-    def join(self, timeout: float | None = None) -> None: ...
-    def is_alive(self) -> bool: ...
-
-
-def _start_observer(
-    session_path: Path, change_event: threading.Event
-) -> _Stoppable | None:
-    """Start a watchdog observer monitoring *session_path* for changes.
-
-    Returns ``None`` when the observer cannot be started (e.g. inotify
-    watch limit exhausted, unsupported filesystem). The caller should
-    treat a ``None`` return as "auto-refresh unavailable" and continue
-    without it.
-    """
-    from watchdog.observers import Observer
-
-    handler: _FileChangeEventHandler = _FileChangeHandler(change_event)
-    observer = Observer()
-    observer.schedule(handler, str(session_path), recursive=True)  # pyright: ignore[reportArgumentType]
-    observer.daemon = True
-    try:
-        observer.start()
-    except (OSError, RuntimeError) as exc:
-        logger.warning("File watcher unavailable (auto-refresh disabled): {}", exc)
-        # Best-effort cleanup in case the observer partially started
-        try:
-            if observer.is_alive():
-                observer.stop()
-                observer.join(timeout=2)
-        except (OSError, RuntimeError) as cleanup_exc:
-            logger.opt(exception=cleanup_exc).debug(
-                "Failed to clean up file watcher after start failure"
-            )
-        return None
-    return cast(_Stoppable, observer)
-
-
-def _stop_observer(observer: _Stoppable | None) -> None:
-    """Stop a watchdog observer if running."""
-    if observer is not None:
-        observer.stop()
-        observer.join(timeout=2)
-
-
-def _build_session_index(sessions: list[SessionSummary]) -> dict[str, int]:
-    """Return a mapping from session_id to list index for O(1) lookup."""
-    return {s.session_id: i for i, s in enumerate(sessions)}
 
 
 def _interactive_loop(path: Path | None) -> None:
