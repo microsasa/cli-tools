@@ -30,6 +30,7 @@ from copilot_usage.vscode_parser import (
     _default_log_candidates,
     _get_cached_vscode_requests,
     _merge_partial,
+    _newest_child_from_ids,
     _parse_vscode_log_from_offset,
     _scan_child_ids,
     _SummaryAccumulator,
@@ -3346,3 +3347,56 @@ class TestParsedTimestampsAreAware:
         assert summary.first_timestamp > aware_dt
         assert summary.last_timestamp is not None
         assert summary.last_timestamp > aware_dt
+
+
+# ---------------------------------------------------------------------------
+# _newest_child_from_ids
+# ---------------------------------------------------------------------------
+
+
+class TestNewestChildFromIds:
+    """Direct unit tests for the ``_newest_child_from_ids`` sentinel selector."""
+
+    _ROOT: Path = Path("/fake")
+
+    def test_empty_child_ids_returns_none_pair(self) -> None:
+        """Empty *child_ids* yields ``(None, None)``."""
+        path, identity = _newest_child_from_ids(self._ROOT, frozenset())
+        assert path is None
+        assert identity is None
+
+    def test_single_entry(self) -> None:
+        """A single child is always selected."""
+        child_ids: frozenset[tuple[str, tuple[int, int]]] = frozenset(
+            {("window1", (1000, 512))}
+        )
+        path, identity = _newest_child_from_ids(self._ROOT, child_ids)
+        assert path == self._ROOT / "window1"
+        assert identity == (1000, 512)
+
+    def test_multiple_entries_distinct_mtime(self) -> None:
+        """The child with the highest ``st_mtime_ns`` wins."""
+        child_ids: frozenset[tuple[str, tuple[int, int]]] = frozenset(
+            {("window1", (100, 0)), ("window2", (200, 0))}
+        )
+        path, identity = _newest_child_from_ids(self._ROOT, child_ids)
+        assert path == self._ROOT / "window2"
+        assert identity == (200, 0)
+
+    def test_tie_breaking_by_name_same_mtime(self) -> None:
+        """When ``st_mtime_ns`` is identical, the lexicographically largest name wins."""
+        child_ids: frozenset[tuple[str, tuple[int, int]]] = frozenset(
+            {("window1", (100, 0)), ("window2", (100, 0))}
+        )
+        path, identity = _newest_child_from_ids(self._ROOT, child_ids)
+        assert path == self._ROOT / "window2"
+        assert identity == (100, 0)
+
+    def test_natural_sort_surprise(self) -> None:
+        """Lexicographic ordering: ``"window2" > "window10"`` (``'2' > '1'``)."""
+        child_ids: frozenset[tuple[str, tuple[int, int]]] = frozenset(
+            {("window10", (100, 0)), ("window2", (100, 0))}
+        )
+        path, identity = _newest_child_from_ids(self._ROOT, child_ids)
+        assert path == self._ROOT / "window2"
+        assert identity == (100, 0)
