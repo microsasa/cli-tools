@@ -25,7 +25,7 @@ Manual work only — autonomous agent pipeline PRs are not tracked here.
 **Plan**: Break the ~200-line `build_session_summary` monolith into focused private helpers while preserving identical behavior.
 
 **Done**:
-- Extracted 4 helpers: `_first_pass()`, `_detect_resume()`, `_build_completed_summary()`, `_build_active_summary()`
+- Extracted helpers: `_first_pass()`, `_build_completed_summary()`, `_build_active_summary()`
 - Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between phases
 - `build_session_summary` is now a 6-line coordinator
 - Public API unchanged — all ~90 existing tests pass without modification

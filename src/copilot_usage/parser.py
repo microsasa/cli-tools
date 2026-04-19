@@ -727,6 +727,12 @@ class _FirstPassResult:
     total_output_tokens: int
     total_turn_starts: int
     tool_model: str | None
+    # Post-last-shutdown rolling accumulators (reset on each shutdown)
+    post_shutdown_resumed: bool
+    post_shutdown_output_tokens: int
+    post_shutdown_turn_starts: int
+    post_shutdown_user_messages: int
+    last_resume_time: datetime | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -755,12 +761,19 @@ _FIRST_PASS_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         EventType.USER_MESSAGE,
         EventType.ASSISTANT_TURN_START,
         EventType.ASSISTANT_MESSAGE,
+        EventType.SESSION_RESUME,
     }
 )
 
 
 def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
-    """Iterate *events* once, extracting identity, shutdown data, and counters."""
+    """Iterate *events* once, extracting identity, shutdown data, and counters.
+
+    Also tracks rolling post-shutdown accumulators that reset on each
+    ``session.shutdown``.  After the loop they hold the post-*last*-shutdown
+    values, eliminating the need for a separate second pass to detect
+    resume activity.
+    """
     session_id = ""
     start_time = None
     end_time = None
@@ -772,6 +785,13 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
     total_output_tokens = 0
     total_turn_starts = 0
     tool_model: str | None = None
+
+    # Rolling post-shutdown accumulators — reset on each SESSION_SHUTDOWN
+    _ps_resumed = False
+    _ps_output_tokens = 0
+    _ps_turn_starts = 0
+    _ps_user_messages = 0
+    _ps_last_resume_time: datetime | None = None
 
     for idx, ev in enumerate(events):
         etype = ev.type
@@ -817,16 +837,37 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             _shutdowns.append((idx, data))
             end_time = ev.timestamp
             model = current_model
+            # Reset rolling accumulators for new post-shutdown window
+            _ps_resumed = False
+            _ps_output_tokens = 0
+            _ps_turn_starts = 0
+            _ps_user_messages = 0
+            _ps_last_resume_time = None
 
         elif etype == EventType.USER_MESSAGE:
             user_message_count += 1
+            if _shutdowns:
+                _ps_resumed = True
+                _ps_user_messages += 1
 
         elif etype == EventType.ASSISTANT_TURN_START:
             total_turn_starts += 1
+            if _shutdowns:
+                _ps_turn_starts += 1
 
         elif etype == EventType.ASSISTANT_MESSAGE:
             if (tokens := _extract_output_tokens(ev)) is not None:
                 total_output_tokens += tokens
+                if _shutdowns:
+                    _ps_output_tokens += tokens
+            if _shutdowns:
+                _ps_resumed = True
+
+        elif etype == EventType.SESSION_RESUME:
+            if _shutdowns:
+                _ps_resumed = True
+                if ev.timestamp is not None:
+                    _ps_last_resume_time = ev.timestamp
 
     return _FirstPassResult(
         session_id=session_id,
@@ -839,65 +880,11 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
         total_output_tokens=total_output_tokens,
         total_turn_starts=total_turn_starts,
         tool_model=tool_model,
-    )
-
-
-_DETECT_RESUME_EVENT_TYPES: Final[frozenset[str]] = frozenset(
-    {
-        EventType.ASSISTANT_MESSAGE,
-        EventType.USER_MESSAGE,
-        EventType.ASSISTANT_TURN_START,
-        EventType.SESSION_RESUME,
-    }
-)
-
-
-def _detect_resume(
-    events: list[SessionEvent],
-    all_shutdowns: tuple[tuple[int, SessionShutdownData], ...],
-) -> _ResumeInfo:
-    """Scan events after the last shutdown for resume indicators."""
-    if not all_shutdowns:
-        return _ResumeInfo(
-            session_resumed=False,
-            post_shutdown_output_tokens=0,
-            post_shutdown_turn_starts=0,
-            post_shutdown_user_messages=0,
-            last_resume_time=None,
-        )
-
-    last_shutdown_idx = all_shutdowns[-1][0]
-    session_resumed = False
-    post_shutdown_output_tokens = 0
-    post_shutdown_turn_starts = 0
-    post_shutdown_user_messages = 0
-    last_resume_time = None
-
-    for i in range(last_shutdown_idx + 1, len(events)):
-        ev = events[i]
-        etype = ev.type
-        if etype not in _DETECT_RESUME_EVENT_TYPES:
-            continue
-        if etype == EventType.ASSISTANT_MESSAGE:
-            session_resumed = True
-            if (tokens := _extract_output_tokens(ev)) is not None:
-                post_shutdown_output_tokens += tokens
-        elif etype == EventType.USER_MESSAGE:
-            session_resumed = True
-            post_shutdown_user_messages += 1
-        elif etype == EventType.ASSISTANT_TURN_START:
-            post_shutdown_turn_starts += 1
-        elif etype == EventType.SESSION_RESUME:
-            session_resumed = True
-            if ev.timestamp is not None:
-                last_resume_time = ev.timestamp
-
-    return _ResumeInfo(
-        session_resumed=session_resumed,
-        post_shutdown_output_tokens=post_shutdown_output_tokens,
-        post_shutdown_turn_starts=post_shutdown_turn_starts,
-        post_shutdown_user_messages=post_shutdown_user_messages,
-        last_resume_time=last_resume_time,
+        post_shutdown_resumed=_ps_resumed,
+        post_shutdown_output_tokens=_ps_output_tokens,
+        post_shutdown_turn_starts=_ps_turn_starts,
+        post_shutdown_user_messages=_ps_user_messages,
+        last_resume_time=_ps_last_resume_time,
     )
 
 
@@ -1052,7 +1039,13 @@ def _build_session_summary_with_meta(
     )
 
     if fp.all_shutdowns:
-        resume = _detect_resume(events, fp.all_shutdowns)
+        resume = _ResumeInfo(
+            session_resumed=fp.post_shutdown_resumed,
+            post_shutdown_output_tokens=fp.post_shutdown_output_tokens,
+            post_shutdown_turn_starts=fp.post_shutdown_turn_starts,
+            post_shutdown_user_messages=fp.post_shutdown_user_messages,
+            last_resume_time=fp.last_resume_time,
+        )
         return _BuildMeta(
             _build_completed_summary(fp, name, resume, events, events_path=events_path),
             used_config_fallback=False,
