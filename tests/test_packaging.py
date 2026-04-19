@@ -12,6 +12,8 @@ import pytest
 _PUBLIC_MODULES: list[str] = [
     "copilot_usage._formatting",
     "copilot_usage._fs_utils",
+    "copilot_usage.cli",
+    "copilot_usage.interactive",
     "copilot_usage.logging_config",
     "copilot_usage.models",
     "copilot_usage.parser",

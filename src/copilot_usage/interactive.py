@@ -24,7 +24,6 @@ from copilot_usage.report import (
 
 __all__: Final[list[str]] = [
     "WATCHDOG_DEBOUNCE_SECS",
-    "console",
     "print_version_header",
     "render_session_list",
     "draw_home",
