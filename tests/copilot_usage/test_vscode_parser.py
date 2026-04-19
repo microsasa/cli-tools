@@ -5,6 +5,7 @@
 import dataclasses
 import os
 import re
+from collections import OrderedDict
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 from loguru import logger
 
-from copilot_usage._fs_utils import safe_file_identity
+from copilot_usage._fs_utils import lru_insert, safe_file_identity
 from copilot_usage.cli import main
 from copilot_usage.vscode_parser import (
     _CCREQ_RE,
@@ -25,6 +26,7 @@ from copilot_usage.vscode_parser import (
     VSCodeLogSummary,
     VSCodeRequest,
     _cached_discover_vscode_logs,
+    _CachedFileSummary,
     _default_log_candidates,
     _get_cached_vscode_requests,
     _merge_partial,
@@ -2073,6 +2075,164 @@ class TestPerFileSummaryCacheLRUEviction:
         )
         # Cache size must match the configured limit after one eviction.
         assert len(_PER_FILE_SUMMARY_CACHE) == limit
+
+
+# ---------------------------------------------------------------------------
+# Per-file summary cache LRU semantics (unit-level, exercises lru_insert
+# with Path keys and _CachedFileSummary values)
+# ---------------------------------------------------------------------------
+
+
+class TestPerFileSummaryCacheLRU:
+    """Unit tests for the per-file summary cache LRU behaviour.
+
+    These exercise the ``lru_insert()`` contract with the exact types
+    used by ``_PER_FILE_SUMMARY_CACHE`` (``Path`` keys and
+    ``_CachedFileSummary`` values), ensuring the delete-before-reinsert
+    pattern works correctly for cache refresh and eviction.
+    """
+
+    @staticmethod
+    def _make_entry(file_id_size: int = 100) -> _CachedFileSummary:
+        """Create a minimal _CachedFileSummary for testing."""
+        return _CachedFileSummary(
+            file_id=(1_000_000_000, file_id_size),
+            partial=VSCodeLogSummary(),
+        )
+
+    def test_insert_below_capacity(self) -> None:
+        """Inserting fewer entries than max_size stores all of them."""
+        cache: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
+        max_size = 3
+        paths = [Path(f"/fake/log{i}.log") for i in range(max_size)]
+        for p in paths:
+            lru_insert(cache, p, self._make_entry(), max_size)
+        assert len(cache) == max_size
+        for p in paths:
+            assert p in cache
+
+    def test_eviction_when_full(self) -> None:
+        """Inserting max_size + 1 entries evicts the oldest (LRU) entry."""
+        cache: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
+        max_size = 3
+        paths = [Path(f"/fake/log{i}.log") for i in range(max_size + 1)]
+        for p in paths:
+            lru_insert(cache, p, self._make_entry(), max_size)
+        assert len(cache) == max_size
+        assert paths[0] not in cache
+        assert paths[-1] in cache
+
+    def test_update_existing_key_moves_to_mru(self) -> None:
+        """Updating an existing key repositions it to the MRU end."""
+        cache: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
+        max_size = 3
+        p_a = Path("/fake/a.log")
+        p_b = Path("/fake/b.log")
+        p_c = Path("/fake/c.log")
+        lru_insert(cache, p_a, self._make_entry(100), max_size)
+        lru_insert(cache, p_b, self._make_entry(200), max_size)
+        lru_insert(cache, p_c, self._make_entry(300), max_size)
+        # Update "a" — it should move to the end (MRU position)
+        updated_entry = self._make_entry(999)
+        lru_insert(cache, p_a, updated_entry, max_size)
+        assert list(cache.keys()) == [p_b, p_c, p_a]
+        assert cache[p_a] is updated_entry
+
+    def test_update_existing_key_does_not_grow_cache(self) -> None:
+        """Replacing an existing key keeps len(cache) unchanged."""
+        cache: OrderedDict[Path, _CachedFileSummary] = OrderedDict()
+        max_size = 2
+        p_a = Path("/fake/a.log")
+        p_b = Path("/fake/b.log")
+        lru_insert(cache, p_a, self._make_entry(100), max_size)
+        lru_insert(cache, p_b, self._make_entry(200), max_size)
+        assert len(cache) == max_size
+        # Replace "a" — cache size must not grow
+        lru_insert(cache, p_a, self._make_entry(999), max_size)
+        assert len(cache) == max_size
+
+
+# ---------------------------------------------------------------------------
+# _get_cached_vscode_requests with explicit file_id parameter
+# ---------------------------------------------------------------------------
+
+
+class TestGetCachedVscodeRequestsExplicitFileId:
+    """Tests for _get_cached_vscode_requests when an explicit file_id is passed.
+
+    The function accepts an optional pre-computed ``file_id`` to avoid a
+    redundant ``stat()`` call.  These tests verify:
+    - ``file_id=None`` populates the cache with ``file_id=None``
+    - A ``None`` → real ``(mtime_ns, size)`` transition is a cache miss
+    - Passing a real ``file_id`` avoids calling ``safe_file_identity``
+    """
+
+    def test_none_file_id_populates_cache_with_none(self, tmp_path: Path) -> None:
+        """Calling with file_id=None stores None as the cached file_id."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        _get_cached_vscode_requests(log_file, file_id=None)
+
+        cached = _VSCODE_LOG_CACHE.get(log_file)
+        assert cached is not None
+        assert cached.file_id is None
+
+    def test_none_to_real_file_id_invalidates_cache(self, tmp_path: Path) -> None:
+        """A cached entry with file_id=None is a miss when a real id is passed."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        # First call: file_id=None → cache stores None
+        result_first = _get_cached_vscode_requests(log_file, file_id=None)
+        assert _VSCODE_LOG_CACHE[log_file].file_id is None
+
+        # Second call: real file_id → cache miss, re-parses
+        real_id = safe_file_identity(log_file)
+        assert real_id is not None
+        with patch(
+            "copilot_usage.vscode_parser._parse_vscode_log_from_offset",
+            wraps=_parse_vscode_log_from_offset,
+        ) as spy:
+            result_second = _get_cached_vscode_requests(log_file, file_id=real_id)
+            assert spy.call_count == 1
+
+        # Cache now stores the real file_id
+        cached = _VSCODE_LOG_CACHE[log_file]
+        assert cached.file_id is not None
+        # Results should be equivalent (same file content)
+        assert len(result_first) == len(result_second)
+
+    def test_real_file_id_avoids_extra_stat_call(self, tmp_path: Path) -> None:
+        """Passing a pre-computed file_id bypasses safe_file_identity."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0))
+
+        real_id = safe_file_identity(log_file)
+        assert real_id is not None
+
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            wraps=safe_file_identity,
+        ) as stat_spy:
+            _get_cached_vscode_requests(log_file, file_id=real_id)
+            # safe_file_identity is called once post-parse to snapshot the
+            # stored identity, but NOT for the initial resolved_id path
+            # when file_id != _FILE_ID_UNSET.
+            assert stat_spy.call_count == 1
+            cached = _VSCODE_LOG_CACHE[log_file]
+            # The stored id should equal our provided real_id since the
+            # file did not change during the test.
+            assert cached.file_id == real_id
+
+        # Verify a second call with the same file_id hits the cache
+        # without calling safe_file_identity at all.
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            wraps=safe_file_identity,
+        ) as stat_spy:
+            _get_cached_vscode_requests(log_file, file_id=real_id)
+            stat_spy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
