@@ -3741,3 +3741,55 @@ def test_interactive_loop_exits_on_selectable_eof_stdin(
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
     assert call_count == 1, "Loop should have exited on the first EOFError"
+
+
+# ---------------------------------------------------------------------------
+# Issue #808 — session command edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_session_command_empty_id_exits_with_error(tmp_path: Path) -> None:
+    """session '' should exit 1 with a useful error, not silently show a session."""
+    _write_session(tmp_path, "aaaa0000-0000-0000-0000-000000000000", name="First")
+    runner = CliRunner()
+    result = runner.invoke(main, ["session", "", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "session ID cannot be empty" in result.output
+
+
+def test_show_session_by_index_generic_oserror() -> None:
+    """OSError (not just FileNotFoundError) from get_cached_events is caught."""
+    from copilot_usage.models import SessionSummary
+
+    s = SessionSummary(
+        session_id="oserr000-0000-0000-0000-000000000000",
+        events_path=Path("/fake/path/events.jsonl"),
+    )
+    console = Console(file=None, force_terminal=True)
+
+    with (
+        patch(
+            "copilot_usage.cli.get_cached_events",
+            side_effect=OSError("permission denied"),
+        ),
+        console.capture() as capture,
+    ):
+        _show_session_by_index(console, [s], 1)
+
+    output = capture.get().lower()
+    assert "no longer available" in output
+    assert "permission denied" in output
+
+
+def test_build_session_index_duplicate_ids() -> None:
+    """Duplicate session_id: last occurrence wins in the index."""
+    from copilot_usage.models import SessionSummary
+
+    sessions = [
+        SessionSummary(session_id="dup-id", is_active=False),
+        SessionSummary(session_id="unique-id", is_active=False),
+        SessionSummary(session_id="dup-id", is_active=True),
+    ]
+    index = _build_session_index(sessions)
+    assert index["dup-id"] == 2
+    assert index["unique-id"] == 1
