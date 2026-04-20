@@ -1,0 +1,17 @@
+# Code owners for sensitive paths.
+# Requires matching "Require review from Code Owners" in branch protection.
+# See: https://docs.github.com/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+# Catch-all fallback
+*                           @microsasa
+
+# CI, agent workflows, and action pinning — any change is security-sensitive
+/.github/                   @microsasa
+/.github/workflows/         @microsasa
+/.github/aw/                @microsasa
+/.github/dependabot.yml     @microsasa
+/.github/CODEOWNERS         @microsasa
+
+# Dependency manifests — lockfile tampering or dep confusion risk
+/pyproject.toml             @microsasa
+/uv.lock                    @microsasa
