@@ -1,9 +1,10 @@
 # Code owners for sensitive paths.
 # Requires matching "Require review from Code Owners" in branch protection.
 # See: https://docs.github.com/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
-
-# Catch-all fallback
-*                           @microsasa
+#
+# No catch-all — we intentionally scope codeowner review to security-sensitive
+# paths only, so autonomous pipeline PRs touching src/, tests/, docs/ etc.
+# are not gated.
 
 # CI, agent workflows, and action pinning — any change is security-sensitive
 /.github/                   @microsasa
