@@ -36,7 +36,7 @@ class TestFormattingModuleImport:
                     "-c",
                     "import copilot_usage.report; "
                     "import copilot_usage.render_detail; "
-                    "assert callable(copilot_usage.report.format_tokens); "
+                    "assert callable(copilot_usage.report.render_summary); "
                     "assert callable(copilot_usage.render_detail.render_session_detail)",
                 ],
                 capture_output=True,
@@ -54,10 +54,10 @@ class TestFormattingModuleImport:
     def test_import_render_detail_then_report(self) -> None:
         """Importing render_detail before report must not raise."""
         from copilot_usage.render_detail import render_session_detail
-        from copilot_usage.report import format_tokens
+        from copilot_usage.report import render_summary
 
         assert callable(render_session_detail)
-        assert callable(format_tokens)
+        assert callable(render_summary)
 
     def test_import_formatting_in_subprocess(self) -> None:
         """Importing _formatting in a fresh interpreter confirms no cycle."""
@@ -89,7 +89,7 @@ class TestFormattingModuleImport:
                     "-c",
                     "import copilot_usage.render_detail; "
                     "import copilot_usage.report; "
-                    "assert callable(copilot_usage.report.format_tokens); "
+                    "assert callable(copilot_usage.report.render_summary); "
                     "assert callable(copilot_usage.render_detail.render_session_detail)",
                 ],
                 capture_output=True,
