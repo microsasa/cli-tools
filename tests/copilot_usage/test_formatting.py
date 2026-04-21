@@ -53,8 +53,8 @@ class TestFormattingModuleImport:
 
     def test_import_render_detail_then_report(self) -> None:
         """Importing render_detail before report must not raise."""
+        from copilot_usage._formatting import format_tokens
         from copilot_usage.render_detail import render_session_detail
-        from copilot_usage.report import format_tokens
 
         assert callable(render_session_detail)
         assert callable(format_tokens)
