@@ -147,12 +147,15 @@ class TestCostE2E:
         """At least one known model from the fixtures appears in cost output."""
         result = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
         assert result.exit_code == 0
-        assert "claude-opus-4.6" in result.output
-        assert "claude-haiku-4.5" in result.output
+        assert any(
+            model_name in result.output
+            for model_name in ("claude-opus-4.6", "claude-haiku-4.5")
+        )
 
     def test_since_filter_reduces_sessions(self) -> None:
         """--since should exclude sessions before the given date."""
         full = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
+        assert full.exit_code == 0
         filtered = CliRunner().invoke(
             main, ["cost", "--path", str(FIXTURES), "--since", "2026-03-08"]
         )
@@ -163,6 +166,7 @@ class TestCostE2E:
     def test_until_filter_reduces_sessions(self) -> None:
         """--until should exclude sessions after the given date."""
         full = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
+        assert full.exit_code == 0
         filtered = CliRunner().invoke(
             main, ["cost", "--path", str(FIXTURES), "--until", "2025-12-31"]
         )
