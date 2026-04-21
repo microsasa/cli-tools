@@ -14,7 +14,7 @@ from functools import lru_cache
 from typing import Final
 
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 __all__: Final[list[str]] = [
     "ModelPricing",
@@ -45,6 +45,8 @@ class PricingTier(StrEnum):
 
 class ModelPricing(BaseModel):
     """Pricing metadata for a single AI model."""
+
+    model_config = ConfigDict(frozen=True)
 
     model_name: str
     multiplier: float = 1.0

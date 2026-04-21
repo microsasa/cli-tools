@@ -6,6 +6,7 @@ from functools import lru_cache
 
 import pytest
 from loguru import logger
+from pydantic import ValidationError
 
 from copilot_usage import pricing
 from copilot_usage.pricing import (
@@ -40,6 +41,24 @@ class TestModelPricing:
         assert p.model_name == "opus"
         assert p.multiplier == 50.0
         assert p.tier == PricingTier.PREMIUM
+
+    def test_model_pricing_is_immutable(self) -> None:
+        """Assigning to a field on a frozen ModelPricing must raise ValidationError."""
+        p = ModelPricing(model_name="test", multiplier=1.0)
+        with pytest.raises(ValidationError):
+            p.multiplier = 2.0
+
+    def test_cache_isolation_via_frozen_model(self) -> None:
+        """Exact-match lookup returns a frozen object — mutation is impossible,
+        so the cache and KNOWN_PRICING registry cannot be corrupted."""
+        first = lookup_model_pricing("claude-sonnet-4.6")
+        assert first.multiplier == 1.0
+
+        with pytest.raises(ValidationError):
+            first.multiplier = 99.0
+
+        second = lookup_model_pricing("claude-sonnet-4.6")
+        assert second.multiplier == 1.0
 
 
 # ---------------------------------------------------------------------------
