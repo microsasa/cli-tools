@@ -3019,6 +3019,24 @@ class TestNormalizeUntil:
         assert result.tzinfo is not None
         assert result.hour == 23
 
+    def test_non_midnight_with_no_explicit_time_expanded(self) -> None:
+        """Regression for issue #1026: expansion depends solely on has_explicit_time.
+
+        Constructs a _ParsedDateArg with has_explicit_time=False but a
+        non-midnight time component.  Before the fix, the redundant
+        ``aware.time() == dt_time(0, 0, 0)`` guard prevented expansion.
+        """
+        arg = _ParsedDateArg(
+            value=datetime(2025, 1, 15, 12, 30, 0, tzinfo=UTC),
+            has_explicit_time=False,
+        )
+        result = _normalize_until(arg)
+        assert result is not None
+        assert result.hour == 23
+        assert result.minute == 59
+        assert result.second == 59
+        assert result.microsecond == 999999
+
 
 class TestNormalizeUntilNonUtcTimezone:
     """_normalize_until preserves non-UTC timezone offsets when expanding date-only."""
