@@ -9,7 +9,7 @@ import select
 import sys
 import threading
 from dataclasses import dataclass
-from datetime import datetime, time as dt_time
+from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal
 
@@ -126,7 +126,7 @@ def _normalize_until(arg: _ParsedDateArg | None) -> datetime | None:
     if arg is None:
         return None
     aware = ensure_aware(arg.value)
-    if not arg.has_explicit_time and aware.time() == dt_time(0, 0, 0):
+    if not arg.has_explicit_time:
         return aware.replace(hour=23, minute=59, second=59, microsecond=999999)
     return aware
 
