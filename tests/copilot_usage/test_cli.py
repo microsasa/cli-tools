@@ -3919,9 +3919,12 @@ def test_build_session_index_duplicate_ids() -> None:
 class TestSingleConsolePerCommand:
     """Each non-interactive command should construct exactly one Console.
 
-    Verifies the fix for issue #1045 by spying on ``copilot_usage.cli.Console``
-    construction during a command invocation and asserting the command reuses
-    that single Console for both the version header and the report body.
+    Verifies the fix for issue #1045 by patching ``Console`` in the CLI
+    module **and** every renderer module (``report``, ``render_detail``,
+    ``interactive``, ``vscode_report``).  If any renderer falls back to
+    creating its own ``Console()`` (because ``target_console`` was not
+    forwarded), the spy will record a second construction and the
+    ``len(created_consoles) == 1`` assertion will fail.
     """
 
     def _invoke_and_capture_consoles(
@@ -3929,8 +3932,17 @@ class TestSingleConsolePerCommand:
         monkeypatch: pytest.MonkeyPatch,
         args: list[str],
     ) -> tuple[Any, list[Console]]:
-        """Invoke a CLI command and record every Console created by the CLI module."""
+        """Invoke a CLI command and record every ``Console`` created.
+
+        Patches ``Console`` in the CLI module and all renderer modules so
+        that a fallback ``target_console or Console()`` in any renderer is
+        caught as a second construction.
+        """
         import copilot_usage.cli as cli_module
+        import copilot_usage.interactive as interactive_module
+        import copilot_usage.render_detail as render_detail_module
+        import copilot_usage.report as report_module
+        import copilot_usage.vscode_report as vscode_report_module
 
         created_consoles: list[Console] = []
         original_console = cli_module.Console
@@ -3941,6 +3953,10 @@ class TestSingleConsolePerCommand:
             return console
 
         monkeypatch.setattr(cli_module, "Console", recording_console)
+        monkeypatch.setattr(interactive_module, "Console", recording_console)
+        monkeypatch.setattr(report_module, "Console", recording_console)
+        monkeypatch.setattr(render_detail_module, "Console", recording_console)
+        monkeypatch.setattr(vscode_report_module, "Console", recording_console)
         runner = CliRunner()
         result = runner.invoke(main, args)
         assert result.exit_code == 0
