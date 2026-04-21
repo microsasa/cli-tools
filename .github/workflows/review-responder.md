@@ -44,7 +44,9 @@ safe-outputs:
     max: 10
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
-    target: "*"
+    allowed: [aw-review-response-attempted]
+    target: "${{ inputs.pr_number }}"
+    max: 1
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
 ---
