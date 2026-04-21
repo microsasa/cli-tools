@@ -15,7 +15,9 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from copilot_usage._formatting import (
+    format_duration,
     format_timedelta,
+    format_tokens,
     hms,
 )
 from copilot_usage.models import (
@@ -59,8 +61,6 @@ from copilot_usage.report import (
     _format_session_running_time,
     _render_model_table,
     _render_session_table,
-    format_duration,
-    format_tokens,
     render_cost_view,
     render_full_summary,
     render_live_sessions,
