@@ -247,7 +247,6 @@ jobs:
             [ -z "$CI_CONCLUSION" ] && CI_CONCLUSION="NO_CI_RESULT"
 
             HAS_CI_FIX_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-ci-fix-attempted") then "yes" else "" end')
-            HAS_RESPONSE_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-review-response-attempted") then "yes" else "" end')
 
             echo "  Branch: $BRANCH | CI: $CI_CONCLUSION"
 
@@ -360,25 +359,51 @@ jobs:
                 continue
               fi
 
-              if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
-                # Count review-response-N labels for round tracking
-                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
+              # Dispatch cap (issue #1036): count past rounds via
+              # orchestrator-applied numeric labels. Trust model: these
+              # labels live in PR metadata, which only repo collaborators
+              # with triage/write can modify. On microsasa/cli-tools this
+              # is the sole owner. If outside collaborators are ever
+              # granted triage rights, revisit — the counter becomes
+              # forgeable and the cap can be bypassed or weaponized.
+              ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
 
-                if [[ "$ROUND" -ge 3 ]]; then
-                  echo "  ❌ PR #${PR}: Responder hit 3 rounds. Marking stuck."
-                  gh pr edit "$PR" --add-label "aw-pr-stuck:review"
-                  gh pr comment "$PR" --body "❌ Pipeline orchestrator: review-response loop reached 3 rounds. Marking as stuck for human review."
-                else
-                  NEXT_ROUND=$((ROUND + 1))
-                  echo "  🔄 PR #${PR}: Removing response label, enabling round ${NEXT_ROUND}."
-                  gh pr edit "$PR" --remove-label "aw-review-response-attempted"
-                  gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"
-                  echo "  📤 Dispatching responder for PR #${PR}."
-                  gh workflow run review-responder.lock.yml -f pr_number="$PR"
+              if [[ "$ROUND" -ge 5 ]]; then
+                echo "  ❌ PR #${PR}: Responder hit 5 rounds. Marking stuck."
+                gh pr edit "$PR" --add-label "aw-pr-stuck:review"
+                gh pr comment "$PR" --body "❌ Pipeline orchestrator: review-response loop reached 5 rounds. Marking as stuck for human review."
+                echo "::endgroup::"
+                continue
+              fi
+
+              NEXT_ROUND=$((ROUND + 1))
+              echo "  🔄 PR #${PR}: Recording round ${NEXT_ROUND}/5 and dispatching responder."
+
+              # Clean up the responder's self-stop label from the prior round
+              # so the just-dispatched responder doesn't bail on its own
+              # step-1 check. Only attempt removal if the label is actually
+              # present — this distinguishes the benign case from real
+              # failures (auth, rate limit, 404) which we must not silently
+              # swallow (see issue #1036 lessons).
+              if echo "$LABELS" | jq -e 'any(. == "aw-review-response-attempted")' > /dev/null; then
+                if ! gh pr edit "$PR" --remove-label "aw-review-response-attempted"; then
+                  echo "  ⚠️  PR #${PR}: Failed to remove stale aw-review-response-attempted. Bailing this tick; cron will retry."
+                  echo "::endgroup::"
+                  continue
                 fi
-              else
-                echo "  📤 PR #${PR}: $UNADDRESSED_COUNT unaddressed threads. Dispatching responder."
-                gh workflow run review-responder.lock.yml -f pr_number="$PR"
+              fi
+
+              # Record the round BEFORE dispatching. If this fails, do not
+              # dispatch — otherwise the responder runs without the cap
+              # advancing, reproducing the original loop.
+              if ! gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"; then
+                echo "  ⚠️  PR #${PR}: Failed to add aw-review-response-${NEXT_ROUND}. Not dispatching; cron will retry."
+                echo "::endgroup::"
+                continue
+              fi
+
+              if ! gh workflow run review-responder.lock.yml -f pr_number="$PR"; then
+                echo "  ⚠️  PR #${PR}: Failed to dispatch review-responder. Round label was recorded; cron will retry."
               fi
               echo "::endgroup::"
               continue

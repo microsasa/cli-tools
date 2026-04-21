@@ -77,6 +77,53 @@ Standards for all contributors — human and AI — to the `copilot-usage` CLI.
   `KeyboardInterrupt` is handled separately.
 - Prefer early returns to reduce nesting.
 
+## Concurrency and I/O State
+
+### No Shared Mutable I/O State Across Calls
+
+- **Queues, daemon threads, file handles, sockets, and other I/O resources
+  must not outlive the function call that uses them.** Declare them as
+  locals (or instance attributes of a per-call object), and tear them down
+  in a `finally` block.
+- **No module-level lazy singletons for I/O readers** (e.g.
+  `_stdin_queue: Queue | None = None; if _stdin_queue is None: _stdin_queue = _start_thread()`).
+  Two consecutive calls to the same public entry point must not share any
+  queue, thread, or event — otherwise the second call sees stale state
+  from the first.
+- **No `ClassVar` queues/threads/events** on classes that are used as
+  singletons or reused across calls. Same failure mode as module-level
+  state.
+- The litmus test: *if two calls to the public entry point happen in the
+  same process, do they share any I/O handle, queue, or daemon thread?*
+  If yes, the design is wrong.
+
+### Why
+
+Python daemon threads blocked in `sys.stdin.readline()` or `input()`
+cannot be cleanly interrupted. If test 1 populates a shared queue with
+an EOF sentinel and its reader thread exits, test 2 sees the stale
+sentinel, and test 3 blocks on a dead reader forever — CI hits the 6 h
+runner timeout. This is not hypothetical: it is the canonical failure
+mode of PR #1015 / issue #1012.
+
+### Preferred Pattern
+
+```python
+def _interactive_loop() -> None:
+    reader: _Reader | None = None
+    try:
+        # ... loop body ...
+        if need_fallback:
+            reader = _start_reader()
+    finally:
+        if reader is not None:
+            reader.stop()
+```
+
+If cross-call reuse is genuinely required, pass the resource in as a
+parameter (explicit dependency injection) — never rely on a module-
+level default.
+
 ## Logging
 
 - Use **loguru**, not stdlib `logging`.
