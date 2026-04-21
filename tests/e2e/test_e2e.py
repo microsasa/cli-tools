@@ -143,6 +143,38 @@ class TestCostE2E:
         assert "empty-sess" in result.output
         assert "—" in result.output
 
+    def test_model_names_in_output(self) -> None:
+        """At least one known model from the fixtures appears in cost output."""
+        result = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
+        assert result.exit_code == 0
+        assert "claude-opus-4.6" in result.output
+        assert "claude-haiku-4.5" in result.output
+
+    def test_since_filter_reduces_sessions(self) -> None:
+        """--since should exclude sessions before the given date."""
+        full = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
+        filtered = CliRunner().invoke(
+            main, ["cost", "--path", str(FIXTURES), "--since", "2026-03-08"]
+        )
+        assert filtered.exit_code == 0
+        # Filtered output should be shorter — fewer rows or lower totals
+        assert len(filtered.output) < len(full.output)
+
+    def test_until_filter_reduces_sessions(self) -> None:
+        """--until should exclude sessions after the given date."""
+        full = CliRunner().invoke(main, ["cost", "--path", str(FIXTURES)])
+        filtered = CliRunner().invoke(
+            main, ["cost", "--path", str(FIXTURES), "--until", "2025-12-31"]
+        )
+        assert filtered.exit_code == 0
+        assert len(filtered.output) < len(full.output)
+
+    def test_empty_path_shows_no_sessions(self, tmp_path: Path) -> None:
+        """An empty directory produces 'No sessions found'."""
+        result = CliRunner().invoke(main, ["cost", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No sessions found" in result.output
+
 
 # ---------------------------------------------------------------------------
 # resumed session
@@ -190,6 +222,12 @@ class TestLiveE2E:
         assert result.exit_code == 0
         assert "0faecbdf" not in result.output
         assert "b5df8a34" not in result.output
+
+    def test_empty_path_shows_no_active(self, tmp_path: Path) -> None:
+        """An empty directory reports no active sessions."""
+        result = CliRunner().invoke(main, ["live", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No active Copilot sessions found" in result.output
 
 
 # ---------------------------------------------------------------------------
