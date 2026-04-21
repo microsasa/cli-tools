@@ -28,13 +28,13 @@ from copilot_usage.cli import (
     _ParsedDateArg,
     _print_version_header,
     _read_line_nonblocking,
-    _render_session_list,
     _show_session_by_index,
     _start_observer,
     _stop_observer,
     _validate_since_until,
     main,
 )
+from copilot_usage.interactive import render_session_list as _render_session_list
 from copilot_usage.models import ensure_aware_opt
 
 # ---------------------------------------------------------------------------
@@ -887,8 +887,8 @@ class TestFileChangeHandler:
 
     def test_dispatch_sets_event_on_first_call(self) -> None:
         """First dispatch call within a cold window sets the change_event."""
-        from copilot_usage.cli import (
-            _FileChangeHandler,
+        from copilot_usage.interactive import (
+            FileChangeHandler as _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -900,8 +900,8 @@ class TestFileChangeHandler:
         """Second dispatch call within 2 s is suppressed (debounce)."""
         import time as _time
 
-        from copilot_usage.cli import (
-            _FileChangeHandler,
+        from copilot_usage.interactive import (
+            FileChangeHandler as _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -919,8 +919,8 @@ class TestFileChangeHandler:
         """Dispatch fires again after > 2 s gap."""
         import time as _time
 
-        from copilot_usage.cli import (
-            _FileChangeHandler,
+        from copilot_usage.interactive import (
+            FileChangeHandler as _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -936,8 +936,8 @@ class TestFileChangeHandler:
 
     def test_dispatch_interface(self) -> None:
         """_FileChangeHandler provides a dispatch(event) interface compatible with watchdog handlers."""
-        from copilot_usage.cli import (
-            _FileChangeHandler,
+        from copilot_usage.interactive import (
+            FileChangeHandler as _FileChangeHandler,
         )
 
         event = threading.Event()
@@ -957,8 +957,8 @@ class TestFileChangeHandler:
         """
         import time as _time
 
-        from copilot_usage.cli import (
-            _FileChangeHandler,
+        from copilot_usage.interactive import (
+            FileChangeHandler as _FileChangeHandler,
         )
 
         event = threading.Event()

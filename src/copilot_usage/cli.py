@@ -19,13 +19,9 @@ from rich.console import Console
 
 from copilot_usage import __version__
 from copilot_usage.interactive import (
-    FileChangeEventHandler as _FileChangeEventHandler,  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    FileChangeHandler as _FileChangeHandler,  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    Stoppable as _Stoppable,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     build_session_index as _build_session_index,
     draw_home as _draw_home,
     print_version_header as _print_version_header,
-    render_session_list as _render_session_list,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     start_observer as _start_observer,
     stop_observer as _stop_observer,
     write_prompt as _write_prompt,
@@ -110,9 +106,6 @@ class _DateTimeOrDate(click.ParamType):
             except ValueError:
                 continue
         return None
-
-
-console: Final[Console] = Console()
 
 
 def _normalize_until(arg: _ParsedDateArg | None) -> datetime | None:
