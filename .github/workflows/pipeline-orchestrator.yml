@@ -360,26 +360,27 @@ jobs:
                 continue
               fi
 
-              if [[ -n "$HAS_RESPONSE_LABEL" ]]; then
-                # Count review-response-N labels for round tracking
-                ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
+              # Belt-and-suspenders dispatch cap (issue #1036): count past
+              # rounds via orchestrator-applied numeric labels regardless of
+              # whether the responder itself successfully applied
+              # aw-review-response-attempted (the responder's add_labels call
+              # has been known to silently fail). Cap at 5 rounds.
+              ROUND=$(echo "$LABELS" | jq -r '[.[] | select(test("^aw-review-response-[0-9]+$"))] | length')
 
-                if [[ "$ROUND" -ge 3 ]]; then
-                  echo "  ❌ PR #${PR}: Responder hit 3 rounds. Marking stuck."
-                  gh pr edit "$PR" --add-label "aw-pr-stuck:review"
-                  gh pr comment "$PR" --body "❌ Pipeline orchestrator: review-response loop reached 3 rounds. Marking as stuck for human review."
-                else
-                  NEXT_ROUND=$((ROUND + 1))
-                  echo "  🔄 PR #${PR}: Removing response label, enabling round ${NEXT_ROUND}."
-                  gh pr edit "$PR" --remove-label "aw-review-response-attempted"
-                  gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"
-                  echo "  📤 Dispatching responder for PR #${PR}."
-                  gh workflow run review-responder.lock.yml -f pr_number="$PR"
-                fi
-              else
-                echo "  📤 PR #${PR}: $UNADDRESSED_COUNT unaddressed threads. Dispatching responder."
-                gh workflow run review-responder.lock.yml -f pr_number="$PR"
+              if [[ "$ROUND" -ge 5 ]]; then
+                echo "  ❌ PR #${PR}: Responder hit 5 rounds. Marking stuck."
+                gh pr edit "$PR" --add-label "aw-pr-stuck:review"
+                gh pr comment "$PR" --body "❌ Pipeline orchestrator: review-response loop reached 5 rounds. Marking as stuck for human review."
+                echo "::endgroup::"
+                continue
               fi
+
+              NEXT_ROUND=$((ROUND + 1))
+              echo "  🔄 PR #${PR}: Recording round ${NEXT_ROUND}/5 and dispatching responder."
+              # Best-effort: remove stale per-round attempted label if present.
+              gh pr edit "$PR" --remove-label "aw-review-response-attempted" 2>/dev/null || true
+              gh pr edit "$PR" --add-label "aw-review-response-${NEXT_ROUND}"
+              gh workflow run review-responder.lock.yml -f pr_number="$PR"
               echo "::endgroup::"
               continue
             fi

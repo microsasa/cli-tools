@@ -44,6 +44,7 @@ safe-outputs:
     max: 10
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
   add-labels:
+    target: "*"
     github-token: ${{ secrets.GH_AW_WRITE_TOKEN }}
 
 ---
