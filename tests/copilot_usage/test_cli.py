@@ -3917,69 +3917,121 @@ def test_build_session_index_duplicate_ids() -> None:
 
 
 class TestSingleConsolePerCommand:
-    """Each non-interactive command writes version header and report body to one Console.
+    """Each non-interactive command should construct exactly one Console.
 
-    Verifies the fix for issue #1045: both the version header text (e.g.
-    "Copilot Usage") and the command-specific report body appear in the
-    same captured output, proving a single Console instance is used.
+    Verifies the fix for issue #1045 by spying on ``copilot_usage.cli.Console``
+    construction during a command invocation and asserting the command reuses
+    that single Console for both the version header and the report body.
     """
 
-    def test_summary_header_and_body_same_console(self, tmp_path: Path) -> None:
-        """summary command: header and body appear in the same output."""
-        _write_session(tmp_path, "aaaa1111-0000-0000-0000-000000000000", name="First")
+    def _invoke_and_capture_consoles(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+    ) -> tuple[Any, list[Console]]:
+        """Invoke a CLI command and record every Console created by the CLI module."""
+        import copilot_usage.cli as cli_module
+
+        created_consoles: list[Console] = []
+        original_console = cli_module.Console
+
+        def recording_console(*a: Any, **kw: Any) -> Console:
+            console = original_console(*a, **kw)
+            created_consoles.append(console)
+            return console
+
+        monkeypatch.setattr(cli_module, "Console", recording_console)
         runner = CliRunner()
-        result = runner.invoke(main, ["summary", "--path", str(tmp_path)])
+        result = runner.invoke(main, args)
         assert result.exit_code == 0
+        assert len(created_consoles) == 1
+        return result, created_consoles
+
+    def test_summary_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """summary command: one Console renders both header and body."""
+        _write_session(tmp_path, "aaaa1111-0000-0000-0000-000000000000", name="First")
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["summary", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
         output = _strip_ansi(result.output)
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
         # Report body content from render_summary
         assert "First" in output or "Summary" in output
 
-    def test_session_header_and_body_same_console(self, tmp_path: Path) -> None:
-        """session command: header and body appear in the same output."""
+    def test_session_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """session command: one Console renders both header and body."""
         _write_session(tmp_path, "bbbb2222-0000-0000-0000-000000000000", name="Detail")
-        runner = CliRunner()
-        result = runner.invoke(main, ["session", "bbbb2222", "--path", str(tmp_path)])
-        assert result.exit_code == 0
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["session", "bbbb2222", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
         output = _strip_ansi(result.output)
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
         assert "Session Detail" in output
 
-    def test_cost_header_and_body_same_console(self, tmp_path: Path) -> None:
-        """cost command: header and body appear in the same output."""
+    def test_cost_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """cost command: one Console renders both header and body."""
         _write_session(
             tmp_path,
             "cccc3333-0000-0000-0000-000000000000",
             name="Cost Test",
             premium=5,
         )
-        runner = CliRunner()
-        result = runner.invoke(main, ["cost", "--path", str(tmp_path)])
-        assert result.exit_code == 0
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["cost", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
         output = _strip_ansi(result.output)
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
         assert "Cost" in output or "Total" in output
 
-    def test_live_header_and_body_same_console(self, tmp_path: Path) -> None:
-        """live command: header and body appear in the same output."""
+    def test_live_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """live command: one Console renders both header and body."""
         _write_session(
             tmp_path,
             "dddd4444-0000-0000-0000-000000000000",
             name="Active",
             active=True,
         )
-        runner = CliRunner()
-        result = runner.invoke(main, ["live", "--path", str(tmp_path)])
-        assert result.exit_code == 0
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["live", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
         output = _strip_ansi(result.output)
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
+        assert "Active Copilot Sessions" in output or "Active" in output
 
-    def test_vscode_header_and_body_same_console(self, tmp_path: Path) -> None:
-        """vscode command: header and body appear in the same output."""
+    def test_vscode_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """vscode command: one Console renders both header and body."""
         log_dir = tmp_path / "session_1" / "window1" / "exthost" / "GitHub.copilot-chat"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "GitHub Copilot Chat.log"
@@ -3987,9 +4039,11 @@ class TestSingleConsolePerCommand:
             "2026-03-15 10:00:00.123 [info] ccreq:abc.copilotmd | success | "
             "claude-sonnet-4 | 500ms | [chat]\n",
         )
-        runner = CliRunner()
-        result = runner.invoke(main, ["vscode", "--vscode-logs", str(tmp_path)])
-        assert result.exit_code == 0
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["vscode", "--vscode-logs", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
         output = _strip_ansi(result.output)
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
