@@ -41,14 +41,6 @@ from copilot_usage.models import ensure_aware_opt
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _reset_stdin_reader_state() -> None:
-    """Reset _read_line_nonblocking's threaded-fallback state between tests."""
-    import copilot_usage.cli as cli_mod
-
-    cli_mod._stdin_reader_queue = None
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

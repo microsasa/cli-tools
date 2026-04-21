@@ -187,35 +187,6 @@ def _show_session_by_index(
 
 _FALLBACK_EOF: Final[str] = "\x00__EOF__"
 
-# Module-level state for _read_line_nonblocking's threaded fallback.
-# Set once on the first OSError/ValueError, then reused for all subsequent calls.
-_stdin_reader_queue: queue.SimpleQueue[str] | None = None
-
-
-def _start_stdin_reader_thread() -> queue.SimpleQueue[str]:
-    """Start a daemon thread reading stdin lines into a :class:`~queue.SimpleQueue`.
-
-    Used as a non-blocking alternative to ``select.select`` on platforms
-    where stdin is not selectable (e.g. Windows).  The thread calls
-    ``sys.stdin.readline()`` in a blocking loop; an empty string (EOF)
-    is forwarded as-is so the caller can detect closure.
-    """
-    q: queue.SimpleQueue[str] = queue.SimpleQueue()
-
-    def _reader() -> None:
-        try:
-            while True:
-                line = sys.stdin.readline()
-                q.put(line)
-                if not line:
-                    break
-        except (ValueError, OSError):
-            q.put("")
-
-    thread = threading.Thread(target=_reader, daemon=True, name="stdin-reader")
-    thread.start()
-    return q
-
 
 def _start_input_reader_thread() -> queue.SimpleQueue[str]:
     """Start a daemon thread reading user input via ``input()`` into a queue.
@@ -250,37 +221,21 @@ def _start_input_reader_thread() -> queue.SimpleQueue[str]:
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     """Return a line from stdin if available within *timeout*, else ``None``.
 
-    Uses ``select.select`` when stdin supports it (Unix).  On the first
-    ``OSError`` or ``ValueError`` (e.g. Windows, or a detached stdin
-    buffer), permanently switches to a daemon-thread reader backed by a
-    :class:`~queue.SimpleQueue`, preserving non-blocking semantics so that
-    the caller's event loop remains responsive.
+    Uses ``select.select`` to poll stdin.  Raises :class:`ValueError` or
+    :class:`OSError` when stdin is not selectable (e.g. Windows, or a
+    detached stdin buffer in tests); callers should fall back to a threaded
+    reader in that case.
 
     Raises :class:`EOFError` when stdin is closed (``readline()`` returns
     an empty string), preventing an infinite polling loop.
     """
-    global _stdin_reader_queue  # noqa: PLW0603
-
-    if _stdin_reader_queue is None:
-        try:
-            ready, _, _ = select.select([sys.stdin], [], [], timeout)
-        except (ValueError, OSError):
-            _stdin_reader_queue = _start_stdin_reader_thread()
-        else:
-            if ready:
-                line = sys.stdin.readline()
-                if not line:
-                    raise EOFError("stdin closed")
-                return line.strip()
-            return None
-
-    try:
-        line = _stdin_reader_queue.get(timeout=timeout)
-    except queue.Empty:
-        return None
-    if not line:
-        raise EOFError("stdin closed")
-    return line.strip()
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if ready:
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError("stdin closed")
+        return line.strip()
+    return None
 
 
 def _interactive_loop(path: Path | None) -> None:
