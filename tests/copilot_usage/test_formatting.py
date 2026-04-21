@@ -55,9 +55,11 @@ class TestFormattingModuleImport:
         """Importing render_detail before report must not raise."""
         from copilot_usage._formatting import format_tokens
         from copilot_usage.render_detail import render_session_detail
+        from copilot_usage.report import format_tokens as report_format_tokens
 
         assert callable(render_session_detail)
         assert callable(format_tokens)
+        assert report_format_tokens is format_tokens
 
     def test_import_formatting_in_subprocess(self) -> None:
         """Importing _formatting in a fresh interpreter confirms no cycle."""
