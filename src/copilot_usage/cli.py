@@ -439,13 +439,14 @@ def summary(
     """Show usage summary across all sessions."""
     path = path or ctx.obj.get("path")
     aware_since, aware_until = _validate_since_until(since, until)
-    _print_version_header()
+    c = Console()
+    _print_version_header(target=c)
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
-    render_summary(sessions, since=aware_since, until=aware_until)
+    render_summary(sessions, since=aware_since, until=aware_until, target_console=c)
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +469,8 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
         click.echo("Error: session ID cannot be empty.", err=True)
         sys.exit(1)
 
-    _print_version_header()
+    c = Console()
+    _print_version_header(target=c)
     path = path or ctx.obj.get("path")
     try:
         all_sessions = get_all_sessions(path)
@@ -502,7 +504,7 @@ def session(ctx: click.Context, session_id: str, path: Path | None) -> None:
         click.echo(f"Error reading session: {exc}", err=True)
         sys.exit(1)
 
-    render_session_detail(events, matched)
+    render_session_detail(events, matched, target_console=c)
 
 
 # ---------------------------------------------------------------------------
@@ -539,14 +541,15 @@ def cost(
     """Show premium request costs from shutdown data."""
     path = path or ctx.obj.get("path")
     aware_since, aware_until = _validate_since_until(since, until)
-    _print_version_header()
+    c = Console()
+    _print_version_header(target=c)
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
 
-    render_cost_view(sessions, since=aware_since, until=aware_until)
+    render_cost_view(sessions, since=aware_since, until=aware_until, target_console=c)
 
 
 # ---------------------------------------------------------------------------
@@ -564,14 +567,15 @@ def cost(
 @click.pass_context
 def live(ctx: click.Context, path: Path | None) -> None:
     """Show usage for active sessions."""
-    _print_version_header()
+    c = Console()
+    _print_version_header(target=c)
     path = path or ctx.obj.get("path")
     try:
         sessions = get_all_sessions(path)
     except OSError as exc:
         click.echo(f"Error reading sessions: {exc}", err=True)
         sys.exit(1)
-    render_live_sessions(sessions)
+    render_live_sessions(sessions, target_console=c)
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +595,8 @@ def vscode(vscode_logs: Path | None) -> None:
     from copilot_usage.vscode_parser import get_vscode_summary
     from copilot_usage.vscode_report import render_vscode_summary
 
-    _print_version_header()
+    c = Console()
+    _print_version_header(target=c)
     summary = get_vscode_summary(vscode_logs)
     if summary.total_requests == 0:
         if summary.log_files_found > 0 and summary.log_files_parsed == 0:
@@ -599,4 +604,4 @@ def vscode(vscode_logs: Path | None) -> None:
         else:
             click.echo("No VS Code Copilot Chat requests found.", err=True)
         sys.exit(1)
-    render_vscode_summary(summary)
+    render_vscode_summary(summary, target_console=c)

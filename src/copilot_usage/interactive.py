@@ -40,12 +40,10 @@ WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
 )
 
-console: Final[Console] = Console()
 
-
-def print_version_header(target: Console | None = None) -> None:
+def print_version_header(target: Console) -> None:
     """Print 'Copilot Usage' left-aligned with version right-aligned."""
-    c = target or console
+    c = target
     title = "Copilot Usage"
     version_text = f"v{__version__}"
     header = Text()
