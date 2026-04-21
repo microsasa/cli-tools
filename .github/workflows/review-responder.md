@@ -16,8 +16,7 @@ imports:
   - shared/fetch-review-comments.md
 
 checkout:
-  fetch: ["*"]
-  fetch-depth: 0
+  fetch-depth: 1
 
 engine:
   id: copilot
