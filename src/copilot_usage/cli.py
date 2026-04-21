@@ -4,6 +4,7 @@ Provides ``summary``, ``session``, ``cost``, ``live``, and ``vscode`` commands,
 plus an interactive Rich-based session when invoked without a subcommand.
 """
 
+import queue
 import select
 import sys
 import threading
@@ -184,8 +185,46 @@ def _show_session_by_index(
     render_session_detail(events, s, target_console=console)
 
 
+_FALLBACK_EOF: Final[str] = "\x00__EOF__"
+
+
+def _start_input_reader_thread() -> queue.SimpleQueue[str]:
+    """Start a daemon thread reading user input via ``input()`` into a queue.
+
+    Used by ``_interactive_loop`` as a fallback when
+    ``_read_line_nonblocking`` raises ``ValueError``/``OSError`` (e.g.
+    stdin is not selectable on Windows, or a detached stdin buffer in
+    tests).  Puts :data:`_FALLBACK_EOF` on the queue when stdin is
+    exhausted or an unrecoverable error occurs (see issue #1012).
+    """
+    q: queue.SimpleQueue[str] = queue.SimpleQueue()
+
+    def _reader() -> None:
+        while True:
+            try:
+                q.put(input().strip())
+            except (EOFError, KeyboardInterrupt):
+                q.put(_FALLBACK_EOF)
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Unexpected stdin error in fallback reader thread: {}", exc
+                )
+                q.put(_FALLBACK_EOF)
+                break
+
+    thread = threading.Thread(target=_reader, daemon=True, name="input-fallback")
+    thread.start()
+    return q
+
+
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
-    """Return a line from stdin if available within *timeout*, else None.
+    """Return a line from stdin if available within *timeout*, else ``None``.
+
+    Uses ``select.select`` to poll stdin.  Raises :class:`ValueError` or
+    :class:`OSError` when stdin is not selectable (e.g. Windows, or a
+    detached stdin buffer in tests); callers should fall back to a threaded
+    reader in that case.
 
     Raises :class:`EOFError` when stdin is closed (``readline()`` returns
     an empty string), preventing an infinite polling loop.
@@ -193,7 +232,7 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     ready, _, _ = select.select([sys.stdin], [], [], timeout)
     if ready:
         line = sys.stdin.readline()
-        if not line:  # empty string means EOF
+        if not line:
             raise EOFError("stdin closed")
         return line.strip()
     return None
@@ -212,6 +251,12 @@ def _interactive_loop(path: Path | None) -> None:
 
     view: _View = "home"
     detail_session_id: str | None = None
+
+    # Threaded fallback queue for non-blocking reads when
+    # _read_line_nonblocking raises ValueError/OSError (e.g. monkeypatched
+    # in tests, or an unexpected runtime error).  Initialised lazily on the
+    # first error so auto-refresh via change_event keeps working.
+    fallback_queue: queue.SimpleQueue[str] | None = None
 
     sessions = get_all_sessions(path)
     session_index = _build_session_index(sessions)
@@ -268,21 +313,24 @@ def _interactive_loop(path: Path | None) -> None:
                         )
 
             # Non-blocking stdin read
-            try:
-                line = _read_line_nonblocking(timeout=0.5)
-            except EOFError:
-                break
-            except (ValueError, OSError):
-                # stdin not selectable (e.g. testing) — fall back to blocking
+            if fallback_queue is not None:
                 try:
-                    line = input().strip()
-                except (EOFError, KeyboardInterrupt):
+                    line = fallback_queue.get(timeout=0.5)
+                except queue.Empty:
+                    line = None
+                else:
+                    if line == _FALLBACK_EOF:
+                        break
+            else:
+                try:
+                    line = _read_line_nonblocking(timeout=0.5)
+                except EOFError:
                     break
-                except Exception as exc:
-                    logger.warning(
-                        "Unexpected stdin error; exiting interactive mode: {}", exc
-                    )
-                    break
+                except (ValueError, OSError):
+                    # stdin not selectable — start a threaded input() reader
+                    # so change_event auto-refresh keeps working.
+                    fallback_queue = _start_input_reader_thread()
+                    line = None
 
             if line is None:
                 continue
