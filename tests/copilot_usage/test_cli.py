@@ -2619,7 +2619,7 @@ def test_interactive_cost_view_prints_version_header(
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header
 
-    def _patched_header(target: Console | None = None) -> None:
+    def _patched_header(target: Console) -> None:
         header_calls.append("called")
         orig_header(target)
 
@@ -2669,7 +2669,7 @@ def test_interactive_detail_view_prints_version_header(
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header
 
-    def _patched_header(target: Console | None = None) -> None:
+    def _patched_header(target: Console) -> None:
         header_calls.append("called")
         orig_header(target)
 
@@ -2720,7 +2720,7 @@ def test_interactive_version_header_count_matches_auto_refresh(
     header_calls: list[str] = []
     orig_header = cli_mod._print_version_header
 
-    def _patched_header(target: Console | None = None) -> None:
+    def _patched_header(target: Console) -> None:
         header_calls.append("called")
         orig_header(target)
 
@@ -3909,3 +3909,158 @@ def test_build_session_index_duplicate_ids() -> None:
     index = _build_session_index(sessions)
     assert index["dup-id"] == 2
     assert index["unique-id"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #1045 — non-interactive commands use a single per-call Console
+# ---------------------------------------------------------------------------
+
+
+class TestSingleConsolePerCommand:
+    """Each non-interactive command should construct exactly one Console.
+
+    Verifies the fix for issue #1045 by patching ``Console`` in the CLI
+    module **and** every renderer module (``report``, ``render_detail``,
+    ``interactive``, ``vscode_report``).  If any renderer falls back to
+    creating its own ``Console()`` (because ``target_console`` was not
+    forwarded), the spy will record a second construction and the
+    ``len(created_consoles) == 1`` assertion will fail.
+    """
+
+    def _invoke_and_capture_consoles(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+    ) -> tuple[Any, list[Console]]:
+        """Invoke a CLI command and record every ``Console`` created.
+
+        Patches ``Console`` in the CLI module and all renderer modules so
+        that a fallback ``target_console or Console()`` in any renderer is
+        caught as a second construction.
+        """
+        import copilot_usage.cli as cli_module
+        import copilot_usage.interactive as interactive_module
+        import copilot_usage.render_detail as render_detail_module
+        import copilot_usage.report as report_module
+        import copilot_usage.vscode_report as vscode_report_module
+
+        created_consoles: list[Console] = []
+        original_console = cli_module.Console
+
+        def recording_console(*a: Any, **kw: Any) -> Console:
+            console = original_console(*a, **kw)
+            created_consoles.append(console)
+            return console
+
+        monkeypatch.setattr(cli_module, "Console", recording_console)
+        monkeypatch.setattr(interactive_module, "Console", recording_console)
+        monkeypatch.setattr(report_module, "Console", recording_console)
+        monkeypatch.setattr(render_detail_module, "Console", recording_console)
+        monkeypatch.setattr(vscode_report_module, "Console", recording_console)
+        runner = CliRunner()
+        result = runner.invoke(main, args)
+        assert result.exit_code == 0
+        assert len(created_consoles) == 1
+        return result, created_consoles
+
+    def test_summary_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """summary command: one Console renders both header and body."""
+        _write_session(tmp_path, "aaaa1111-0000-0000-0000-000000000000", name="First")
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["summary", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
+        output = _strip_ansi(result.output)
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+        # Report body content from render_summary
+        assert "First" in output or "Summary" in output
+
+    def test_session_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """session command: one Console renders both header and body."""
+        _write_session(tmp_path, "bbbb2222-0000-0000-0000-000000000000", name="Detail")
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["session", "bbbb2222", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
+        output = _strip_ansi(result.output)
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+        assert "Session Detail" in output
+
+    def test_cost_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """cost command: one Console renders both header and body."""
+        _write_session(
+            tmp_path,
+            "cccc3333-0000-0000-0000-000000000000",
+            name="Cost Test",
+            premium=5,
+        )
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["cost", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
+        output = _strip_ansi(result.output)
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+        assert "Cost" in output or "Total" in output
+
+    def test_live_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """live command: one Console renders both header and body."""
+        _write_session(
+            tmp_path,
+            "dddd4444-0000-0000-0000-000000000000",
+            name="Active",
+            active=True,
+        )
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["live", "--path", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
+        output = _strip_ansi(result.output)
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+        assert "Active Copilot Sessions" in output or "Active" in output
+
+    def test_vscode_header_and_body_same_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """vscode command: one Console renders both header and body."""
+        log_dir = tmp_path / "session_1" / "window1" / "exthost" / "GitHub.copilot-chat"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "GitHub Copilot Chat.log"
+        log_file.write_text(
+            "2026-03-15 10:00:00.123 [info] ccreq:abc.copilotmd | success | "
+            "claude-sonnet-4 | 500ms | [chat]\n",
+        )
+        result, created_consoles = self._invoke_and_capture_consoles(
+            monkeypatch,
+            ["vscode", "--vscode-logs", str(tmp_path)],
+        )
+        assert len(created_consoles) == 1
+        output = _strip_ansi(result.output)
+        assert "Copilot Usage" in output
+        assert f"v{__version__}" in output
+        assert "VS Code Copilot Chat" in output

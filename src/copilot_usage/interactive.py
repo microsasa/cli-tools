@@ -40,19 +40,17 @@ WATCHDOG_DEBOUNCE_SECS: Final[float] = (
     2.0  # Prevents rapid redraws during tool-use bursts
 )
 
-console: Final[Console] = Console()
-
 
 def print_version_header(target: Console | None = None) -> None:
     """Print 'Copilot Usage' left-aligned with version right-aligned."""
-    c = target or console
+    console = target or Console()
     title = "Copilot Usage"
     version_text = f"v{__version__}"
     header = Text()
     header.append(title, style="bold")
-    header.append(" " * max(1, c.width - len(title) - len(version_text)))
+    header.append(" " * max(1, console.width - len(title) - len(version_text)))
     header.append(version_text, style="dim")
-    c.print(header)
+    console.print(header)
 
 
 def render_session_list(console: Console, sessions: list[SessionSummary]) -> None:
