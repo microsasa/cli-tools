@@ -191,11 +191,11 @@ _FALLBACK_EOF: Final[str] = "\x00__EOF__"
 def _start_input_reader_thread() -> queue.SimpleQueue[str]:
     """Start a daemon thread reading user input via ``input()`` into a queue.
 
-    Similar to :func:`_start_stdin_reader_thread` but uses ``input()``
-    instead of ``sys.stdin.readline()``.  Suitable for the
-    ``_interactive_loop`` fallback when ``_read_line_nonblocking`` itself
-    is unavailable.  Puts :data:`_FALLBACK_EOF` on the queue when stdin
-    is exhausted or an unrecoverable error occurs.
+    Used by ``_interactive_loop`` as a fallback when
+    ``_read_line_nonblocking`` raises ``ValueError``/``OSError`` (e.g.
+    stdin is not selectable on Windows, or a detached stdin buffer in
+    tests).  Puts :data:`_FALLBACK_EOF` on the queue when stdin is
+    exhausted or an unrecoverable error occurs (see issue #1012).
     """
     q: queue.SimpleQueue[str] = queue.SimpleQueue()
 

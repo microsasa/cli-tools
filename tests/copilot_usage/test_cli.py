@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2277,14 +2278,18 @@ def test_auto_refresh_fires_during_os_error_fallback(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     """When _read_line_nonblocking raises OSError (simulating Windows stdin),
-    the threaded input() fallback still allows change_event auto-refresh to
-    fire between input() calls — i.e. get_all_sessions is invoked for the
-    refresh path without waiting for user input to unblock it."""
+    the threaded input() fallback must still allow change_event auto-refresh
+    to fire *while* input() is blocked.
+
+    Regression for issue #1012: a blocking input() in the main loop would
+    previously starve the change_event handler until the user pressed Enter.
+    Proof: we hold input() blocked on an Event, set change_event from a
+    separate thread, assert get_all_sessions is called again, THEN unblock.
+    """
     _write_session(tmp_path, "fb_arfr0-0000-0000-0000-000000000000", name="FbRefresh")
 
     import copilot_usage.cli as cli_mod
 
-    # Track get_all_sessions calls (imported reference on the cli module).
     get_all_calls: list[int] = []
     _orig_get_all_sessions = cli_mod.get_all_sessions
 
@@ -2294,7 +2299,6 @@ def test_auto_refresh_fires_during_os_error_fallback(
 
     monkeypatch.setattr(cli_mod, "get_all_sessions", _tracking_get_all)
 
-    # Capture the change_event via _start_observer.
     captured_event: list[threading.Event] = []
     orig_start_observer = cli_mod._start_observer
 
@@ -2304,32 +2308,57 @@ def test_auto_refresh_fires_during_os_error_fallback(
 
     monkeypatch.setattr(cli_mod, "_start_observer", _capturing_start)
 
-    # _read_line_nonblocking always raises OSError (simulating Windows stdin).
     def _raise_os_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
         raise OSError("select not supported on Windows stdin")
 
     monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_os_error)
 
-    # input(): first call sets change_event and returns empty line,
-    # second call returns 'q' to exit.
+    input_entered = threading.Event()
+    input_release = threading.Event()
     input_call_count = 0
 
     def _fake_input(*_args: str, **_kwargs: str) -> str:
         nonlocal input_call_count
         input_call_count += 1
         if input_call_count == 1:
-            if captured_event:
-                captured_event[0].set()
+            input_entered.set()
+            if not input_release.wait(timeout=5.0):
+                raise TimeoutError("test driver did not release input()")
             return ""
         return "q"
 
     monkeypatch.setattr("builtins.input", _fake_input)
 
+    def _driver() -> None:
+        if not input_entered.wait(timeout=5.0):
+            return
+        deadline = time.monotonic() + 5.0
+        while not captured_event and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not captured_event:
+            input_release.set()
+            return
+        calls_before = len(get_all_calls)
+        captured_event[0].set()
+        refresh_deadline = time.monotonic() + 5.0
+        while (
+            len(get_all_calls) <= calls_before and time.monotonic() < refresh_deadline
+        ):
+            time.sleep(0.01)
+        input_release.set()
+
+    driver = threading.Thread(target=_driver, daemon=True)
+    driver.start()
+
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
+    driver.join(timeout=5.0)
+
     assert result.exit_code == 0
-    # get_all_sessions called at least twice: initial load + auto-refresh.
-    assert len(get_all_calls) >= 2
+    assert len(get_all_calls) >= 2, (
+        "auto-refresh did not run while input() was blocked "
+        f"(calls={len(get_all_calls)})"
+    )
 
 
 # ---------------------------------------------------------------------------
