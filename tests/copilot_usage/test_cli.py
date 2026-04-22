@@ -24,11 +24,13 @@ from copilot_usage import __version__
 from copilot_usage.cli import (
     _build_session_index,
     _DateTimeOrDate,
+    _FALLBACK_EOF,
     _normalize_until,
     _ParsedDateArg,
     _print_version_header,
     _read_line_nonblocking,
     _show_session_by_index,
+    _start_input_reader_thread,
     _start_observer,
     _stop_observer,
     _validate_since_until,
@@ -2167,6 +2169,93 @@ class TestReadLineNonblocking:
         finally:
             r_file.close()
             os.close(w_fd)
+
+
+# ---------------------------------------------------------------------------
+# _start_input_reader_thread unit tests (issue #1056)
+# ---------------------------------------------------------------------------
+
+
+class TestStartInputReaderThread:
+    """Direct unit tests for _start_input_reader_thread."""
+
+    def test_thread_is_daemon(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Spawned thread must be daemon so it cannot block process exit."""
+        captured_daemon: list[bool] = []
+        _real_thread_init = threading.Thread.__init__
+
+        def _spy_init(self_thread: threading.Thread, *args: Any, **kwargs: Any) -> None:
+            _real_thread_init(self_thread, *args, **kwargs)
+            if self_thread.name == "input-fallback":
+                captured_daemon.append(self_thread.daemon)
+
+        monkeypatch.setattr(threading.Thread, "__init__", _spy_init)
+        monkeypatch.setattr(
+            "builtins.input", lambda: (_ for _ in ()).throw(EOFError())
+        )
+
+        q = _start_input_reader_thread()
+        q.get(timeout=2.0)  # drain sentinel so thread exits
+
+        assert captured_daemon == [True], "input-fallback thread must be daemon=True"
+
+    def test_normal_input_is_stripped_and_queued(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """User input is stripped before being placed on the queue."""
+        inputs = iter(["  hello  ", EOFError()])
+
+        def _fake_input() -> str:
+            val = next(inputs)
+            if isinstance(val, BaseException):
+                raise val
+            return val  # type: ignore[return-value]
+
+        monkeypatch.setattr("builtins.input", _fake_input)
+
+        q = _start_input_reader_thread()
+        assert q.get(timeout=2.0) == "hello"
+        assert q.get(timeout=2.0) == _FALLBACK_EOF
+
+    def test_eoferror_puts_fallback_sentinel(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """EOFError from input() places _FALLBACK_EOF on the queue."""
+        monkeypatch.setattr(
+            "builtins.input", lambda: (_ for _ in ()).throw(EOFError())
+        )
+
+        q = _start_input_reader_thread()
+        assert q.get(timeout=2.0) == _FALLBACK_EOF
+
+    def test_keyboard_interrupt_puts_fallback_sentinel(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KeyboardInterrupt from input() places _FALLBACK_EOF on the queue."""
+        monkeypatch.setattr(
+            "builtins.input", lambda: (_ for _ in ()).throw(KeyboardInterrupt())
+        )
+
+        q = _start_input_reader_thread()
+        assert q.get(timeout=2.0) == _FALLBACK_EOF
+
+    def test_unexpected_exception_puts_fallback_and_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unexpected exception places _FALLBACK_EOF and logs a warning."""
+        monkeypatch.setattr(
+            "builtins.input", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+
+        import copilot_usage.cli as cli_mod
+
+        with patch.object(cli_mod.logger, "warning") as warn_spy:
+            q = _start_input_reader_thread()
+            sentinel = q.get(timeout=2.0)
+
+        assert sentinel == _FALLBACK_EOF
+        warn_spy.assert_called_once()
+        assert "Unexpected stdin error" in warn_spy.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------
