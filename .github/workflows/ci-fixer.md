@@ -5,7 +5,7 @@ on:
       pr_number:
         description: "Pull request number to fix"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read

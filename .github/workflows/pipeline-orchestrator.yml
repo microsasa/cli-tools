@@ -28,7 +28,7 @@ on:
       pr_number:
         description: "PR number to process (optional — defaults to all aw PRs)"
         required: false
-        type: string
+        type: number
 
   schedule:
     - cron: "0,30 * * * *"

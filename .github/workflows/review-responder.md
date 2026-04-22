@@ -5,7 +5,7 @@ on:
       pr_number:
         description: "PR number to address review comments on"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read

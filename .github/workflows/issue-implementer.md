@@ -5,7 +5,7 @@ on:
       issue_number:
         description: "Issue number to fix"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read
