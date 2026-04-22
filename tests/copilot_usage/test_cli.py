@@ -2190,9 +2190,7 @@ class TestStartInputReaderThread:
                 captured_daemon.append(self_thread.daemon)
 
         monkeypatch.setattr(threading.Thread, "__init__", _spy_init)
-        monkeypatch.setattr(
-            "builtins.input", lambda: (_ for _ in ()).throw(EOFError())
-        )
+        monkeypatch.setattr("builtins.input", lambda: (_ for _ in ()).throw(EOFError()))
 
         q = _start_input_reader_thread()
         q.get(timeout=2.0)  # drain sentinel so thread exits
@@ -2209,7 +2207,7 @@ class TestStartInputReaderThread:
             val = next(inputs)
             if isinstance(val, BaseException):
                 raise val
-            return val  # type: ignore[return-value]
+            return val
 
         monkeypatch.setattr("builtins.input", _fake_input)
 
@@ -2221,9 +2219,7 @@ class TestStartInputReaderThread:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """EOFError from input() places _FALLBACK_EOF on the queue."""
-        monkeypatch.setattr(
-            "builtins.input", lambda: (_ for _ in ()).throw(EOFError())
-        )
+        monkeypatch.setattr("builtins.input", lambda: (_ for _ in ()).throw(EOFError()))
 
         q = _start_input_reader_thread()
         assert q.get(timeout=2.0) == _FALLBACK_EOF
@@ -2255,6 +2251,7 @@ class TestStartInputReaderThread:
 
         assert sentinel == _FALLBACK_EOF
         warn_spy.assert_called_once()
+        assert warn_spy.call_args is not None
         assert "Unexpected stdin error" in warn_spy.call_args.args[0]
 
 
