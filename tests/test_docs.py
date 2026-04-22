@@ -171,6 +171,47 @@ def test_components_table_lists_all_modules() -> None:
     )
 
 
+def test_build_completed_summary_signature_mentions_events() -> None:
+    """The _build_completed_summary signature snippet must include the
+    'events' parameter that was added for shutdown_cycles."""
+    match = re.search(
+        r"`_build_completed_summary\(([^)]*)\)`",
+        _IMPL_MD,
+    )
+    assert match, (
+        "Could not find '_build_completed_summary(...)' signature in implementation.md"
+    )
+    sig = match.group(1)
+    assert "events" in sig, (
+        "_build_completed_summary signature in implementation.md must "
+        "include 'events' — the parameter is used to look up timestamps "
+        "for shutdown_cycles"
+    )
+
+
+def test_all_shutdowns_type_is_tuple_not_list() -> None:
+    """all_shutdowns must be documented as a tuple (matching the frozen
+    _FirstPassResult dataclass), not a list."""
+    assert "all_shutdowns: tuple" in _IMPL_MD, (
+        "implementation.md must show 'all_shutdowns: tuple[...]' — "
+        "_FirstPassResult is frozen so the field is an immutable tuple"
+    )
+    assert "all_shutdowns: list" not in _IMPL_MD, (
+        "implementation.md still shows 'all_shutdowns: list[...]' — "
+        "_FirstPassResult uses tuple, not list"
+    )
+
+
+def test_shutdown_loop_uses_idx_not_underscore_idx() -> None:
+    """The shutdown loop snippet must use 'idx' (consumed for timestamp
+    lookup), not '_idx' (which implies the variable is unused)."""
+    assert "_idx" not in _IMPL_MD, (
+        "implementation.md contains '_idx' — the index variable is used "
+        "to look up event timestamps via events[idx].timestamp, so it "
+        "must be spelled 'idx' (not '_idx')"
+    )
+
+
 def test_architecture_first_pass_mentions_resume_detection() -> None:
     """The _first_pass() description in architecture.md must mention
     post-shutdown resume data tracking."""
