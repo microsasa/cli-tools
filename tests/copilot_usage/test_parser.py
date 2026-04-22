@@ -6782,28 +6782,53 @@ class TestFirstPassToolModel:
         fp = _first_pass(events)
         assert fp.tool_model == "gpt-5.1"
 
-    def test_no_pydantic_validation_for_tool_model(self) -> None:
-        """Optimised path reads model via dict lookup, not Pydantic validation.
+    def test_first_pass_tool_model_from_typed_accessor(self) -> None:
+        """_first_pass extracts tool_model via the typed as_tool_execution() accessor.
 
-        Builds 1 000 TOOL_EXECUTION_COMPLETE events without a ``model`` key
-        (worst-case) and asserts that ``ToolExecutionData.model_validate`` is
-        never called — proving the hot loop avoids the Pydantic round-trip.
+        Creates a TOOL_EXECUTION_COMPLETE event with a valid ``model`` value
+        and asserts that ``_first_pass`` populates ``tool_model`` correctly
+        through the typed ``ToolExecutionData`` accessor rather than raw
+        dict access.
         """
         events: list[SessionEvent] = [
             SessionEvent(
                 type=EventType.TOOL_EXECUTION_COMPLETE,
-                data={"toolCallId": f"tc-{i}", "success": True},
-                id=f"ev-tool-{i}",
+                data={
+                    "toolCallId": "tc-typed",
+                    "model": "claude-sonnet-4",
+                    "success": True,
+                },
+                id="ev-typed",
                 timestamp=None,
                 parentId=None,
-            )
-            for i in range(1_000)
+            ),
         ]
-        with patch.object(
-            ToolExecutionData, "model_validate", wraps=ToolExecutionData.model_validate
-        ) as mock_validate:
-            fp = _first_pass(events)
-            assert mock_validate.call_count == 0
+        fp = _first_pass(events)
+        assert fp.tool_model == "claude-sonnet-4"
+
+    def test_first_pass_tool_model_validation_error(self) -> None:
+        """Malformed data that passes isinstance(str) but fails typed validation.
+
+        Creates a TOOL_EXECUTION_COMPLETE event whose ``model`` is a valid
+        string (would pass the old ``isinstance(m, str)`` check) but whose
+        ``toolTelemetry`` is invalid, causing ``as_tool_execution()`` to
+        raise ``ValidationError``.  Asserts ``tool_model`` remains ``None``
+        and no exception escapes.
+        """
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.TOOL_EXECUTION_COMPLETE,
+                data={
+                    "toolCallId": "tc-bad",
+                    "model": "gpt-5.1",
+                    "toolTelemetry": "not-a-valid-telemetry-object",
+                },
+                id="ev-bad",
+                timestamp=None,
+                parentId=None,
+            ),
+        ]
+        fp = _first_pass(events)
         assert fp.tool_model is None
 
 
