@@ -3785,13 +3785,15 @@ class TestBuildSessionSummaryDebugLogging:
             for msg in log_messages
         )
 
-    def test_tool_execution_complete_bad_data_silently_skipped(
+    def test_tool_execution_complete_bad_data_logs_debug(
         self, tmp_path: Path
     ) -> None:
-        """Bad tool.execution_complete data → silently skipped (no Pydantic validation).
+        """Bad tool.execution_complete data → debug log emitted.
 
-        The optimised path reads ``ev.data.get("model")`` directly; non-string
-        or missing values are ignored without raising or logging.
+        The typed ``as_tool_execution()`` accessor raises ``ValidationError``
+        for malformed payloads; the handler logs a debug message and skips
+        the event, matching the pattern used for session.start and
+        session.shutdown.
         """
         from loguru import logger
 
@@ -3818,7 +3820,7 @@ class TestBuildSessionSummaryDebugLogging:
 
         # Malformed event is harmlessly ignored; summary still builds.
         assert summary is not None
-        assert not any(
+        assert any(
             "could not parse" in msg and "tool.execution_complete" in msg
             for msg in log_messages
         )
