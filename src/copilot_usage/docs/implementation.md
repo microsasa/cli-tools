@@ -97,7 +97,7 @@ Each `session.shutdown` event represents the metrics for **one lifecycle** (star
 
 **`_first_pass(events)` → `_FirstPassResult`** — single pass collecting all shutdowns:
 ```python
-all_shutdowns: list[tuple[int, SessionShutdownData]] = []
+all_shutdowns: tuple[tuple[int, SessionShutdownData], ...] = ()
 # ...
 elif ev.type == EventType.SESSION_SHUTDOWN:
     # ... validate, extract data ...
@@ -105,12 +105,13 @@ elif ev.type == EventType.SESSION_SHUTDOWN:
 ```
 Each tuple stores `(event_index, shutdown_data)`. The model is resolved inline and stored on `_FirstPassResult.model`.
 
-**`_build_completed_summary(fp, name, resume)` → `SessionSummary`** — sums across all shutdowns:
+**`_build_completed_summary(fp, name, resume, events)` → `SessionSummary`** — sums across all shutdowns:
 ```python
-for _idx, sd in fp.all_shutdowns:
+for idx, sd in fp.all_shutdowns:
     total_premium += sd.totalPremiumRequests
     total_api_duration += sd.totalApiDurationMs
     # ... merge model_metrics ...
+    shutdown_cycles.append((events[idx].timestamp, sd))  # idx used for timestamp lookup
 ```
 
 ### Model metrics merging
