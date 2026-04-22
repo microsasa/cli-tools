@@ -28,7 +28,6 @@ tools:
 network:
   allowed:
     - defaults
-    - python
 
 safe-outputs:
   noop:
