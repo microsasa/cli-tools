@@ -97,13 +97,18 @@ Each `session.shutdown` event represents the metrics for **one lifecycle** (star
 
 **`_first_pass(events)` → `_FirstPassResult`** — single pass collecting all shutdowns:
 ```python
-all_shutdowns: tuple[tuple[int, SessionShutdownData], ...] = ()
+_shutdowns: list[tuple[int, SessionShutdownData]] = []
 # ...
 elif ev.type == EventType.SESSION_SHUTDOWN:
     # ... validate, extract data ...
-    all_shutdowns.append((idx, data))
+    _shutdowns.append((idx, data))
+# ...
+return _FirstPassResult(
+    # ... other fields ...
+    all_shutdowns=tuple(_shutdowns),
+)
 ```
-Each tuple stores `(event_index, shutdown_data)`. The model is resolved inline and stored on `_FirstPassResult.model`.
+Accumulation uses a local list; the frozen `_FirstPassResult` dataclass stores the result as `all_shutdowns: tuple[tuple[int, SessionShutdownData], ...]` — immutable once built. Each tuple stores `(event_index, shutdown_data)`. The model is resolved inline and stored on `_FirstPassResult.model`.
 
 **`_build_completed_summary(fp, name, resume, events)` → `SessionSummary`** — sums across all shutdowns:
 ```python
