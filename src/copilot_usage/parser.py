@@ -801,7 +801,13 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             if tool_model is None:
                 try:
                     m = ev.as_tool_execution().model
-                except (ValidationError, ValueError):
+                except ValidationError as exc:
+                    logger.debug(
+                        "event {} — could not parse {} event ({}), skipping",
+                        idx,
+                        ev.type,
+                        exc.error_count(),
+                    )
                     m = None
                 if m:
                     tool_model = m
