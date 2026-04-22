@@ -5,7 +5,7 @@ on:
       pr_number:
         description: PR number to evaluate for merge eligibility
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read
@@ -19,7 +19,7 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, pull_requests]
 
 network: defaults
 

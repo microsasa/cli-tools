@@ -5,7 +5,7 @@ on:
       issue_number:
         description: "Issue number to fix"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read
@@ -18,12 +18,11 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, issues, repos]
 
 network:
   allowed:
     - defaults
-    - python
 
 safe-outputs:
   noop:
