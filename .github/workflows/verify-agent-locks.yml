@@ -33,4 +33,13 @@ jobs:
             echo "Run 'gh aw compile' locally and commit the resulting .lock.yml changes."
             exit 1
           fi
+
+          untracked_locks="$(git ls-files --others --exclude-standard -- '.github/workflows/*.lock.yml')"
+          if [ -n "$untracked_locks" ]; then
+            echo "::error::Lock files are missing from the commit:"
+            echo "$untracked_locks"
+            echo "Run 'gh aw compile' locally, add the new .lock.yml files, and commit them."
+            exit 1
+          fi
+
           echo "All lock files match their sources."
