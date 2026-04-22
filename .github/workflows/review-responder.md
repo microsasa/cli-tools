@@ -5,7 +5,7 @@ on:
       pr_number:
         description: "PR number to address review comments on"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read
@@ -16,8 +16,7 @@ imports:
   - shared/fetch-review-comments.md
 
 checkout:
-  fetch: ["*"]
-  fetch-depth: 0
+  fetch-depth: 1
 
 engine:
   id: copilot
@@ -25,12 +24,11 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, pull_requests]
 
 network:
   allowed:
     - defaults
-    - python
 
 safe-outputs:
   noop:

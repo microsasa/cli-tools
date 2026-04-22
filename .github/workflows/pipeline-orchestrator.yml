@@ -28,7 +28,7 @@ on:
       pr_number:
         description: "PR number to process (optional — defaults to all aw PRs)"
         required: false
-        type: string
+        type: number
 
   schedule:
     - cron: "0,30 * * * *"
@@ -227,9 +227,9 @@ jobs:
             # Clean up stale quality-gate-approved label if approval is no longer valid
             HAS_QG_LABEL=$(echo "$LABELS" | jq -r 'if any(. == "aw-quality-gate-approved") then "yes" else "" end')
             if [[ -n "$HAS_QG_LABEL" ]]; then
-              HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
+              HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" --arg owner "$OWNER" '
                 [.data.repository.pullRequest.latestReviews.nodes[]
-                 | select(.author.login == "${{ github.repository_owner }}")
+                 | select(.author.login == $owner)
                  | select(.state == "APPROVED")
                  | select(.commit.oid == $sha)]
                 | length > 0')
@@ -445,9 +445,9 @@ jobs:
             fi
 
             # Check 3: Is there a valid (non-dismissed) approval on the current commit?
-            HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" '
+            HAS_VALID_APPROVAL=$(echo "$PR_DATA" | jq -r --arg sha "$HEAD_SHA" --arg owner "$OWNER" '
               [.data.repository.pullRequest.latestReviews.nodes[]
-               | select(.author.login == "${{ github.repository_owner }}")
+               | select(.author.login == $owner)
                | select(.state == "APPROVED")
                | select(.commit.oid == $sha)]
               | length > 0')

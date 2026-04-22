@@ -5,7 +5,7 @@ on:
       pr_number:
         description: "Pull request number to fix"
         required: true
-        type: string
+        type: number
 
 permissions:
   contents: read
@@ -23,12 +23,11 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, pull_requests]
 
 network:
   allowed:
     - defaults
-    - python
 
 safe-outputs:
   noop:

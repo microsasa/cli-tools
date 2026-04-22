@@ -13,7 +13,7 @@ engine: copilot
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, repos, issues]
 
 network: defaults
 
