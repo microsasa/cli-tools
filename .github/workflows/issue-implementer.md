@@ -18,7 +18,7 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, issues, repos]
 
 network:
   allowed:

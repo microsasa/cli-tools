@@ -19,7 +19,7 @@ engine:
 
 tools:
   github:
-    toolsets: [default]
+    toolsets: [context, pull_requests]
 
 network: defaults
 
