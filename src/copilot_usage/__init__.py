@@ -3,4 +3,4 @@ from typing import Final
 
 __all__: Final[list[str]] = ["__version__"]
 
-__version__: str = version("cli-tools")
+__version__: Final[str] = version("cli-tools")

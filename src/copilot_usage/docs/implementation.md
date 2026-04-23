@@ -77,6 +77,7 @@ Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_s
 | `has_shutdown_metrics`   | `bool`                      | `True` when at least one shutdown event produced non-empty `modelMetrics`; set to `bool(merged_metrics)` after merging all shutdowns |
 | `last_resume_time`       | `datetime \| None`           | Timestamp of `session.resume` event (if any, after last shutdown)                   |
 | `events_path`            | `Path \| None`               | Set by `get_all_sessions()` after building — not from events                        |
+| `shutdown_cycles`        | `list[tuple[datetime \| None, SessionShutdownData]]` | Pre-computed list of `(timestamp, shutdown_payload)` pairs for every `session.shutdown` event. Populated by `build_session_summary()` so renderers never need to re-scan the event list. |
 | `active_model_calls`     | `int`                       | `assistant.turn_start` count after last shutdown (resumed sessions only)            |
 | `active_user_messages`   | `int`                       | `user.message` count after last shutdown (resumed sessions only)                    |
 | `active_output_tokens`   | `int`                       | Sum of `outputTokens` from `assistant.message` events after last shutdown           |
