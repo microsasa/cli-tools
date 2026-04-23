@@ -809,6 +809,17 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                         exc.error_count(),
                     )
                     m = None
+                except ValueError as exc:
+                    # Defensive: currently unreachable because the etype
+                    # guard above prevents type mismatches, but caught so
+                    # a refactor of the guard can't let ValueError escape.
+                    logger.debug(
+                        "event {} — could not parse {} event ({}), skipping",
+                        idx,
+                        ev.type,
+                        exc,
+                    )
+                    m = None
                 if m:
                     tool_model = m
             continue
