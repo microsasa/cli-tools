@@ -2371,9 +2371,10 @@ def test_fallback_thread_joined_after_loop_exits(
 ) -> None:
     """No 'input-fallback' daemon threads survive after _interactive_loop returns.
 
-    Regression for issue #1062: the fallback reader thread was not joined in
-    the finally block, leaving zombie threads that could consume stdin bytes
-    intended for a subsequent call.
+    The fake ``input()`` blocks on a second call to surface regressions: if
+    the reader re-enters ``input()`` after producing the quit command the
+    test hangs.  With the request/ack pattern introduced in issue #1062 the
+    second call is never reached.
     """
     _write_session(tmp_path, "fb_join0-0000-0000-0000-000000000000", name="Join1")
 
@@ -2384,21 +2385,47 @@ def test_fallback_thread_joined_after_loop_exits(
 
     monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
 
+    second_input_started = threading.Event()
+    release_blocked_input = threading.Event()
+    input_calls = 0
+
     def _fake_input(*_args: str, **_kwargs: str) -> str:
+        nonlocal input_calls
+        input_calls += 1
+        if input_calls == 1:
+            return "q"
+
+        # Reaching here means the reader re-entered input() — block so
+        # the test times out rather than silently passing.
+        second_input_started.set()
+        assert release_blocked_input.wait(timeout=1.0), (
+            "test did not release blocked fallback input() call"
+        )
         return "q"
 
     monkeypatch.setattr("builtins.input", _fake_input)
 
     runner = CliRunner()
-    result = runner.invoke(main, ["--path", str(tmp_path)])
-    assert result.exit_code == 0
+    try:
+        result = runner.invoke(main, ["--path", str(tmp_path)])
+        assert result.exit_code == 0
 
-    alive = [
-        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
-    ]
-    assert alive == [], (
-        f"input-fallback thread(s) still alive after _interactive_loop returned: {alive}"
-    )
+        alive = [
+            t
+            for t in threading.enumerate()
+            if t.name == "input-fallback" and t.is_alive()
+        ]
+        assert alive == [], (
+            f"input-fallback thread(s) still alive after _interactive_loop "
+            f"returned: {alive}"
+        )
+        # The reader should not re-enter input() after producing the quit
+        # command — the request/ack pattern prevents re-entry.
+        assert not second_input_started.is_set(), (
+            "reader thread re-entered input() after producing quit command"
+        )
+    finally:
+        release_blocked_input.set()
 
 
 def test_fallback_thread_no_zombie_across_two_calls(
@@ -2406,8 +2433,9 @@ def test_fallback_thread_no_zombie_across_two_calls(
 ) -> None:
     """Two consecutive _interactive_loop calls must not share a fallback thread.
 
-    Call 1 exits on 'q'; call 2 must complete without a zombie thread from
-    call 1 stealing its stdin bytes.
+    Each ``_interactive_loop`` invocation creates its own fallback reader,
+    and each reader's ``input()`` returns ``"q"`` once.  A subsequent
+    ``input()`` call per reader blocks to surface regressions.
 
     Regression for issue #1062.
     """
@@ -2420,34 +2448,58 @@ def test_fallback_thread_no_zombie_across_two_calls(
 
     monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
 
+    blocked = threading.Event()
+    release = threading.Event()
+    input_calls = 0
+
     def _fake_input(*_args: str, **_kwargs: str) -> str:
+        nonlocal input_calls
+        input_calls += 1
+        # Each _interactive_loop invocation triggers one input() call
+        # (calls 1 and 2).  Any further call means a re-entry bug.
+        if input_calls <= 2:
+            return "q"
+        blocked.set()
+        assert release.wait(timeout=1.0), (
+            "test did not release blocked fallback input() call"
+        )
         return "q"
 
     monkeypatch.setattr("builtins.input", _fake_input)
 
     runner = CliRunner()
 
-    # --- Call 1 ---
-    result1 = runner.invoke(main, ["--path", str(tmp_path)])
-    assert result1.exit_code == 0
+    try:
+        # --- Call 1 ---
+        result1 = runner.invoke(main, ["--path", str(tmp_path)])
+        assert result1.exit_code == 0
 
-    alive_after_first = [
-        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
-    ]
-    assert alive_after_first == [], (
-        "input-fallback thread(s) still alive after first call"
-    )
+        alive_after_first = [
+            t
+            for t in threading.enumerate()
+            if t.name == "input-fallback" and t.is_alive()
+        ]
+        assert alive_after_first == [], (
+            "input-fallback thread(s) still alive after first call"
+        )
 
-    # --- Call 2 ---
-    result2 = runner.invoke(main, ["--path", str(tmp_path)])
-    assert result2.exit_code == 0
+        # --- Call 2 ---
+        result2 = runner.invoke(main, ["--path", str(tmp_path)])
+        assert result2.exit_code == 0
 
-    alive_after_second = [
-        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
-    ]
-    assert alive_after_second == [], (
-        "input-fallback thread(s) still alive after second call"
-    )
+        alive_after_second = [
+            t
+            for t in threading.enumerate()
+            if t.name == "input-fallback" and t.is_alive()
+        ]
+        assert alive_after_second == [], (
+            "input-fallback thread(s) still alive after second call"
+        )
+        assert not blocked.is_set(), (
+            "reader thread re-entered input() unexpectedly"
+        )
+    finally:
+        release.set()
 
 
 # ---------------------------------------------------------------------------

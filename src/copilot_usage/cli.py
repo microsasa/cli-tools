@@ -183,23 +183,37 @@ _FALLBACK_EOF: Final[str] = "\x00__EOF__"
 
 def _start_input_reader_thread(
     stop: threading.Event,
+    need_input: threading.Event,
 ) -> tuple[queue.SimpleQueue[str], threading.Thread]:
-    """Start a daemon thread reading user input into a queue.
+    """Start a daemon thread that reads user input on request.
 
-    Used by ``_interactive_loop`` as a fallback when
-    ``_read_line_nonblocking`` raises ``ValueError``/``OSError`` (e.g.
-    stdin is not selectable on Windows, or a detached stdin buffer in
-    tests).  Puts :data:`_FALLBACK_EOF` on the queue when stdin is
-    exhausted, the *stop* event is set, or an unrecoverable error
-    occurs (see issues #1012, #1062).
+    Uses a request/ack pattern: the thread waits for *need_input* to be
+    set before each ``input()`` call, ensuring it is never blocked inside
+    ``input()`` when the caller signals *stop*.  The caller sets
+    *need_input* once for each line it wants; the thread clears the event
+    after waking.
 
-    Returns the queue **and** the thread so the caller can join the
-    thread in its ``finally`` block.
+    Puts :data:`_FALLBACK_EOF` on the queue when stdin is exhausted,
+    *stop* is signalled, or an unrecoverable error occurs (see issues
+    #1012, #1062).
+
+    Returns the queue and the thread so the caller can join the thread
+    in its ``finally`` block.
     """
     q: queue.SimpleQueue[str] = queue.SimpleQueue()
 
     def _reader() -> None:
-        while not stop.is_set():
+        while True:
+            # Wait for the main loop to request a line, checking stop
+            # periodically so teardown is prompt.
+            while not need_input.is_set():
+                if stop.wait(timeout=0.1):
+                    q.put(_FALLBACK_EOF)
+                    return
+            need_input.clear()
+            if stop.is_set():
+                q.put(_FALLBACK_EOF)
+                return
             try:
                 line = input().strip()
             except (EOFError, KeyboardInterrupt):
@@ -212,6 +226,7 @@ def _start_input_reader_thread(
                 q.put(_FALLBACK_EOF)
                 return
             if stop.is_set():
+                q.put(_FALLBACK_EOF)
                 return
             q.put(line)
 
@@ -261,6 +276,8 @@ def _interactive_loop(path: Path | None) -> None:
     fallback_queue: queue.SimpleQueue[str] | None = None
     fallback_stop: threading.Event | None = None
     fallback_thread: threading.Thread | None = None
+    fallback_need_input: threading.Event | None = None
+    request_next: bool = False
 
     sessions = get_all_sessions(path)
     session_index = _build_session_index(sessions)
@@ -318,6 +335,9 @@ def _interactive_loop(path: Path | None) -> None:
 
             # Non-blocking stdin read
             if fallback_queue is not None:
+                if request_next and fallback_need_input is not None:
+                    fallback_need_input.set()
+                    request_next = False
                 try:
                     line = fallback_queue.get(timeout=0.5)
                 except queue.Empty:
@@ -325,6 +345,7 @@ def _interactive_loop(path: Path | None) -> None:
                 else:
                     if line == _FALLBACK_EOF:
                         break
+                    request_next = True
             else:
                 try:
                     line = _read_line_nonblocking(timeout=0.5)
@@ -334,8 +355,10 @@ def _interactive_loop(path: Path | None) -> None:
                     # stdin not selectable — start a threaded input() reader
                     # so change_event auto-refresh keeps working.
                     fallback_stop = threading.Event()
+                    fallback_need_input = threading.Event()
+                    fallback_need_input.set()  # Request the first line.
                     fallback_queue, fallback_thread = _start_input_reader_thread(
-                        fallback_stop,
+                        fallback_stop, fallback_need_input,
                     )
                     line = None
 
@@ -399,8 +422,15 @@ def _interactive_loop(path: Path | None) -> None:
         _stop_observer(observer)
         if fallback_stop is not None:
             fallback_stop.set()
+        if fallback_need_input is not None:
+            fallback_need_input.set()
         if fallback_thread is not None:
             fallback_thread.join(timeout=1.0)
+            if fallback_thread.is_alive():
+                logger.warning(
+                    "input-fallback thread did not exit within 1 s; "
+                    "it may be blocked in input()"
+                )
 
 
 @click.group(invoke_without_command=True)
