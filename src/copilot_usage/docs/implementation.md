@@ -248,41 +248,40 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
 
 This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms timeout allows the main loop to check for file-change events between input polls.
 
-### Fallback to blocking `input()`
+### Fallback to threaded `_start_input_reader_thread()`
 
-If `select()` raises `ValueError` or `OSError` (e.g. stdin is piped, not a real TTY, or during testing), the loop falls back to blocking `input()` (in `cli.py`):
+If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, or stdin is detached during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
 
 ```python
 except (ValueError, OSError):
-    try:
-        line = input().strip()
-    except (EOFError, KeyboardInterrupt):
-        break
+    fallback_queue = _start_input_reader_thread()
+    line = None
 ```
+
+The daemon thread calls `input()` in a loop, placing stripped lines on the queue. When stdin is exhausted or an unrecoverable error occurs, it posts the `_FALLBACK_EOF` sentinel and exits. The main loop then reads from `fallback_queue.get(timeout=0.5)` instead of `_read_line_nonblocking`, so that `change_event` auto-refresh keeps working during the fallback. The queue is created lazily on first `ValueError`/`OSError` and is local to that `_interactive_loop` call. The reader thread is also started lazily, but because it is a daemon thread that can block in `input()`, there is no explicit teardown path here: it may remain alive after `_interactive_loop` returns until stdin reaches EOF/errors or the process exits. Being a daemon means it does not prevent process shutdown.
 
 ### Watchdog file observer
 
-A `watchdog.Observer` watches `~/.copilot/session-state/` recursively for **any** filesystem change — new session directories, lockfile creation/deletion, `events.jsonl` writes, etc. (in `cli.py`):
+A `watchdog.Observer` watches `~/.copilot/session-state/` recursively for **any** filesystem change — new session directories, lockfile creation/deletion, `events.jsonl` writes, etc. The observer is created and started by `start_observer()` in `interactive.py`:
 
 ```python
-observer = Observer()
-observer.schedule(handler, str(session_path), recursive=True)
-observer.daemon = True
-observer.start()
+observer = start_observer(session_path, change_event)
 ```
 
-The observer watches the session-state directory; if the directory doesn't exist at startup, no observer is created and auto-refresh is simply skipped.
+`start_observer()` returns a `Stoppable` handle (or `None` when the observer cannot be started, e.g. inotify watch limit exhausted). The corresponding `stop_observer()` tears it down in a `finally` block. If the session-state directory doesn't exist at startup, no observer is created and auto-refresh is simply skipped.
 
-### `_FileChangeHandler` with 2-second debounce
+### `FileChangeHandler` with `WATCHDOG_DEBOUNCE_SECS` debounce
 
-`_FileChangeHandler` (in `cli.py`) triggers on any filesystem event in the session-state tree and enforces a 2-second debounce using `time.monotonic()`:
+`FileChangeHandler` (public, in `interactive.py`) triggers on any filesystem event in the session-state tree and enforces a debounce using `time.monotonic()` and the `WATCHDOG_DEBOUNCE_SECS` constant:
 
 ```python
-def dispatch(self, event):
+def dispatch(self, event: object) -> None:
     now = time.monotonic()
-    if now - self._last_trigger > 2.0:
+    with self._lock:
+        if now - self._last_trigger <= WATCHDOG_DEBOUNCE_SECS:
+            return
         self._last_trigger = now
-        self._change_event.set()
+    self._change_event.set()
 ```
 
 Each trigger causes a full `get_all_sessions()` re-read, picking up new sessions, closed sessions, and updated event data. The debounce prevents rapid redraws during high-frequency event writes (e.g. tool execution loops producing many events per second). Manual refresh (`r`) is still available as a fallback.
