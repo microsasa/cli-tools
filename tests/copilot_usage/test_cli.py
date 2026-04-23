@@ -2182,15 +2182,14 @@ class TestStartInputReaderThread:
 
     def test_thread_is_daemon(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Spawned thread must be daemon so it cannot block process exit."""
-        captured_daemon: list[bool] = []
-        _real_thread_init = threading.Thread.__init__
+        captured_daemon: list[bool | None] = []
+        _real_thread = threading.Thread
 
-        def _spy_init(self_thread: threading.Thread, *args: Any, **kwargs: Any) -> None:
-            _real_thread_init(self_thread, *args, **kwargs)
-            if self_thread.name == "input-fallback":
-                captured_daemon.append(self_thread.daemon)
+        def _spy_thread(*args: Any, **kwargs: Any) -> threading.Thread:
+            captured_daemon.append(kwargs.get("daemon"))
+            return _real_thread(*args, **kwargs)
 
-        monkeypatch.setattr(threading.Thread, "__init__", _spy_init)
+        monkeypatch.setattr("copilot_usage.cli.threading.Thread", _spy_thread)
         monkeypatch.setattr("builtins.input", lambda: (_ for _ in ()).throw(EOFError()))
 
         q = _start_input_reader_thread()
