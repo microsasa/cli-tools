@@ -2362,6 +2362,95 @@ def test_auto_refresh_fires_during_os_error_fallback(
 
 
 # ---------------------------------------------------------------------------
+# Issue #1062 — fallback daemon thread must be joined on exit
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_thread_joined_after_loop_exits(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """No 'input-fallback' daemon threads survive after _interactive_loop returns.
+
+    Regression for issue #1062: the fallback reader thread was not joined in
+    the finally block, leaving zombie threads that could consume stdin bytes
+    intended for a subsequent call.
+    """
+    _write_session(tmp_path, "fb_join0-0000-0000-0000-000000000000", name="Join1")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("underlying buffer has been detached")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        return "q"
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    alive = [
+        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
+    ]
+    assert alive == [], (
+        f"input-fallback thread(s) still alive after _interactive_loop returned: {alive}"
+    )
+
+
+def test_fallback_thread_no_zombie_across_two_calls(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Two consecutive _interactive_loop calls must not share a fallback thread.
+
+    Call 1 exits on 'q'; call 2 must complete without a zombie thread from
+    call 1 stealing its stdin bytes.
+
+    Regression for issue #1062.
+    """
+    _write_session(tmp_path, "fb_zomb0-0000-0000-0000-000000000000", name="Zombie")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("underlying buffer has been detached")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        return "q"
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+
+    # --- Call 1 ---
+    result1 = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result1.exit_code == 0
+
+    alive_after_first = [
+        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
+    ]
+    assert alive_after_first == [], (
+        "input-fallback thread(s) still alive after first call"
+    )
+
+    # --- Call 2 ---
+    result2 = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result2.exit_code == 0
+
+    alive_after_second = [
+        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
+    ]
+    assert alive_after_second == [], (
+        "input-fallback thread(s) still alive after second call"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Issue #329 — observer=None when session_path doesn't exist
 # ---------------------------------------------------------------------------
 
