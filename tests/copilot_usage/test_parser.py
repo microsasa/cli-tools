@@ -3785,9 +3785,7 @@ class TestBuildSessionSummaryDebugLogging:
             for msg in log_messages
         )
 
-    def test_tool_execution_complete_bad_data_logs_debug(
-        self, tmp_path: Path
-    ) -> None:
+    def test_tool_execution_complete_bad_data_logs_debug(self, tmp_path: Path) -> None:
         """Bad tool.execution_complete data → debug log emitted.
 
         The typed ``as_tool_execution()`` accessor raises ``ValidationError``
