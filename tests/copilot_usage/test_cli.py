@@ -22,9 +22,9 @@ from rich.console import Console
 
 from copilot_usage import __version__
 from copilot_usage.cli import (
+    _FALLBACK_EOF,
     _build_session_index,
     _DateTimeOrDate,
-    _FALLBACK_EOF,
     _normalize_until,
     _ParsedDateArg,
     _print_version_header,
