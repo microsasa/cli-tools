@@ -250,6 +250,19 @@ def test_implementation_md_symbols_exist_in_expected_modules() -> None:
             f"implementation.md does not mention '{symbol}' — "
             f"expected a reference to {module_path}.{symbol}"
         )
+        # Verify the doc attributes the symbol to the correct module.
+        # The doc uses short filenames (e.g. ``cli.py``, ``interactive.py``),
+        # so derive the expected filename from the dotted module path.
+        expected_file = module_path.rsplit(".", 1)[-1] + ".py"
+        idx = _IMPL_MD.index(symbol)
+        window_start = max(0, idx - 500)
+        window_end = min(len(_IMPL_MD), idx + 500)
+        window = _IMPL_MD[window_start:window_end]
+        assert expected_file in window, (
+            f"implementation.md mentions '{symbol}' but does not attribute it "
+            f"to '{expected_file}' nearby — expected the module reference "
+            f"within ~500 chars of the symbol"
+        )
         # Verify the symbol actually exists in the stated module
         mod = importlib.import_module(module_path)
         assert hasattr(mod, symbol), (

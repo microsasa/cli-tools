@@ -250,7 +250,7 @@ This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms
 
 ### Fallback to threaded `_start_input_reader_thread()`
 
-If `select()` raises `ValueError` or `OSError` (e.g. stdin is piped, not a real TTY, or during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
+If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, or stdin is detached during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
 
 ```python
 except (ValueError, OSError):
@@ -258,7 +258,7 @@ except (ValueError, OSError):
     line = None
 ```
 
-The daemon thread calls `input()` in a loop, placing stripped lines on the queue. When stdin is exhausted or an unrecoverable error occurs, it posts the `_FALLBACK_EOF` sentinel and exits. The main loop then reads from `fallback_queue.get(timeout=0.5)` instead of `_read_line_nonblocking`, so that `change_event` auto-refresh keeps working during the fallback. The queue and thread are created lazily on first `ValueError`/`OSError` and are local to that `_interactive_loop` call — they never outlive it.
+The daemon thread calls `input()` in a loop, placing stripped lines on the queue. When stdin is exhausted or an unrecoverable error occurs, it posts the `_FALLBACK_EOF` sentinel and exits. The main loop then reads from `fallback_queue.get(timeout=0.5)` instead of `_read_line_nonblocking`, so that `change_event` auto-refresh keeps working during the fallback. The queue is created lazily on first `ValueError`/`OSError` and is local to that `_interactive_loop` call. The reader thread is also started lazily, but because it is a daemon thread that can block in `input()`, there is no explicit teardown path here: it may remain alive after `_interactive_loop` returns until stdin reaches EOF/errors or the process exits. Being a daemon means it does not prevent process shutdown.
 
 ### Watchdog file observer
 
