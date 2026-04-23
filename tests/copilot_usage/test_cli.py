@@ -9,6 +9,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2201,7 +2202,9 @@ class TestStartInputReaderThread:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """User input is stripped before being placed on the queue."""
-        inputs = iter(["  hello  ", EOFError()])
+        inputs: Iterator[str | BaseException] = iter(
+            ["  hello  ", EOFError()]
+        )
 
         def _fake_input() -> str:
             val = next(inputs)
