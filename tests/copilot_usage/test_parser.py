@@ -6831,6 +6831,32 @@ class TestFirstPassToolModel:
         fp = _first_pass(events)
         assert fp.tool_model is None
 
+    def test_first_pass_tool_model_value_error(self) -> None:
+        """Defensive ValueError handler keeps tool_model None.
+
+        The ``except ValueError`` branch in ``_first_pass`` is currently
+        unreachable because the ``etype`` guard prevents type mismatches,
+        but it exists so a future refactor cannot let ``ValueError`` escape.
+        We exercise it by patching ``as_tool_execution`` to raise
+        ``ValueError``.
+        """
+        events: list[SessionEvent] = [
+            SessionEvent(
+                type=EventType.TOOL_EXECUTION_COMPLETE,
+                data={"toolCallId": "tc-ve", "model": "gpt-5.1"},
+                id="ev-ve",
+                timestamp=None,
+                parentId=None,
+            ),
+        ]
+        with patch.object(
+            SessionEvent,
+            "as_tool_execution",
+            side_effect=ValueError("simulated type mismatch"),
+        ):
+            fp = _first_pass(events)
+        assert fp.tool_model is None
+
 
 # ---------------------------------------------------------------------------
 # Issue #509 — mtime-based session cache
