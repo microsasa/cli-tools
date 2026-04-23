@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
+from typing import Final, get_args, get_origin
 
 import pytest
 
@@ -37,6 +38,20 @@ def test_all_names_importable(module_name: str) -> None:
         assert name in mod_vars, (
             f"{module_name}.__all__ lists {name!r}, but it is not defined in the module"
         )
+
+
+def test_version_is_final_str() -> None:
+    """``__version__`` must be annotated as ``Final[str]`` per coding guidelines."""
+    import copilot_usage
+
+    ann = copilot_usage.__annotations__["__version__"]
+    assert get_origin(ann) is Final, (
+        f"__version__ annotation should be Final[str], got {ann!r}"
+    )
+    args = get_args(ann)
+    assert args == (str,), (
+        f"__version__ annotation should be Final[str], got Final[{args!r}]"
+    )
 
 
 def test_wheel_excludes_docs(tmp_path: Path) -> None:
