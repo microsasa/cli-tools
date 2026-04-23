@@ -16,3 +16,9 @@
 # Dependency manifests — lockfile tampering or dep confusion risk
 /pyproject.toml             @microsasa
 /uv.lock                    @microsasa
+
+# Build glue and release scripts — executed by CI (`make ci`) and by humans.
+# Malicious changes here bypass application-layer review since they run
+# during build/test and could exfiltrate secrets or publish bad artifacts.
+/Makefile                   @microsasa
+/scripts/                   @microsasa
