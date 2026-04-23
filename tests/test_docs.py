@@ -1,3 +1,4 @@
+import importlib
 import re
 from pathlib import Path
 
@@ -225,3 +226,40 @@ def test_architecture_first_pass_mentions_resume_detection() -> None:
     assert "resume" in description.lower(), (
         "_first_pass() description in architecture.md must mention resume detection"
     )
+
+
+# --- Symbol-existence checks for implementation.md ---
+
+
+_IMPL_SYMBOL_EXPECTATIONS: list[tuple[str, str, bool]] = [
+    # (symbol_name, module_path, is_public)
+    ("FileChangeHandler", "copilot_usage.interactive", True),
+    ("_start_input_reader_thread", "copilot_usage.cli", False),
+    ("start_observer", "copilot_usage.interactive", True),
+    ("stop_observer", "copilot_usage.interactive", True),
+    ("WATCHDOG_DEBOUNCE_SECS", "copilot_usage.interactive", True),
+]
+
+
+def test_implementation_md_symbols_exist_in_expected_modules() -> None:
+    """Symbol names referenced in implementation.md must exist in the
+    expected modules — prevents future renames from silently drifting."""
+    for symbol, module_path, is_public in _IMPL_SYMBOL_EXPECTATIONS:
+        # Verify the symbol is mentioned in implementation.md
+        assert symbol in _IMPL_MD, (
+            f"implementation.md does not mention '{symbol}' — "
+            f"expected a reference to {module_path}.{symbol}"
+        )
+        # Verify the symbol actually exists in the stated module
+        mod = importlib.import_module(module_path)
+        assert hasattr(mod, symbol), (
+            f"implementation.md references '{symbol}' in {module_path}, "
+            f"but the symbol does not exist in that module"
+        )
+        # Public symbols must be listed in __all__
+        if is_public:
+            mod_all = getattr(mod, "__all__", [])
+            assert symbol in mod_all, (
+                f"implementation.md references '{symbol}' as a public "
+                f"export of {module_path}, but it is not in __all__"
+            )
