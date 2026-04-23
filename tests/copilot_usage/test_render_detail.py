@@ -87,23 +87,20 @@ class TestRenderCodeChanges:
 
     def test_none_produces_no_output(self) -> None:
         """code_changes=None → returns immediately without printing."""
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True)
+        buf, console = _buf_console()
         _render_code_changes(None, target_console=console)
         assert buf.getvalue() == ""
 
     def test_all_zero_produces_no_output(self) -> None:
         """All fields zero/empty → returns without printing."""
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True)
+        buf, console = _buf_console()
         changes = CodeChanges(linesAdded=0, linesRemoved=0, filesModified=[])
         _render_code_changes(changes, target_console=console)
         assert buf.getvalue() == ""
 
     def test_with_data_shows_table(self) -> None:
         """Non-zero code changes → renders a table with stats."""
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True)
+        buf, console = _buf_console()
         changes = CodeChanges(linesAdded=10, linesRemoved=2, filesModified=["a.py"])
         _render_code_changes(changes, target_console=console)
         output = buf.getvalue()
@@ -113,8 +110,7 @@ class TestRenderCodeChanges:
 
     def test_files_present_zero_line_counts_renders_table(self) -> None:
         """filesModified non-empty with zero line deltas → table IS rendered."""
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True)
+        buf, console = _buf_console()
         changes = CodeChanges(linesAdded=0, linesRemoved=0, filesModified=["a.py"])
         _render_code_changes(changes, target_console=console)
         output = _strip_ansi(buf.getvalue())
@@ -126,8 +122,7 @@ class TestRenderCodeChanges:
 
     def test_zero_files_positive_line_counts_renders_table(self) -> None:
         """Empty filesModified with positive line counts → table IS rendered."""
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True)
+        buf, console = _buf_console()
         changes = CodeChanges(linesAdded=5, linesRemoved=2, filesModified=[])
         _render_code_changes(changes, target_console=console)
         output = buf.getvalue()
