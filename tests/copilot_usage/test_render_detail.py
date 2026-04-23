@@ -1023,8 +1023,7 @@ class TestRenderShutdownCyclesNoneTimestamp:
             session_id="no-ts",
             shutdown_cycles=[(None, sd)],
         )
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)
+        buf, console = _buf_console()
         _render_shutdown_cycles(summary, target_console=console)
         output = _strip_ansi(buf.getvalue())
         assert "—" in output
