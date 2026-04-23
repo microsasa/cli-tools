@@ -33,6 +33,7 @@ from copilot_usage.render_detail import (
     _render_recent_events,
     _render_shutdown_cycles,
     _safe_event_data,
+    _truncate,
     render_session_detail,
 )
 
@@ -957,3 +958,84 @@ def test_build_event_details_returns_empty_for_unrecognized_type() -> None:
     """Wildcard case must return '' for event types without explicit handling."""
     ev = SessionEvent(type=EventType.SESSION_RESUME, data={})
     assert _build_event_details(ev) == ""
+
+
+# ---------------------------------------------------------------------------
+# _build_event_details — SESSION_SHUTDOWN arm (issue #1058)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetailsSessionShutdown:
+    """Tests for the SESSION_SHUTDOWN branch of _build_event_details."""
+
+    def test_non_empty_shutdown_type(self) -> None:
+        """Non-empty shutdownType must render as 'type=<value>'."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            data={
+                "shutdownType": "routine",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+                "modelMetrics": {},
+            },
+        )
+        assert _build_event_details(ev) == "type=routine"
+
+    def test_empty_shutdown_type(self) -> None:
+        """Empty shutdownType must render as ''."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            data={
+                "shutdownType": "",
+                "totalPremiumRequests": 0,
+                "totalApiDurationMs": 0,
+                "modelMetrics": {},
+            },
+        )
+        assert _build_event_details(ev) == ""
+
+    def test_malformed_data_returns_empty(self) -> None:
+        """Malformed data (int shutdownType) triggers ValidationError → ''."""
+        ev = SessionEvent(
+            type=EventType.SESSION_SHUTDOWN,
+            data={"shutdownType": 99},  # int triggers ValidationError
+        )
+        assert _build_event_details(ev) == ""
+
+
+# ---------------------------------------------------------------------------
+# _render_shutdown_cycles — None timestamp path (issue #1058)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderShutdownCyclesNoneTimestamp:
+    """A shutdown cycle with ts=None must display '—' in the Date column."""
+
+    def test_none_timestamp_renders_dash(self) -> None:
+        """A shutdown cycle with ts=None must display '—' in the Date column."""
+        sd = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=1,
+            totalApiDurationMs=500,
+            modelMetrics={},
+        )
+        summary = SessionSummary(
+            session_id="no-ts",
+            shutdown_cycles=[(None, sd)],
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        _render_shutdown_cycles(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "—" in output
+
+
+# ---------------------------------------------------------------------------
+# _truncate — max_len ≤ 0 guard (issue #1058)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("max_len", [0, -1, -100])
+def test_truncate_non_positive_max_len_returns_empty(max_len: int) -> None:
+    """_truncate must return '' for any max_len ≤ 0."""
+    assert _truncate("hello", max_len) == ""
