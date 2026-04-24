@@ -879,12 +879,13 @@ def test_stop_observer_none_is_noop() -> None:
 
 def test_stop_observer_calls_stop_then_join_with_timeout() -> None:
     """stop_observer(observer) calls observer.stop() then observer.join(timeout=2)."""
+    from typing import cast
     from unittest.mock import MagicMock, call
 
     from copilot_usage.interactive import Stoppable, stop_observer as _stop_obs
 
     mock_obs = MagicMock(spec=Stoppable)
-    _stop_obs(mock_obs)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    _stop_obs(cast(Stoppable, mock_obs))
 
     mock_obs.stop.assert_called_once_with()
     mock_obs.join.assert_called_once_with(timeout=2)
@@ -2416,11 +2417,13 @@ def test_interactive_loop_nonexistent_session_path(
     monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
 
     # Track _stop_observer calls to verify it's called with None in finally.
-    stop_observer_args: list[object] = []
+    from copilot_usage.interactive import Stoppable
 
-    def _tracking_stop(observer: object) -> None:
+    stop_observer_args: list[Stoppable | None] = []
+
+    def _tracking_stop(observer: Stoppable | None) -> None:
         stop_observer_args.append(observer)
-        _stop_observer(observer)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        _stop_observer(observer)
 
     monkeypatch.setattr(cli_mod, "_stop_observer", _tracking_stop)
 
