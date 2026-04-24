@@ -822,6 +822,25 @@ class TestRenderActivePeriod:
         _render_active_period(summary, target_console=console)
         assert buf.getvalue() == ""
 
+    def test_active_session_with_no_active_period_stats_produces_no_output(
+        self,
+    ) -> None:
+        """Active session with all zero active counters and no resume time
+        must not render the Active Period panel (issue #1078)."""
+        summary = SessionSummary(
+            session_id="active-no-stats",
+            is_active=True,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+        )
+        buf, console = _buf_console()
+        _render_active_period(summary, target_console=console)
+        assert buf.getvalue() == ""
+
 
 class TestRenderSessionDetailActivePeriod:
     """Integration test: render_session_detail with is_active=True must

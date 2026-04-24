@@ -33,6 +33,7 @@ from copilot_usage.models import (
     SessionSummary,
     ToolExecutionData,
     ensure_aware,
+    has_active_period_stats,
     total_output_tokens,
 )
 
@@ -261,10 +262,20 @@ def _render_active_period(
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Show model calls / messages / tokens since last shutdown (if active)."""
+    """Show model calls / messages / tokens accumulated during the active period.
+
+    The active period covers activity since the most recent shutdown cycle,
+    or the entire session when no shutdown events have occurred.
+
+    The panel is suppressed when ``has_active_period_stats`` is ``False``
+    (all active counters are zero and ``last_resume_time`` is ``None``)
+    to avoid rendering a misleading zero-stat panel.
+    """
     out = target_console or Console()
 
     if not summary.is_active:
+        return
+    if not has_active_period_stats(summary):
         return
 
     content = (
@@ -275,7 +286,7 @@ def _render_active_period(
     out.print(
         Panel(
             content,
-            title="🟢 Active Period (since last shutdown)",
+            title="🟢 Active Period",
             border_style="green",
         )
     )
