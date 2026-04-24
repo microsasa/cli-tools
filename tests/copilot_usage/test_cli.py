@@ -881,11 +881,10 @@ def test_stop_observer_calls_stop_then_join_with_timeout() -> None:
     """stop_observer(observer) calls observer.stop() then observer.join(timeout=2)."""
     from unittest.mock import MagicMock, call
 
-    from copilot_usage.interactive import Stoppable
-    from copilot_usage.interactive import stop_observer as _stop_obs
+    from copilot_usage.interactive import Stoppable, stop_observer as _stop_obs
 
     mock_obs = MagicMock(spec=Stoppable)
-    _stop_obs(mock_obs)
+    _stop_obs(mock_obs)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
     mock_obs.stop.assert_called_once_with()
     mock_obs.join.assert_called_once_with(timeout=2)
