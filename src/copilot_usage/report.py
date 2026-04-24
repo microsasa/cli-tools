@@ -262,14 +262,14 @@ def _aggregate_model_metrics(
 ) -> dict[str, ModelMetrics]:
     """Merge model metrics across all sessions into a single dict.
 
-    Accumulates in-place so each unique model name is copied at most once,
-    reducing copy overhead from O(n × m) to O(m).
+    Each unique model name produces a single accumulated ``ModelMetrics``
+    instance via immutable addition.
     """
     result: dict[str, ModelMetrics] = {}
     for s in sessions:
         for model_name, mm in s.model_metrics.items():
             if model_name in result:
-                add_to_model_metrics(result[model_name], mm)
+                result[model_name] = add_to_model_metrics(result[model_name], mm)
             else:
                 result[model_name] = copy_model_metrics(mm)
     return result
