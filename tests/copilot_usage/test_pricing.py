@@ -48,8 +48,8 @@ class TestModelPricing:
         with pytest.raises(dataclasses.FrozenInstanceError):
             p.multiplier = 2.0  # type: ignore[misc]
 
-    def test_cache_isolation_via_frozen_model(self) -> None:
-        """Exact-match lookup returns a frozen object — mutation is impossible,
+    def test_cache_isolation_via_frozen_dataclass(self) -> None:
+        """Exact-match lookup returns a frozen dataclass — mutation is impossible,
         so the cache and KNOWN_PRICING registry cannot be corrupted."""
         first = lookup_model_pricing("claude-sonnet-4.6")
         assert first.multiplier == 1.0
@@ -62,10 +62,12 @@ class TestModelPricing:
 
     def test_is_frozen_dataclass(self) -> None:
         """ModelPricing must be a stdlib frozen dataclass with slots."""
-        assert dataclasses.is_dataclass(ModelPricing)
-        assert dataclasses.is_dataclass(ModelPricing(model_name="x"))
-        # Verify frozen=True via FrozenInstanceError on assignment
         p = ModelPricing(model_name="x")
+        assert dataclasses.is_dataclass(ModelPricing)
+        assert dataclasses.is_dataclass(p)
+        assert hasattr(ModelPricing, "__slots__")
+        assert not hasattr(p, "__dict__")
+        # Verify frozen=True via FrozenInstanceError on assignment
         with pytest.raises(dataclasses.FrozenInstanceError):
             p.model_name = "y"  # type: ignore[misc]
 
