@@ -262,8 +262,9 @@ def _aggregate_model_metrics(
 ) -> dict[str, ModelMetrics]:
     """Merge model metrics across all sessions into a single dict.
 
-    Each unique model name produces a single accumulated ``ModelMetrics``
-    instance via immutable addition.
+    The returned dict contains one final accumulated ``ModelMetrics``
+    value per unique model name. Accumulation uses immutable addition,
+    so intermediate merged instances may be created while aggregating.
     """
     result: dict[str, ModelMetrics] = {}
     for s in sessions:

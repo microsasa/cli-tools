@@ -148,12 +148,12 @@ def add_to_model_metrics(target: ModelMetrics, source: ModelMetrics) -> ModelMet
 
 
 def copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
-    """Create an independent copy of *mm*.
+    """Create a shallow copy of *mm*.
 
     With frozen dataclasses every instance is already immutable, so a
     shallow ``dataclasses.replace`` (no field overrides) is sufficient —
-    the nested ``RequestMetrics`` and ``TokenUsage`` are themselves frozen
-    and can safely be shared.
+    the nested ``RequestMetrics`` and ``TokenUsage`` references are shared,
+    which is safe because they are themselves frozen.
     """
     return dataclasses.replace(mm)
 
