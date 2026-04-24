@@ -293,9 +293,7 @@ def test_active_fields_document_pure_active_semantics() -> None:
             _IMPL_MD,
             re.MULTILINE,
         )
-        assert match, (
-            f"Could not find '{field}' table row in implementation.md"
-        )
+        assert match, f"Could not find '{field}' table row in implementation.md"
         description = match.group(1)
         assert "pure-active" in description, (
             f"'{field}' description in implementation.md must mention "
