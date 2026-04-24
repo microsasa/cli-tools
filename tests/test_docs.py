@@ -276,3 +276,34 @@ def test_implementation_md_symbols_exist_in_expected_modules() -> None:
                 f"implementation.md references '{symbol}' as a public "
                 f"export of {module_path}, but it is not in __all__"
             )
+
+
+def test_active_fields_document_pure_active_semantics() -> None:
+    """The active_model_calls / active_user_messages / active_output_tokens
+    field descriptions must mention pure-active session semantics — not just
+    resumed sessions."""
+    for field in (
+        "active_model_calls",
+        "active_user_messages",
+        "active_output_tokens",
+    ):
+        # Find the table row for this field
+        match = re.search(
+            rf"^\|[^|]*`{field}`[^|]*\|[^|]*\|([^|]+)\|",
+            _IMPL_MD,
+            re.MULTILINE,
+        )
+        assert match, (
+            f"Could not find '{field}' table row in implementation.md"
+        )
+        description = match.group(1)
+        assert "pure-active" in description, (
+            f"'{field}' description in implementation.md must mention "
+            f"pure-active session semantics — for sessions that never "
+            f"shut down, active_* equals the full-session total"
+        )
+        assert "resumed sessions only" not in description, (
+            f"'{field}' description in implementation.md must not say "
+            f"'resumed sessions only' — the field is also populated "
+            f"for pure-active sessions"
+        )

@@ -78,9 +78,9 @@ Typed dispatch uses the `as_*()` accessors on `SessionEvent` (e.g. `as_session_s
 | `last_resume_time`       | `datetime \| None`           | Timestamp of `session.resume` event (if any, after last shutdown)                   |
 | `events_path`            | `Path \| None`               | Set by `get_all_sessions()` after building — not from events                        |
 | `shutdown_cycles`        | `list[tuple[datetime \| None, SessionShutdownData]]` | Pre-computed list of `(timestamp, shutdown_payload)` pairs for every `session.shutdown` event. Populated by `build_session_summary()` so renderers never need to re-scan the event list. |
-| `active_model_calls`     | `int`                       | `assistant.turn_start` count after last shutdown (resumed sessions only)            |
-| `active_user_messages`   | `int`                       | `user.message` count after last shutdown (resumed sessions only)                    |
-| `active_output_tokens`   | `int`                       | Sum of `outputTokens` from `assistant.message` events after last shutdown           |
+| `active_model_calls`     | `int`                       | Turn-starts since last shutdown (resumed sessions); equals `model_calls` for pure-active sessions |
+| `active_user_messages`   | `int`                       | User messages since last shutdown (resumed sessions); equals `user_messages` for pure-active sessions |
+| `active_output_tokens`   | `int`                       | Output tokens since last shutdown (resumed sessions); equals full-session output tokens for pure-active sessions |
 
 ---
 
@@ -192,7 +192,7 @@ Populated from the `timestamp` of the `session.resume` event after the last shut
 For resumed sessions (in `parser.py`):
 - `end_time` is set to `None` (not the last shutdown timestamp)
 - `model_metrics` contain the **merged shutdown data** (historical baseline)
-- `active_model_calls`, `active_user_messages`, `active_output_tokens` contain **only** post-shutdown counts
+- `active_model_calls`, `active_user_messages`, `active_output_tokens` contain **only** post-shutdown counts (for pure-active sessions these equal the full-session totals since there is no shutdown baseline)
 - `model_calls` and `user_messages` are the **total** counts across the entire session
 
 ---
