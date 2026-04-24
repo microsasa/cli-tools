@@ -1,4 +1,4 @@
-"""Model pricing data and premium-request cost estimation.
+"""Model pricing data and premium-request multiplier lookup.
 
 GitHub Copilot charges different premium-request multipliers depending on the
 AI model used.  This module provides:
@@ -6,7 +6,6 @@ AI model used.  This module provides:
 * A ``ModelPricing`` frozen dataclass for per-model pricing metadata.
 * A registry of known multipliers (easy to update in one place).
 * Lookup helpers that handle exact matches, partial matches, and unknown models.
-* A cost-estimation function that works with ``SessionSummary.model_metrics``.
 """
 
 import dataclasses
