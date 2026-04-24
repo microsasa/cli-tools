@@ -554,9 +554,7 @@ def _render_active_section_from(
         )
         return
 
-    table = Table(
-        title="🟢 Active Sessions (Since Last Shutdown)", border_style="green"
-    )
+    table = Table(title="🟢 Active Sessions", border_style="green")
     table.add_column("Name", style="bold", max_width=40)
     table.add_column("Model")
     table.add_column("Model Calls", justify="right")
@@ -594,7 +592,7 @@ def render_full_summary(
     """Render the two-section summary for interactive mode.
 
     Section 1: Historical shutdown data (totals, per-model, per-session).
-    Section 2: Active sessions since last shutdown.
+    Section 2: Currently active sessions.
 
     *sessions* must be in descending ``start_time`` order — the contract
     guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No

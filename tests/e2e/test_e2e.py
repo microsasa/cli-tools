@@ -809,7 +809,7 @@ class TestSessionNotFoundAvailableE2E:
 # ---------------------------------------------------------------------------
 
 # Marker that separates the historical section from the active section
-_ACTIVE_MARKER = "Active Sessions (Since Last Shutdown)"
+_ACTIVE_MARKER = "Active Sessions"
 
 # Minimal completed session with zero premium requests (free-tier model only).
 # Used to verify that the historical filter's ``not s.is_active`` branch
