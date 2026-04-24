@@ -1,5 +1,6 @@
-"""Tests for copilot_usage.models — Pydantic v2 event parsing."""
+"""Tests for copilot_usage.models — event parsing and metric helpers."""
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -463,18 +464,17 @@ class TestAddToModelMetrics:
     """Unit tests for the add_to_model_metrics helper."""
 
     def test_all_fields_accumulated(self) -> None:
-        # Assign distinct values per field so mis-mapped fields will fail the test.
-        target_requests_kwargs = {
-            name: idx + 1 for idx, name in enumerate(RequestMetrics.model_fields)
-        }
+        """Every field from both operands is summed in the result."""
+        req_fields = [f.name for f in dataclasses.fields(RequestMetrics)]
+        usage_fields = [f.name for f in dataclasses.fields(TokenUsage)]
+
+        target_requests_kwargs = {name: idx + 1 for idx, name in enumerate(req_fields)}
         source_requests_kwargs = {
-            name: (idx + 1) * 10 for idx, name in enumerate(RequestMetrics.model_fields)
+            name: (idx + 1) * 10 for idx, name in enumerate(req_fields)
         }
-        target_usage_kwargs = {
-            name: idx + 100 for idx, name in enumerate(TokenUsage.model_fields)
-        }
+        target_usage_kwargs = {name: idx + 100 for idx, name in enumerate(usage_fields)}
         source_usage_kwargs = {
-            name: (idx + 1) * 1000 for idx, name in enumerate(TokenUsage.model_fields)
+            name: (idx + 1) * 1000 for idx, name in enumerate(usage_fields)
         }
 
         target = ModelMetrics(
@@ -486,21 +486,22 @@ class TestAddToModelMetrics:
             usage=TokenUsage(**source_usage_kwargs),
         )
 
-        add_to_model_metrics(target, source)
+        result = add_to_model_metrics(target, source)
 
         expected_requests = {
             name: target_requests_kwargs[name] + source_requests_kwargs[name]
-            for name in RequestMetrics.model_fields
+            for name in req_fields
         }
         expected_usage = {
             name: target_usage_kwargs[name] + source_usage_kwargs[name]
-            for name in TokenUsage.model_fields
+            for name in usage_fields
         }
 
-        assert target.requests.model_dump() == expected_requests
-        assert target.usage.model_dump() == expected_usage
+        assert dataclasses.asdict(result.requests) == expected_requests
+        assert dataclasses.asdict(result.usage) == expected_usage
 
     def test_zero_source_is_identity(self) -> None:
+        """Adding a default (zero) source returns an equal value."""
         target = ModelMetrics(
             requests=RequestMetrics(count=5, cost=3),
             usage=TokenUsage(
@@ -510,30 +511,32 @@ class TestAddToModelMetrics:
                 cacheWriteTokens=5,
             ),
         )
-        before = target.model_dump()
-        add_to_model_metrics(target, ModelMetrics())
-        assert target.model_dump() == before
+        result = add_to_model_metrics(target, ModelMetrics())
+        assert dataclasses.asdict(result) == dataclasses.asdict(target)
 
-    def test_source_not_mutated(self) -> None:
+    def test_neither_operand_mutated(self) -> None:
+        """add_to_model_metrics must not modify *target* or *source*."""
         target = ModelMetrics(requests=RequestMetrics(count=1))
         source = ModelMetrics(requests=RequestMetrics(count=5))
-        source_before = source.model_dump()
+        target_before = dataclasses.asdict(target)
+        source_before = dataclasses.asdict(source)
         add_to_model_metrics(target, source)
-        assert source.model_dump() == source_before  # source unchanged
+        assert dataclasses.asdict(target) == target_before
+        assert dataclasses.asdict(source) == source_before
 
     def test_accumulates_incrementally(self) -> None:
         """Multiple sequential calls accumulate correctly."""
-        target = ModelMetrics()
+        acc = ModelMetrics()
         for _ in range(3):
-            add_to_model_metrics(
-                target,
+            acc = add_to_model_metrics(
+                acc,
                 ModelMetrics(
                     requests=RequestMetrics(count=2),
                     usage=TokenUsage(outputTokens=10),
                 ),
             )
-        assert target.requests.count == 6
-        assert target.usage.outputTokens == 30
+        assert acc.requests.count == 6
+        assert acc.usage.outputTokens == 30
 
 
 # ---------------------------------------------------------------------------
@@ -546,63 +549,34 @@ class TestCopyModelMetrics:
 
     def test_returns_equal_value(self) -> None:
         """All fields are faithfully copied, including any future additions."""
-        # Build kwargs with non-default values for every field so newly-added
-        # fields are automatically covered by the model_dump() comparison.
-        req_kwargs = {
-            name: idx + 1 for idx, name in enumerate(RequestMetrics.model_fields)
-        }
-        usage_kwargs = {
-            name: (idx + 1) * 100 for idx, name in enumerate(TokenUsage.model_fields)
-        }
+        req_fields = [f.name for f in dataclasses.fields(RequestMetrics)]
+        usage_fields = [f.name for f in dataclasses.fields(TokenUsage)]
+        req_kwargs = {name: idx + 1 for idx, name in enumerate(req_fields)}
+        usage_kwargs = {name: (idx + 1) * 100 for idx, name in enumerate(usage_fields)}
         mm = ModelMetrics(
             requests=RequestMetrics(**req_kwargs),
             usage=TokenUsage(**usage_kwargs),
         )
         result = copy_model_metrics(mm)
-        assert result.model_dump() == mm.model_dump()
+        assert dataclasses.asdict(result) == dataclasses.asdict(mm)
 
-    def test_requests_copy_is_independent(self) -> None:
-        """Mutating the copy's requests must not affect the original."""
+    def test_copy_is_distinct_object(self) -> None:
+        """The copy must be a new object, not the same reference."""
         mm = ModelMetrics(requests=RequestMetrics(count=5, cost=3))
         copy = copy_model_metrics(mm)
-        copy.requests.count = 999
-        copy.requests.cost = 888
-        assert mm.requests.count == 5
-        assert mm.requests.cost == 3
+        assert copy is not mm
 
-    def test_usage_copy_is_independent(self) -> None:
-        """Mutating the copy's usage must not affect the original."""
-        mm = ModelMetrics(
-            usage=TokenUsage(
-                inputTokens=100,
-                outputTokens=50,
-                cacheReadTokens=20,
-                cacheWriteTokens=10,
-            ),
-        )
-        copy = copy_model_metrics(mm)
-        copy.usage.inputTokens = 999
-        copy.usage.outputTokens = 888
-        copy.usage.cacheReadTokens = 777
-        copy.usage.cacheWriteTokens = 666
-        assert mm.usage.inputTokens == 100
-        assert mm.usage.outputTokens == 50
-        assert mm.usage.cacheReadTokens == 20
-        assert mm.usage.cacheWriteTokens == 10
-
-    def test_original_is_independent_of_copy_mutations(self) -> None:
-        """Mutating the original must not affect the copy."""
+    def test_frozen_prevents_mutation(self) -> None:
+        """Frozen dataclasses reject attribute assignment at runtime."""
         mm = ModelMetrics(requests=RequestMetrics(count=5))
-        copy = copy_model_metrics(mm)
-        mm.requests.count = 999
-        assert copy.requests.count == 5
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            mm.requests = RequestMetrics(count=999)  # type: ignore[misc]
 
     def test_defaults_copied_correctly(self) -> None:
         """Default (zero) values are preserved in the copy for all fields."""
         mm = ModelMetrics()
         copy = copy_model_metrics(mm)
-        # Ensure *all* default values (including any future fields) are preserved
-        assert copy.model_dump() == mm.model_dump()
+        assert dataclasses.asdict(copy) == dataclasses.asdict(mm)
 
 
 # ---------------------------------------------------------------------------
@@ -728,19 +702,10 @@ class TestMergeModelMetrics:
             )
         }
 
-        with (
-            patch.object(
-                ModelMetrics,
-                "model_copy",
-                side_effect=AssertionError(
-                    "merge_model_metrics must not call model_copy"
-                ),
-            ),
-            patch(
-                "copy.deepcopy",
-                side_effect=AssertionError(
-                    "merge_model_metrics must not call copy.deepcopy"
-                ),
+        with patch(
+            "copy.deepcopy",
+            side_effect=AssertionError(
+                "merge_model_metrics must not call copy.deepcopy"
             ),
         ):
             result = merge_model_metrics(base, additional)
