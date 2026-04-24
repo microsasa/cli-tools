@@ -6405,3 +6405,58 @@ class TestRenderCostViewNoRedundantTotalOutputTokens:
             "total_output_tokens should not be called for resumed sessions "
             "with model_metrics"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1070 — active section title reflects shutdown history
+# ---------------------------------------------------------------------------
+
+
+class TestActiveSectionTitle:
+    """The active-section table title must say 'Since Last Shutdown' only
+    when at least one active session has prior shutdown data."""
+
+    def test_pure_active_session_active_section_title(self) -> None:
+        """Pure-active sessions → title must NOT contain 'Since Last Shutdown'."""
+        session = SessionSummary(
+            session_id="pure-active-title",
+            name="PureActive",
+            model="gpt-5-mini",
+            start_time=datetime(2026, 4, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=1000,
+        )
+        output = _capture_full_summary([session])
+        assert "Active Sessions" in output
+        assert "Since Last Shutdown" not in output
+
+    def test_resumed_session_active_section_title(self) -> None:
+        """Resumed session → title must contain 'Since Last Shutdown'."""
+        session = SessionSummary(
+            session_id="resumed-title",
+            name="Resumed",
+            model="gpt-5-mini",
+            start_time=datetime(2026, 4, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=5,
+            total_api_duration_ms=100,
+            model_calls=10,
+            user_messages=5,
+            active_model_calls=3,
+            active_user_messages=1,
+            active_output_tokens=500,
+            model_metrics={
+                "gpt-5-mini": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=0),
+                    usage=TokenUsage(outputTokens=2000),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        assert "Since Last Shutdown" in output

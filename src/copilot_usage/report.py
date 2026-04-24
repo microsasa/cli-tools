@@ -545,6 +545,9 @@ def _render_active_section_from(
 
     *active* must already contain only sessions where ``is_active`` is
     ``True``.  No filtering is performed here.
+
+    The table title includes "Since Last Shutdown" only when at least one
+    session has prior shutdown data (``has_shutdown_metrics=True``).
     """
     if not active:
         console.print(
@@ -554,9 +557,13 @@ def _render_active_section_from(
         )
         return
 
-    table = Table(
-        title="🟢 Active Sessions (Since Last Shutdown)", border_style="green"
+    has_resumed = any(s.has_shutdown_metrics for s in active)
+    title = (
+        "🟢 Active Sessions (Since Last Shutdown)"
+        if has_resumed
+        else "🟢 Active Sessions"
     )
+    table = Table(title=title, border_style="green")
     table.add_column("Name", style="bold", max_width=40)
     table.add_column("Model")
     table.add_column("Model Calls", justify="right")
