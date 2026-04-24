@@ -6,13 +6,14 @@ flexible fallback for unknown ones.
 """
 
 import builtins
+import dataclasses
 import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Self
+from typing import Final
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 __all__: Final[list[str]] = [
     "EPOCH",
@@ -407,7 +408,8 @@ class SessionEvent(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SessionSummary(BaseModel):
+@dataclasses.dataclass(frozen=True, slots=True)
+class SessionSummary:
     """Aggregated data across all events in a single session.
 
     Populated by a parser that walks the ``events.jsonl`` file; not
@@ -422,7 +424,7 @@ class SessionSummary(BaseModel):
     model: str | None = None
     total_premium_requests: int = 0
     total_api_duration_ms: int = 0
-    model_metrics: dict[str, ModelMetrics] = Field(default_factory=dict)
+    model_metrics: dict[str, ModelMetrics] = dataclasses.field(default_factory=dict)
     code_changes: CodeChanges | None = None
     model_calls: int = 0
     user_messages: int = 0
@@ -433,8 +435,8 @@ class SessionSummary(BaseModel):
 
     # Per-cycle shutdown data: (timestamp, parsed shutdown payload).
     # Populated at build time so renderers never re-scan the event list.
-    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = Field(
-        default_factory=lambda: []
+    shutdown_cycles: list[tuple[datetime | None, SessionShutdownData]] = (
+        dataclasses.field(default_factory=lambda: [])
     )
 
     # Post-shutdown activity (only populated for resumed/active sessions)
@@ -442,8 +444,8 @@ class SessionSummary(BaseModel):
     active_user_messages: int = 0
     active_output_tokens: int = 0
 
-    @model_validator(mode="after")
-    def _check_active_counters(self) -> Self:
+    def __post_init__(self) -> None:
+        """Validate active counters do not exceed their totals."""
         if self.active_model_calls > self.model_calls:
             raise ValueError(
                 f"active_model_calls ({self.active_model_calls}) must be <= "
@@ -454,7 +456,6 @@ class SessionSummary(BaseModel):
                 f"active_user_messages ({self.active_user_messages}) must be <= "
                 f"user_messages ({self.user_messages})"
             )
-        return self
 
 
 # ---------------------------------------------------------------------------
