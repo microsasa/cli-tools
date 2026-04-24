@@ -11,8 +11,8 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import MagicMock, call, patch
 
 import click
 import pytest
@@ -34,7 +34,10 @@ from copilot_usage.cli import (
     _validate_since_until,
     main,
 )
-from copilot_usage.interactive import render_session_list as _render_session_list
+from copilot_usage.interactive import (
+    Stoppable,
+    render_session_list as _render_session_list,
+)
 from copilot_usage.models import ensure_aware_opt
 
 # ---------------------------------------------------------------------------
@@ -875,6 +878,17 @@ def test_start_observer_propagates_unexpected_exception(tmp_path: Path) -> None:
 def test_stop_observer_none_is_noop() -> None:
     """_stop_observer(None) returns silently without raising."""
     _stop_observer(None)  # should not raise
+
+
+def test_stop_observer_calls_stop_then_join_with_timeout() -> None:
+    """_stop_observer(observer) calls observer.stop() then observer.join(timeout=2)."""
+    mock_obs = MagicMock(spec=Stoppable)
+    _stop_observer(cast(Stoppable, mock_obs))
+
+    mock_obs.stop.assert_called_once_with()
+    mock_obs.join.assert_called_once_with(timeout=2)
+    # Verify order: stop() must precede join()
+    assert mock_obs.mock_calls == [call.stop(), call.join(timeout=2)]
 
 
 # ---------------------------------------------------------------------------
@@ -2401,11 +2415,11 @@ def test_interactive_loop_nonexistent_session_path(
     monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
 
     # Track _stop_observer calls to verify it's called with None in finally.
-    stop_observer_args: list[object] = []
+    stop_observer_args: list[Stoppable | None] = []
 
-    def _tracking_stop(observer: object) -> None:
+    def _tracking_stop(observer: Stoppable | None) -> None:
         stop_observer_args.append(observer)
-        _stop_observer(observer)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        _stop_observer(observer)
 
     monkeypatch.setattr(cli_mod, "_stop_observer", _tracking_stop)
 
