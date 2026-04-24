@@ -141,7 +141,8 @@ def add_to_model_metrics(target: ModelMetrics, source: ModelMetrics) -> ModelMet
             inputTokens=target.usage.inputTokens + source.usage.inputTokens,
             outputTokens=target.usage.outputTokens + source.usage.outputTokens,
             cacheReadTokens=target.usage.cacheReadTokens + source.usage.cacheReadTokens,
-            cacheWriteTokens=target.usage.cacheWriteTokens + source.usage.cacheWriteTokens,
+            cacheWriteTokens=target.usage.cacheWriteTokens
+            + source.usage.cacheWriteTokens,
         ),
     )
 
