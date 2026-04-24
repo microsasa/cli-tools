@@ -877,6 +877,22 @@ def test_stop_observer_none_is_noop() -> None:
     _stop_observer(None)  # should not raise
 
 
+def test_stop_observer_calls_stop_then_join_with_timeout() -> None:
+    """stop_observer(observer) calls observer.stop() then observer.join(timeout=2)."""
+    from unittest.mock import MagicMock, call
+
+    from copilot_usage.interactive import Stoppable
+    from copilot_usage.interactive import stop_observer as _stop_obs
+
+    mock_obs = MagicMock(spec=Stoppable)
+    _stop_obs(mock_obs)
+
+    mock_obs.stop.assert_called_once_with()
+    mock_obs.join.assert_called_once_with(timeout=2)
+    # Verify order: stop() must precede join()
+    assert mock_obs.mock_calls == [call.stop(), call.join(timeout=2)]
+
+
 # ---------------------------------------------------------------------------
 # _FileChangeHandler tests
 # ---------------------------------------------------------------------------
