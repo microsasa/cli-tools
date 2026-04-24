@@ -554,9 +554,7 @@ def _render_active_section_from(
         )
         return
 
-    table = Table(
-        title="🟢 Active Sessions", border_style="green"
-    )
+    table = Table(title="🟢 Active Sessions", border_style="green")
     table.add_column("Name", style="bold", max_width=40)
     table.add_column("Model")
     table.add_column("Model Calls", justify="right")
