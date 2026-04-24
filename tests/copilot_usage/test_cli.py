@@ -11,8 +11,8 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import MagicMock, call, patch
 
 import click
 import pytest
@@ -34,7 +34,10 @@ from copilot_usage.cli import (
     _validate_since_until,
     main,
 )
-from copilot_usage.interactive import render_session_list as _render_session_list
+from copilot_usage.interactive import (
+    Stoppable,
+    render_session_list as _render_session_list,
+)
 from copilot_usage.models import ensure_aware_opt
 
 # ---------------------------------------------------------------------------
@@ -879,11 +882,6 @@ def test_stop_observer_none_is_noop() -> None:
 
 def test_stop_observer_calls_stop_then_join_with_timeout() -> None:
     """_stop_observer(observer) calls observer.stop() then observer.join(timeout=2)."""
-    from typing import cast
-    from unittest.mock import MagicMock, call
-
-    from copilot_usage.interactive import Stoppable
-
     mock_obs = MagicMock(spec=Stoppable)
     _stop_observer(cast(Stoppable, mock_obs))
 
@@ -2417,8 +2415,6 @@ def test_interactive_loop_nonexistent_session_path(
     monkeypatch.setattr(cli_mod, "_start_observer", _tracking_start)
 
     # Track _stop_observer calls to verify it's called with None in finally.
-    from copilot_usage.interactive import Stoppable
-
     stop_observer_args: list[Stoppable | None] = []
 
     def _tracking_stop(observer: Stoppable | None) -> None:
