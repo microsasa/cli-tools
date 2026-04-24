@@ -424,7 +424,9 @@ class SessionSummary:
     model: str | None = None
     total_premium_requests: int = 0
     total_api_duration_ms: int = 0
-    model_metrics: dict[str, ModelMetrics] = dataclasses.field(default_factory=dict)
+    model_metrics: dict[str, ModelMetrics] = dataclasses.field(
+        default_factory=lambda: {}
+    )
     code_changes: CodeChanges | None = None
     model_calls: int = 0
     user_messages: int = 0
