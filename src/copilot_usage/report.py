@@ -592,7 +592,7 @@ def render_full_summary(
     """Render the two-section summary for interactive mode.
 
     Section 1: Historical shutdown data (totals, per-model, per-session).
-    Section 2: Active sessions since last shutdown.
+    Section 2: Currently active sessions.
 
     *sessions* must be in descending ``start_time`` order — the contract
     guaranteed by :func:`~copilot_usage.parser.get_all_sessions`.  No
