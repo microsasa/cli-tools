@@ -262,10 +262,10 @@ def _render_active_period(
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Show model calls / messages / tokens for the current active period.
+    """Show model calls / messages / tokens accumulated during the active period.
 
-    For resumed sessions the active period begins after the last shutdown;
-    for pure-active sessions (no shutdown events) it spans the entire session.
+    The active period covers activity since the most recent shutdown cycle,
+    or the entire session when no shutdown events have occurred.
 
     The panel is suppressed when ``has_active_period_stats`` is ``False``
     (all active counters are zero and ``last_resume_time`` is ``None``)
