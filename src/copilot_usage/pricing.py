@@ -1,20 +1,19 @@
-"""Model pricing data and premium-request cost estimation.
+"""Model pricing data and premium-request multiplier lookup.
 
 GitHub Copilot charges different premium-request multipliers depending on the
 AI model used.  This module provides:
 
-* A ``ModelPricing`` Pydantic model for per-model pricing metadata.
+* A ``ModelPricing`` frozen dataclass for per-model pricing metadata.
 * A registry of known multipliers (easy to update in one place).
 * Lookup helpers that handle exact matches, partial matches, and unknown models.
-* A cost-estimation function that works with ``SessionSummary.model_metrics``.
 """
 
+import dataclasses
 from enum import StrEnum
 from functools import lru_cache
 from typing import Final
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
 
 __all__: Final[list[str]] = [
     "ModelPricing",
@@ -39,14 +38,13 @@ class PricingTier(StrEnum):
 
 
 # ---------------------------------------------------------------------------
-# Pydantic model
+# Pricing dataclass
 # ---------------------------------------------------------------------------
 
 
-class ModelPricing(BaseModel):
+@dataclasses.dataclass(frozen=True, slots=True)
+class ModelPricing:
     """Pricing metadata for a single AI model."""
-
-    model_config = ConfigDict(frozen=True)
 
     model_name: str
     multiplier: float = 1.0

@@ -2,11 +2,11 @@
 
 # pyright: reportPrivateUsage=false
 
+import dataclasses
 from functools import lru_cache
 
 import pytest
 from loguru import logger
-from pydantic import ValidationError
 
 from copilot_usage import pricing
 from copilot_usage.pricing import (
@@ -43,22 +43,40 @@ class TestModelPricing:
         assert p.tier == PricingTier.PREMIUM
 
     def test_model_pricing_is_immutable(self) -> None:
-        """Assigning to a field on a frozen ModelPricing must raise ValidationError."""
+        """Assigning to a field on a frozen ModelPricing must raise FrozenInstanceError."""
         p = ModelPricing(model_name="test", multiplier=1.0)
-        with pytest.raises(ValidationError):
-            p.multiplier = 2.0
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p.multiplier = 2.0  # type: ignore[misc]
 
-    def test_cache_isolation_via_frozen_model(self) -> None:
-        """Exact-match lookup returns a frozen object — mutation is impossible,
+    def test_cache_isolation_via_frozen_dataclass(self) -> None:
+        """Exact-match lookup returns a frozen dataclass — mutation is impossible,
         so the cache and KNOWN_PRICING registry cannot be corrupted."""
         first = lookup_model_pricing("claude-sonnet-4.6")
         assert first.multiplier == 1.0
 
-        with pytest.raises(ValidationError):
-            first.multiplier = 99.0
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            first.multiplier = 99.0  # type: ignore[misc]
 
         second = lookup_model_pricing("claude-sonnet-4.6")
         assert second.multiplier == 1.0
+
+    def test_is_frozen_dataclass(self) -> None:
+        """ModelPricing must be a stdlib frozen dataclass with slots."""
+        p = ModelPricing(model_name="x")
+        assert dataclasses.is_dataclass(ModelPricing)
+        assert dataclasses.is_dataclass(p)
+        assert hasattr(ModelPricing, "__slots__")
+        assert not hasattr(p, "__dict__")
+        # Verify frozen=True via FrozenInstanceError on assignment
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p.model_name = "y"  # type: ignore[misc]
+
+    def test_model_pricing_in_all(self) -> None:
+        """ModelPricing is exported in __all__ and importable from the public API."""
+        assert "ModelPricing" in pricing.__all__
+        from copilot_usage.pricing import ModelPricing as MP
+
+        assert MP is ModelPricing
 
 
 # ---------------------------------------------------------------------------
