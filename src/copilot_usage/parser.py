@@ -795,12 +795,32 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
 
     for idx, ev in enumerate(events):
         etype = ev.type
-        # Fast path: once tool_model is found, skip all tool-complete events
-        # with a single None-check instead of traversing the full elif chain.
+        # Once tool_model is found, skip all tool-complete events with a
+        # single None-check instead of traversing the full elif chain.
         if etype == EventType.TOOL_EXECUTION_COMPLETE:
             if tool_model is None:
-                m = ev.data.get("model")
-                if isinstance(m, str) and m:
+                try:
+                    m = ev.as_tool_execution().model
+                except ValidationError as exc:
+                    logger.debug(
+                        "event {} — could not parse {} event ({}), skipping",
+                        idx,
+                        ev.type,
+                        exc.error_count(),
+                    )
+                    m = None
+                except ValueError as exc:
+                    # Defensive: currently unreachable because the etype
+                    # guard above prevents type mismatches, but caught so
+                    # a refactor of the guard can't let ValueError escape.
+                    logger.debug(
+                        "event {} — could not parse {} event ({}), skipping",
+                        idx,
+                        ev.type,
+                        exc,
+                    )
+                    m = None
+                if m:
                     tool_model = m
             continue
         if etype not in _FIRST_PASS_EVENT_TYPES:
