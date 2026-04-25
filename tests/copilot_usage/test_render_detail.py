@@ -822,6 +822,35 @@ class TestRenderActivePeriod:
         _render_active_period(summary, target_console=console)
         assert buf.getvalue() == ""
 
+    def test_active_session_with_zero_stats_renders_zero_panel(self) -> None:
+        """Active session with zero post-shutdown stats still renders the panel.
+
+        Documents current behaviour: ``_render_active_period`` checks only
+        ``is_active``, not ``has_active_period_stats()``, so the panel appears
+        even when all counters are zero and ``last_resume_time`` is ``None``.
+
+        When issue #1078 is resolved this test should be updated to assert
+        that the panel is **not** rendered.
+        """
+        # is_active=True but all active_* counters are 0 and last_resume_time
+        # is None → has_active_period_stats() returns False.
+        summary = SessionSummary(
+            session_id="zero-active-test",
+            is_active=True,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+        )
+        buf, console = _buf_console()
+        _render_active_period(summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        # Panel is rendered with zero stats (current behaviour — see #1078).
+        assert "Active Period" in output
+        assert "0 model calls" in output
+        assert "0 user messages" in output
+        assert "0 output tokens" in output
+
 
 class TestRenderSessionDetailActivePeriod:
     """Integration test: render_session_detail with is_active=True must
@@ -849,6 +878,38 @@ class TestRenderSessionDetailActivePeriod:
         render_session_detail([ev], summary, target_console=console)
         output = _strip_ansi(buf.getvalue())
         assert "Active Period" in output
+
+    def test_render_session_detail_idle_active_no_zero_panel_after_fix(self) -> None:
+        """Integration: render_session_detail with an idle active session.
+
+        The session is active (``is_active=True``) but has zero post-shutdown
+        stats (``has_active_period_stats()`` returns ``False``).  Under current
+        behaviour the "Active Period" panel is rendered with all-zero
+        counters.
+
+        When issue #1078 is resolved this test should be updated to assert
+        that "Active Period" is **not** present in the output.
+        """
+        summary = SessionSummary(
+            session_id="idle-active-e2e",
+            start_time=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
+            is_active=True,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+        )
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 4, 1, 10, 1, 0, tzinfo=UTC),
+            data={"content": "ping"},
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        # Current behaviour: zero-stat panel is rendered (see #1078).
+        assert "Active Period" in output
+        assert "0 model calls" in output
 
 
 # ---------------------------------------------------------------------------
