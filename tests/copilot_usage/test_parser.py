@@ -6478,6 +6478,135 @@ class TestResumeDetectionDirect:
         assert fp.last_resume_time is None
         assert fp.post_shutdown_user_messages == 1
 
+    def test_turn_starts_and_tokens_cleared_on_second_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        """turn_starts and output_tokens must reset to 0 on a second shutdown."""
+        turn_start_between = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "ps1", "interactionId": "i-ps1"},
+                "id": "ev-ts-between",
+                "timestamp": "2026-03-07T11:30:00.000Z",
+            }
+        )
+        asst_between = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-between",
+                    "content": "working",
+                    "toolRequests": [],
+                    "interactionId": "i-ps1",
+                    "outputTokens": 200,
+                },
+                "id": "ev-asst-between",
+                "timestamp": "2026-03-07T11:31:00.000Z",
+            }
+        )
+        shutdown2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "sessionId": "test-session-1",
+                    "totalApiDurationMs": 0,
+                    "totalPremiumRequests": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2-ts",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _SHUTDOWN_EVENT,
+            turn_start_between,
+            asst_between,
+            shutdown2,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        assert fp.post_shutdown_turn_starts == 0
+        assert fp.post_shutdown_output_tokens == 0
+
+    def test_all_accumulators_cleared_on_second_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        """All four rolling accumulators reset on second shutdown."""
+        user_between = json.dumps(
+            {
+                "type": "user.message",
+                "data": {"content": "mid"},
+                "id": "ev-u-between",
+                "timestamp": "2026-03-07T11:10:00.000Z",
+            }
+        )
+        turn_between = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "ps-mid", "interactionId": "i-mid"},
+                "id": "ev-ts-mid",
+                "timestamp": "2026-03-07T11:11:00.000Z",
+            }
+        )
+        asst_between = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-mid",
+                    "content": "ok",
+                    "toolRequests": [],
+                    "interactionId": "i-mid",
+                    "outputTokens": 100,
+                },
+                "id": "ev-asst-mid",
+                "timestamp": "2026-03-07T11:12:00.000Z",
+            }
+        )
+        shutdown2 = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "sessionId": "test-session-1",
+                    "totalApiDurationMs": 0,
+                    "totalPremiumRequests": 0,
+                    "modelMetrics": {},
+                },
+                "id": "ev-sd2-all",
+                "timestamp": "2026-03-07T12:00:00.000Z",
+            }
+        )
+        turn_after = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "ps-after", "interactionId": "i-after"},
+                "id": "ev-ts-after",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _SHUTDOWN_EVENT,
+            user_between,
+            turn_between,
+            asst_between,
+            shutdown2,
+            turn_after,
+        )
+        events = parse_events(p)
+        fp = _first_pass(events)
+        # Only the turn_start after SHUTDOWN2 counts
+        assert fp.post_shutdown_turn_starts == 1
+        assert fp.post_shutdown_output_tokens == 0
+        assert fp.post_shutdown_user_messages == 0
+        assert fp.post_shutdown_resumed is True
+
     def test_completed_session_zeroes_active_counters_despite_post_shutdown_values(
         self, tmp_path: Path
     ) -> None:
