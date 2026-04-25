@@ -78,8 +78,10 @@ tests/
 │   ├── test_models.py          Pydantic model creation and validation
 │   ├── test_parser.py          Event parsing, session summary building, edge cases
 │   ├── test_pricing.py         Pricing lookups, cost estimation
-│   ├── test_report.py          Rich output & session-detail rendering
+│   ├── test_report.py          Rich output — summary, cost, live, and full-summary views
+│   ├── test_render_detail.py   Session-detail rendering (render_detail.py)
 │   ├── test_formatting.py      Formatting helpers and string utilities
+│   ├── test_fs_utils.py        Filesystem helpers and LRU cache utilities
 │   ├── test_logging_config.py  Loguru configuration
 │   ├── test_cli.py             Click command invocation via CliRunner
 │   ├── test_vscode_parser.py   VS Code log parsing, discovery, aggregation
