@@ -20,6 +20,7 @@ from copilot_usage.vscode_parser import (
     _CCREQ_RE,
     _MAX_CACHED_FILE_SUMMARIES,
     _MAX_CACHED_VSCODE_REQUESTS,
+    _MAX_VSCODE_DISCOVERY_CACHE,
     _PER_FILE_SUMMARY_CACHE,
     _VSCODE_DISCOVERY_CACHE,
     _VSCODE_LOG_CACHE,
@@ -3400,3 +3401,38 @@ class TestNewestChildFromIds:
         path, identity = _newest_child_from_ids(self._ROOT, child_ids)
         assert path == self._ROOT / "window2"
         assert identity == (100, 0)
+
+
+# ---------------------------------------------------------------------------
+# _VSCODE_DISCOVERY_CACHE bounded by _MAX_VSCODE_DISCOVERY_CACHE
+# ---------------------------------------------------------------------------
+
+
+class TestVscodeDiscoveryCacheLRUEviction:
+    """_VSCODE_DISCOVERY_CACHE is bounded by _MAX_VSCODE_DISCOVERY_CACHE."""
+
+    def test_vscode_discovery_cache_evicts_lru_entry(self, tmp_path: Path) -> None:
+        """Calling _cached_discover_vscode_logs with more than
+        _MAX_VSCODE_DISCOVERY_CACHE distinct roots evicts the LRU entry."""
+        roots: list[Path] = []
+        for i in range(_MAX_VSCODE_DISCOVERY_CACHE + 2):
+            root = tmp_path / f"root{i}"
+            log_dir = (
+                root
+                / "20260313T211400"
+                / "window1"
+                / "exthost"
+                / "GitHub.copilot-chat"
+            )
+            log_dir.mkdir(parents=True)
+            (log_dir / "GitHub Copilot Chat.log").write_text(
+                _make_log_line(req_idx=i)
+            )
+            _cached_discover_vscode_logs(root)
+            roots.append(root)
+
+        assert len(_VSCODE_DISCOVERY_CACHE) <= _MAX_VSCODE_DISCOVERY_CACHE
+        # The first root should have been evicted (LRU).
+        assert roots[0] not in _VSCODE_DISCOVERY_CACHE
+        # The last root should still be cached.
+        assert roots[-1] in _VSCODE_DISCOVERY_CACHE

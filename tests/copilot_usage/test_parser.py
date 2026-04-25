@@ -40,6 +40,7 @@ from copilot_usage.parser import (
     _DISCOVERY_CACHE,
     _EVENTS_CACHE,
     _FIRST_PASS_EVENT_TYPES,
+    _MAX_CACHED_DISCOVERY,
     _MAX_CACHED_EVENTS,
     _MAX_CACHED_SESSIONS,
     _MAX_PLAN_PROBES,
@@ -9600,3 +9601,34 @@ class TestGetAllSessionsPostParseStat:
             # stored file_id size should NOT be the inflated value
             assert entry.file_id is not None
             assert entry.file_id[1] == entry.end_offset
+
+
+# ---------------------------------------------------------------------------
+# _DISCOVERY_CACHE bounded by _MAX_CACHED_DISCOVERY
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryCacheLRUEviction:
+    """_DISCOVERY_CACHE is bounded by _MAX_CACHED_DISCOVERY and uses LRU eviction."""
+
+    def setup_method(self) -> None:
+        _DISCOVERY_CACHE.clear()
+        _SESSION_CACHE.clear()
+        _EVENTS_CACHE.clear()
+
+    def test_discovery_cache_evicts_lru_entry(self, tmp_path: Path) -> None:
+        """Calling _discover_with_identity with more than _MAX_CACHED_DISCOVERY
+        distinct root paths evicts the least-recently-used entry."""
+        roots: list[Path] = []
+        for i in range(_MAX_CACHED_DISCOVERY + 2):
+            root = tmp_path / f"root{i}"
+            sess = root / "sess" / "events.jsonl"
+            _write_events(sess, _START_EVENT, _USER_MSG)
+            _discover_with_identity(root)
+            roots.append(root)
+
+        assert len(_DISCOVERY_CACHE) <= _MAX_CACHED_DISCOVERY
+        # The first root should have been evicted (LRU).
+        assert roots[0] not in _DISCOVERY_CACHE
+        # The last root should still be cached.
+        assert roots[-1] in _DISCOVERY_CACHE

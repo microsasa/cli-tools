@@ -78,7 +78,8 @@ class _DiscoveryCache:
 # Module-level discovery cache: root_path → _DiscoveryCache.
 # Avoids redundant inner os.scandir calls when the root directory
 # has not changed (no sessions added or removed).
-_DISCOVERY_CACHE: Final[dict[Path, _DiscoveryCache]] = {}
+_MAX_CACHED_DISCOVERY: Final[int] = 8
+_DISCOVERY_CACHE: Final[OrderedDict[Path, _DiscoveryCache]] = OrderedDict()
 
 # On cache hits, probe at most this many sessions without a cached
 # plan.md for a newly-created file.  The probe window rotates via
@@ -533,8 +534,13 @@ def _discover_with_identity(
         except OSError:
             return False, root, []
         no_plan_idx = [i for i, (_, pp) in enumerate(entries) if pp is None]
-        _DISCOVERY_CACHE[root] = _DiscoveryCache(
-            root_id=root_id, entries=entries, no_plan_indices=no_plan_idx
+        lru_insert(
+            _DISCOVERY_CACHE,
+            root,
+            _DiscoveryCache(
+                root_id=root_id, entries=entries, no_plan_indices=no_plan_idx
+            ),
+            _MAX_CACHED_DISCOVERY,
         )
         is_cache_hit = False
 

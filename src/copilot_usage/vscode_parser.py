@@ -150,7 +150,8 @@ class _VSCodeDiscoveryCache:
     log_paths: tuple[Path, ...]
 
 
-_VSCODE_DISCOVERY_CACHE: Final[dict[Path, _VSCodeDiscoveryCache]] = {}
+_MAX_VSCODE_DISCOVERY_CACHE: Final[int] = 8
+_VSCODE_DISCOVERY_CACHE: Final[OrderedDict[Path, _VSCodeDiscoveryCache]] = OrderedDict()
 
 
 def _scan_child_ids(root: Path) -> _ChildIds:
@@ -296,12 +297,17 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
         child_ids = _scan_child_ids(candidate)
         newest_path, newest_id = _newest_child_from_ids(candidate, child_ids)
         found = sorted(candidate.glob(_GLOB_PATTERN))
-        _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
-            root_id=root_id,
-            child_ids=child_ids,
-            newest_child_path=newest_path,
-            newest_child_id=newest_id,
-            log_paths=tuple(found),
+        lru_insert(
+            _VSCODE_DISCOVERY_CACHE,
+            candidate,
+            _VSCodeDiscoveryCache(
+                root_id=root_id,
+                child_ids=child_ids,
+                newest_child_path=newest_path,
+                newest_child_id=newest_id,
+                log_paths=tuple(found),
+            ),
+            _MAX_VSCODE_DISCOVERY_CACHE,
         )
         result.extend(found)
     result.sort()
