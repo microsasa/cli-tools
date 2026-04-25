@@ -278,6 +278,29 @@ def test_implementation_md_symbols_exist_in_expected_modules() -> None:
             )
 
 
+def test_test_tree_lists_all_test_modules() -> None:
+    """Every test_*.py file in tests/copilot_usage/ must appear in the
+    test directory tree in architecture.md."""
+    test_dir = Path(__file__).parents[1] / "tests" / "copilot_usage"
+    on_disk = {p.name for p in test_dir.glob("test_*.py")}
+    # Extract the tests/copilot_usage/ subtree section from architecture.md.
+    tree_match = re.search(
+        r"^tests/\s*\n├── copilot_usage/.*?(?=^├──|\Z)",
+        _ARCH_MD,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert tree_match, (
+        "Could not find the 'tests/ ... copilot_usage/' subtree "
+        "in architecture.md"
+    )
+    tree_text = tree_match.group(0)
+    missing = {f for f in on_disk if f not in tree_text}
+    assert not missing, (
+        f"Test files missing from the test directory tree in "
+        f"architecture.md: {sorted(missing)}"
+    )
+
+
 def test_active_fields_document_pure_active_semantics() -> None:
     """The active_model_calls / active_user_messages / active_output_tokens
     field descriptions must mention pure-active session semantics — not just
