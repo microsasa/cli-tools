@@ -345,15 +345,43 @@ def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     console.print(Panel("\n".join(lines), title="Totals", border_style="cyan"))
 
 
+def _unattributed_active_tokens(sessions: list[SessionSummary]) -> int:
+    """Return total unattributed active output tokens across *sessions*.
+
+    Only sessions that have been resumed (``has_shutdown_metrics`` is True
+    and ``active_output_tokens > 0``) contribute — their active tokens are
+    not captured inside ``model_metrics`` and would otherwise be missing
+    from per-model breakdowns.
+    """
+    return sum(
+        s.active_output_tokens
+        for s in sessions
+        if s.has_shutdown_metrics and s.active_output_tokens > 0
+    )
+
+
 def _render_model_table(
     console: Console,
     sessions: list[SessionSummary],
     *,
     title: str = "Per-Model Breakdown",
+    shutdown_only: bool = False,
 ) -> None:
-    """Render the per-model breakdown table."""
+    """Render the per-model breakdown table.
+
+    When *shutdown_only* is ``False`` (the default) and any session has
+    unattributed active output tokens (resumed sessions whose post-shutdown
+    tokens are not captured in ``model_metrics``), an
+    ``(active, unattributed)`` row is appended so that the table total
+    reconciles with the totals panel.
+
+    Pass ``shutdown_only=True`` to suppress the active row — used by the
+    historical section of :func:`render_full_summary` where only shutdown
+    metrics are shown.
+    """
     merged = _aggregate_model_metrics(sessions)
-    if not merged:
+    unattributed = 0 if shutdown_only else _unattributed_active_tokens(sessions)
+    if not merged and unattributed == 0:
         return
 
     table = Table(title=title, border_style="cyan")
@@ -375,6 +403,17 @@ def _render_model_table(
             format_tokens(mm.usage.outputTokens),
             format_tokens(mm.usage.cacheReadTokens),
             format_tokens(mm.usage.cacheWriteTokens),
+        )
+
+    if unattributed > 0:
+        table.add_row(
+            "(active, unattributed)",
+            "—",
+            "—",
+            "—",
+            format_tokens(unattributed),
+            "—",
+            "—",
         )
 
     console.print(table)
@@ -525,7 +564,7 @@ def _render_historical_section_from(
     )
 
     # Per-model table
-    _render_model_table(console, historical)
+    _render_model_table(console, historical, shutdown_only=True)
 
     # Per-session table — shutdown-only tokens and counts
     _render_session_table(

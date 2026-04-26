@@ -61,6 +61,7 @@ from copilot_usage.report import (
     _format_session_running_time,
     _render_model_table,
     _render_session_table,
+    _unattributed_active_tokens,
     render_cost_view,
     render_full_summary,
     render_live_sessions,
@@ -6405,3 +6406,180 @@ class TestRenderCostViewNoRedundantTotalOutputTokens:
             "total_output_tokens should not be called for resumed sessions "
             "with model_metrics"
         )
+
+
+# ---------------------------------------------------------------------------
+# render_summary token consistency (issue #1092)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSummaryTokenConsistency:
+    """Issue #1092 — model table must reconcile with totals panel for resumed sessions."""
+
+    def test_resumed_session_model_table_includes_active_row(self) -> None:
+        """An '(active, unattributed)' row appears for resumed sessions."""
+        session = SessionSummary(
+            session_id="resumed-xyz1234",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            active_model_calls=2,
+            active_user_messages=1,
+            model_calls=7,
+            user_messages=4,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_summary([session])
+        assert "(active, unattributed)" in output
+
+    def test_resumed_session_totals_equal_model_table_sum(self) -> None:
+        """Totals panel output tokens equal model-table row sum + active row."""
+        session = SessionSummary(
+            session_id="resumed-consist",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            active_model_calls=2,
+            active_user_messages=1,
+            model_calls=7,
+            user_messages=4,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        render_summary([session], target_console=console)
+        output = buf.getvalue()
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # Totals panel shows 600 tokens (350 shutdown + 250 active)
+        totals = _compute_session_totals([session])
+        assert totals.output_tokens == 600
+
+        # Model table must include a 350-token gpt-4 row and a 250-token
+        # active row so the breakdown sums to 600.
+        assert "350" in clean
+        assert "250" in clean
+        assert "(active, unattributed)" in clean
+
+    def test_no_active_row_when_not_resumed(self) -> None:
+        """Non-resumed sessions do not produce an active-unattributed row."""
+        session = SessionSummary(
+            session_id="normal-xyz1234",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_summary([session])
+        assert "(active, unattributed)" not in output
+
+    def test_no_active_row_when_active_tokens_zero(self) -> None:
+        """Resumed session with zero active_output_tokens has no active row."""
+        session = SessionSummary(
+            session_id="resumed-zero",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=0,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        output = _capture_summary([session])
+        assert "(active, unattributed)" not in output
+
+    def test_multiple_sessions_aggregate_active_tokens(self) -> None:
+        """Active tokens from multiple resumed sessions are summed."""
+        s1 = SessionSummary(
+            session_id="resumed-a",
+            start_time=datetime(2026, 4, 2, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=100,
+            active_model_calls=1,
+            active_user_messages=1,
+            model_calls=3,
+            user_messages=2,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=4),
+                    usage=TokenUsage(outputTokens=200),
+                ),
+            },
+        )
+        s2 = SessionSummary(
+            session_id="resumed-b",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=150,
+            active_model_calls=1,
+            active_user_messages=1,
+            model_calls=4,
+            user_messages=3,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=6),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        output = _capture_summary([s1, s2])
+        assert "(active, unattributed)" in output
+
+        # The unattributed row should show 250 (100 + 150)
+        assert _unattributed_active_tokens([s1, s2]) == 250
+
+    def test_historical_section_no_active_row(self) -> None:
+        """Historical section in render_full_summary uses shutdown-only tokens — no active row."""
+        session = SessionSummary(
+            session_id="resumed-hist",
+            start_time=datetime(2026, 4, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_output_tokens=250,
+            active_model_calls=2,
+            active_user_messages=1,
+            model_calls=7,
+            user_messages=4,
+            total_premium_requests=5,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=350),
+                ),
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        render_full_summary([session], target_console=console)
+        output = buf.getvalue()
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # The historical section should NOT have the active row —
+        # it deliberately uses shutdown-only tokens.
+        # Find lines from the "Historical Totals" section
+        assert "(active, unattributed)" not in clean
