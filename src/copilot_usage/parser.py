@@ -860,6 +860,12 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 total_output_tokens += tokens
                 if _shutdowns:
                     _ps_output_tokens += tokens
+            elif _shutdowns:
+                logger.debug(
+                    "event {} — post-shutdown assistant.message with zero/missing"
+                    " outputTokens; no token counter incremented",
+                    idx,
+                )
             if _shutdowns:
                 _ps_resumed = True
 
@@ -868,6 +874,12 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
                 _ps_resumed = True
                 if ev.timestamp is not None:
                     _ps_last_resume_time = ev.timestamp
+                else:
+                    logger.debug(
+                        "event {} — session.resume after shutdown has no timestamp;"
+                        " last_resume_time remains None",
+                        idx,
+                    )
 
     return _FirstPassResult(
         session_id=session_id,

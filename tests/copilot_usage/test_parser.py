@@ -15,6 +15,7 @@ from typing import SupportsIndex, overload
 from unittest.mock import ANY, patch
 
 import pytest
+from loguru import logger
 from pydantic import ValidationError
 
 import copilot_usage.parser as _parser_module
@@ -6505,6 +6506,148 @@ class TestResumeDetectionDirect:
         assert summary.active_user_messages == 0  # must be 0 regardless
         assert summary.active_output_tokens == 0  # must be 0 regardless
         assert not has_active_period_stats(summary)
+
+
+# ---------------------------------------------------------------------------
+# Issue #1102 — _first_pass silent edge-case debug logging
+# ---------------------------------------------------------------------------
+
+
+class TestFirstPassSilentEdgeCases:
+    """Tests for debug logging on missing-timestamp resume and zero-token assistant."""
+
+    def test_resume_with_no_timestamp_logs_debug(
+        self, tmp_path: Path
+    ) -> None:
+        """session.resume with timestamp=None after shutdown emits debug log.
+
+        Asserts post_shutdown_resumed=True and last_resume_time=None (current
+        behaviour) so future changes are caught.
+        """
+        resume_no_ts = json.dumps(
+            {
+                "type": "session.resume",
+                "data": {},
+                "id": "ev-resume-no-ts",
+                "timestamp": None,
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, resume_no_ts)
+        events = parse_events(p)
+
+        with patch.object(logger, "debug") as mock_debug:
+            fp = _first_pass(events)
+
+        assert fp.post_shutdown_resumed is True
+        assert fp.last_resume_time is None
+
+        # Verify a debug log was emitted about the missing timestamp
+        assert mock_debug.call_count >= 1
+        messages = [str(c.args[0]) for c in mock_debug.call_args_list]
+        assert any("session.resume" in m and "no timestamp" in m for m in messages)
+
+    def test_zero_token_assistant_message_after_shutdown_logs_debug(
+        self, tmp_path: Path
+    ) -> None:
+        """assistant.message with outputTokens=0 after shutdown emits debug log.
+
+        Asserts post_shutdown_resumed=True and post_shutdown_output_tokens=0
+        (current behaviour preserved).
+        """
+        asst_zero = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-zero",
+                    "content": "streaming stub",
+                    "toolRequests": [],
+                    "interactionId": "i-zero",
+                    "outputTokens": 0,
+                },
+                "id": "ev-asst-zero",
+                "timestamp": "2026-03-07T12:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst_zero)
+        events = parse_events(p)
+
+        with patch.object(logger, "debug") as mock_debug:
+            fp = _first_pass(events)
+
+        assert fp.post_shutdown_resumed is True
+        assert fp.post_shutdown_output_tokens == 0
+
+        # Verify a debug log about the zero-token post-shutdown message
+        assert mock_debug.call_count >= 1
+        messages = [str(c.args[0]) for c in mock_debug.call_args_list]
+        assert any("assistant.message" in m and "zero" in m for m in messages)
+
+    def test_missing_token_assistant_message_after_shutdown_logs_debug(
+        self, tmp_path: Path
+    ) -> None:
+        """assistant.message with no outputTokens key after shutdown emits debug log."""
+        asst_missing = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-miss",
+                    "content": "hello",
+                    "toolRequests": [],
+                    "interactionId": "i-miss",
+                },
+                "id": "ev-asst-miss",
+                "timestamp": "2026-03-07T12:02:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst_missing)
+        events = parse_events(p)
+
+        with patch.object(logger, "debug") as mock_debug:
+            fp = _first_pass(events)
+
+        assert fp.post_shutdown_resumed is True
+        assert fp.post_shutdown_output_tokens == 0
+
+        # Debug log should fire for missing-token case too
+        assert mock_debug.call_count >= 1
+        messages = [str(c.args[0]) for c in mock_debug.call_args_list]
+        assert any("assistant.message" in m and "zero" in m for m in messages)
+
+    def test_positive_token_assistant_message_after_shutdown_no_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """assistant.message with positive outputTokens after shutdown does NOT log."""
+        asst_ok = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-ok",
+                    "content": "response",
+                    "toolRequests": [],
+                    "interactionId": "i-ok",
+                    "outputTokens": 42,
+                },
+                "id": "ev-asst-ok",
+                "timestamp": "2026-03-07T12:03:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _SHUTDOWN_EVENT, asst_ok)
+        events = parse_events(p)
+
+        with patch.object(logger, "debug") as mock_debug:
+            fp = _first_pass(events)
+
+        assert fp.post_shutdown_resumed is True
+        assert fp.post_shutdown_output_tokens == 42
+
+        # No "zero/missing" log should appear for positive-token case
+        messages = [str(c.args[0]) for c in mock_debug.call_args_list]
+        assert not any("zero" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
