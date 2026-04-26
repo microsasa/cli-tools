@@ -185,6 +185,12 @@ def test_assistant_message_data_tool_requests_populated() -> None:
     assert d.toolRequests[0].toolCallId == "t1"
 
 
+def test_tool_request_arguments_default() -> None:
+    """arguments defaults to an empty dict when not supplied."""
+    d = ToolRequest()
+    assert d.arguments == {}
+
+
 class TestSanitizeNonNumericTokens:
     """Validator maps bool/str/non-positive outputTokens to 0."""
 
@@ -280,6 +286,12 @@ def test_session_shutdown_data_ignores_session_start_time() -> None:
     assert not hasattr(d, "sessionStartTime")
 
 
+def test_session_shutdown_data_model_metrics_default() -> None:
+    """modelMetrics defaults to an empty dict when not supplied."""
+    d = SessionShutdownData()
+    assert d.modelMetrics == {}
+
+
 def test_tool_execution_data() -> None:
     d = ToolExecutionData.model_validate(RAW_TOOL_EXEC["data"])
     assert d.success is True
@@ -337,6 +349,12 @@ def test_session_event_unknown_type() -> None:
     # Unknown types should not crash; as_*() methods raise ValueError on mismatch
     with pytest.raises(ValueError, match="Expected session.start"):
         ev.as_session_start()
+
+
+def test_session_event_data_default() -> None:
+    """data defaults to an empty dict when not supplied."""
+    ev = SessionEvent(type="session.start")
+    assert ev.data == {}
 
 
 def test_as_wrong_type_raises_value_error() -> None:

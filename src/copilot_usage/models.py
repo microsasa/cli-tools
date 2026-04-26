@@ -206,7 +206,7 @@ class ToolRequest(BaseModel):
 
     toolCallId: str = ""
     name: str = ""
-    arguments: dict[str, object] = Field(default_factory=dict)
+    arguments: dict[str, object] = Field(default_factory=lambda: {})
     type: str = ""
 
 
@@ -283,7 +283,7 @@ class SessionShutdownData(BaseModel):
     totalPremiumRequests: int = 0
     totalApiDurationMs: int = 0
     codeChanges: CodeChanges | None = None
-    modelMetrics: dict[str, ModelMetrics] = Field(default_factory=dict)
+    modelMetrics: dict[str, ModelMetrics] = Field(default_factory=lambda: {})
     currentModel: str | None = None
 
 
@@ -336,7 +336,7 @@ class SessionEvent(BaseModel):
     """
 
     type: str
-    data: dict[str, object] = Field(default_factory=dict)
+    data: dict[str, object] = Field(default_factory=lambda: {})
     id: str | None = None
     timestamp: datetime | None = None
     parentId: str | None = None
