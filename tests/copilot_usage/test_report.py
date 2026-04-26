@@ -3822,6 +3822,36 @@ class TestEffectiveStats:
         # Falls back to total_output_tokens which sums model_metrics
         assert stats.output_tokens == 4200
 
+    def test_returns_zeros_for_resumed_session_without_active_period_stats(
+        self,
+    ) -> None:
+        """Resumed session with shutdown metrics but no active-period stats gets zeros.
+
+        Regression test for issue #1101: a resumed session where
+        ``has_shutdown_metrics=True``, ``is_active=True``, and
+        ``has_active_period_stats=False`` must not fall back to session
+        totals — it should return zeros.
+        """
+        session = SessionSummary(
+            session_id="resumed-no-active-1234",
+            is_active=True,
+            has_shutdown_metrics=True,
+            start_time=datetime.now(tz=UTC) - timedelta(hours=2),
+            model_calls=50,
+            user_messages=25,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "gpt-4": ModelMetrics(usage=TokenUsage(outputTokens=8000)),
+            },
+        )
+        assert not has_active_period_stats(session)
+        stats = _effective_stats(session)
+        assert stats.model_calls == 0
+        assert stats.user_messages == 0
+        assert stats.output_tokens == 0
+
     def test_frozen_dataclass(self) -> None:
         """_EffectiveStats instances are immutable."""
         session = SessionSummary(
@@ -3832,6 +3862,68 @@ class TestEffectiveStats:
         stats = _effective_stats(session)
         with pytest.raises(AttributeError):
             stats.model_calls = 99  # type: ignore[misc]
+
+
+class TestResumedSessionNoActiveStatsRegression:
+    """Issue #1101 — resumed session without active-period stats.
+
+    A resumed session (``is_active=True``, ``has_shutdown_metrics=True``)
+    where ``has_active_period_stats`` returns ``False`` must show zeros
+    (not inflated session totals) in both the active-sessions panel of
+    ``render_full_summary`` and in ``render_live_sessions``.
+    """
+
+    @staticmethod
+    def _make_resumed_session_no_active_stats() -> SessionSummary:
+        """Build a resumed session with shutdown metrics but no active-period stats."""
+        return SessionSummary(
+            session_id="resumed-no-active-9999",
+            name="ResumedNoActive",
+            model="gpt-4",
+            is_active=True,
+            has_shutdown_metrics=True,
+            start_time=datetime.now(tz=UTC) - timedelta(hours=3),
+            model_calls=80,
+            user_messages=40,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "gpt-4": ModelMetrics(usage=TokenUsage(outputTokens=15000)),
+            },
+        )
+
+    def test_render_full_summary_does_not_show_session_totals(self) -> None:
+        """render_full_summary active section must not display session totals."""
+        session = self._make_resumed_session_no_active_stats()
+        output = _capture_full_summary([session])
+        # The active section must not display the session's all-time
+        # model_calls (80) or user_messages (40) as post-shutdown stats.
+        lines = output.splitlines()
+        active_section_lines = []
+        in_active = False
+        for line in lines:
+            if "Active Sessions" in line:
+                in_active = True
+            if in_active:
+                active_section_lines.append(line)
+        active_text = "\n".join(active_section_lines)
+        # Session totals must not appear; zeros (or "0") should be shown.
+        assert " 80 " not in active_text
+        assert " 40 " not in active_text
+        assert "15,000" not in active_text
+
+    def test_render_live_sessions_does_not_show_session_totals(self) -> None:
+        """render_live_sessions must not use session totals for messages/cost."""
+        session = self._make_resumed_session_no_active_stats()
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=False, width=120)
+        render_live_sessions([session], target_console=console)
+        output = buf.getvalue()
+        # Must not display the inflated session-total user_messages (40).
+        assert " 40 " not in output
+        # Must not display session-total output tokens (15,000).
+        assert "15,000" not in output
 
 
 class TestComputeSessionTotals:
