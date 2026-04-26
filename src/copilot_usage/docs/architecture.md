@@ -91,7 +91,7 @@ tests/
     └── test_e2e.py             Full pipeline: CLI → parser → models → report → output
 ```
 
-- **Unit tests**: 99% coverage, test individual functions with synthetic data
+- **Unit tests**: ≥ 80% coverage (CI-enforced), test individual functions with synthetic data
 - **Doctests**: `_formatting.py` functions have `>>>` examples executed via `--doctest-modules`
 - **E2e tests**: Run actual CLI commands against anonymized fixture sessions, assert on output content
 - Test counts grow regularly — run `make test` to see the current numbers
