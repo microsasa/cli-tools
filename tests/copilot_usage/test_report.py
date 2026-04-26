@@ -494,6 +494,70 @@ class TestRenderLiveSessions:
         output = _capture_output([session])
         assert "~0" in output
 
+    def test_resumed_session_est_cost_uses_active_model_calls(self) -> None:
+        """render_live_sessions Est. Cost must be based on active_model_calls, not model_calls total."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="aabbccdd-eeee-ffff-aaaa-dddddddddddd",
+            name="Resumed Cost Test",
+            model="claude-opus-4.6",
+            is_active=True,
+            start_time=now - timedelta(hours=3),
+            last_resume_time=now - timedelta(minutes=10),
+            # Historical totals — must NOT appear in cost column
+            user_messages=263,
+            model_calls=275,
+            model_metrics={
+                "claude-opus-4.6": ModelMetrics(
+                    usage=TokenUsage(outputTokens=200_000),
+                )
+            },
+            # Post-resume activity (claude-opus-4.6 multiplier = 3.0)
+            active_user_messages=2,
+            active_output_tokens=800,
+            active_model_calls=4,  # → Est. Cost ~12 (4 × 3.0)
+        )
+        output = _capture_output([session])
+        # Must show ~12, not ~825 (275 × 3.0)
+        assert "~12" in output, (
+            "Est. Cost should use active_model_calls (4), not total model_calls (275)"
+        )
+        assert "~825" not in output, (
+            "Est. Cost must not use historical model_calls total"
+        )
+
+    def test_resumed_session_zero_activity_no_est_cost(self) -> None:
+        """Resumed session with zero post-resume model calls should show no estimated cost."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="aabbccdd-eeee-ffff-aaaa-eeeeeeeeeeee",
+            name="Zero Activity Resumed",
+            model="claude-opus-4.6",
+            is_active=True,
+            start_time=now - timedelta(hours=2),
+            last_resume_time=now - timedelta(minutes=1),
+            # Historical totals
+            user_messages=150,
+            model_calls=100,
+            model_metrics={
+                "claude-opus-4.6": ModelMetrics(
+                    usage=TokenUsage(outputTokens=80_000),
+                )
+            },
+            # Zero post-resume activity
+            active_user_messages=0,
+            active_output_tokens=0,
+            active_model_calls=0,  # → Est. Cost ~0 (0 × 3.0)
+        )
+        output = _capture_output([session])
+        # active_model_calls=0 → cost should be ~0, not ~300 (100 × 3.0)
+        assert "~0" in output, (
+            "Est. Cost should be ~0 for zero active_model_calls"
+        )
+        assert "~300" not in output, (
+            "Est. Cost must not use historical model_calls total"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers for session detail tests
