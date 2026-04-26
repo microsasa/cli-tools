@@ -1229,6 +1229,90 @@ class TestRenderSummary:
         with pytest.raises(TypeError):
             render_summary(sessions, datetime.now(tz=UTC))  # type: ignore[misc]
 
+    # -- Resumed-session coverage (issue #1095) ----------------------------
+
+    def test_totals_panel_includes_active_tokens_for_resumed_session(self) -> None:
+        """Totals panel must include active_output_tokens for resumed sessions."""
+        session = SessionSummary(
+            session_id="resumed-session-test",
+            name="Resumed",
+            model="claude-sonnet-4",
+            is_active=True,
+            has_shutdown_metrics=True,
+            start_time=datetime(2025, 6, 1, tzinfo=UTC),
+            user_messages=5,
+            model_calls=5,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=350),
+                )
+            },
+            active_output_tokens=250,
+            active_user_messages=2,
+            active_model_calls=2,
+        )
+        output = _capture_summary([session])
+        # Totals panel must show 600 (350 shutdown + 250 active)
+        assert "600" in output
+
+    def test_session_table_includes_active_tokens_for_resumed_session(self) -> None:
+        """Per-session table row must show combined total_output_tokens."""
+        session = SessionSummary(
+            session_id="resumed-session-row",
+            name="Resumed Row",
+            model="claude-sonnet-4",
+            is_active=True,
+            has_shutdown_metrics=True,
+            start_time=datetime(2025, 6, 1, tzinfo=UTC),
+            user_messages=5,
+            model_calls=5,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=350),
+                )
+            },
+            active_output_tokens=250,
+            active_user_messages=2,
+            active_model_calls=2,
+        )
+        output = _capture_summary([session])
+        # Per-session row uses total_output_tokens → 600 (350 + 250),
+        # not just the shutdown baseline of 350.
+        assert "600" in output
+        assert "Resumed Row" in output
+
+    def test_model_breakdown_includes_active_tokens_after_1092_fix(self) -> None:
+        """Per-model breakdown should show total tokens once #1092 is fixed.
+
+        _aggregate_model_metrics currently sums only model_metrics.usage
+        (shutdown baseline), omitting active_output_tokens.  This test
+        documents the known gap so that the #1092 fix has regression
+        coverage.  Until then, only the shutdown baseline (350) appears in
+        the per-model table.
+        """
+        session = SessionSummary(
+            session_id="resumed-model-breakdown",
+            name="Resumed Model",
+            model="claude-sonnet-4",
+            is_active=True,
+            has_shutdown_metrics=True,
+            start_time=datetime(2025, 6, 1, tzinfo=UTC),
+            user_messages=5,
+            model_calls=5,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=350),
+                )
+            },
+            active_output_tokens=250,
+            active_user_messages=2,
+            active_model_calls=2,
+        )
+        output = _capture_summary([session])
+        # Per-model table currently shows only shutdown baseline (350).
+        # Once #1092 is fixed this should become 600; update assertion then.
+        assert "350" in output
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — report.py
