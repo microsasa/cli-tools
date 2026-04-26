@@ -934,6 +934,29 @@ class TestFileChangeHandler:
         handler.dispatch(object())
         assert event.is_set()
 
+    def test_dispatch_suppressed_at_exact_debounce_boundary(self) -> None:
+        """A call arriving at exactly WATCHDOG_DEBOUNCE_SECS after the previous
+        trigger is still suppressed — the guard uses <=, not <."""
+        import time as _time
+
+        from copilot_usage.interactive import (
+            WATCHDOG_DEBOUNCE_SECS,
+            FileChangeHandler as _FileChangeHandler,
+        )
+
+        event = threading.Event()
+        handler = _FileChangeHandler(event)
+        handler.dispatch(object())  # prime: sets _last_trigger = now
+        assert event.is_set()
+        event.clear()
+
+        # Simulate _last_trigger exactly WATCHDOG_DEBOUNCE_SECS ago.
+        handler._last_trigger = _time.monotonic() - WATCHDOG_DEBOUNCE_SECS
+        handler.dispatch(object())
+        assert not event.is_set(), (
+            "At exactly the boundary (<=) the event should still be suppressed"
+        )
+
     def test_dispatch_interface(self) -> None:
         """_FileChangeHandler provides a dispatch(event) interface compatible with watchdog handlers."""
         from copilot_usage.interactive import (
@@ -3429,6 +3452,14 @@ class TestValidateSinceUntil:
         expected_until = dt_before.isoformat(sep=" ", timespec="seconds")
         assert expected_since in msg
         assert expected_until in msg
+
+    def test_equal_since_until_does_not_raise(self) -> None:
+        """since == until is not an error — the strict > guard does not fire."""
+        t = datetime(2026, 3, 7, 12, 0, 0, tzinfo=UTC)
+        arg = _ParsedDateArg(value=t, has_explicit_time=True)
+        aware_since, aware_until = _validate_since_until(t, arg)
+        assert aware_since == t
+        assert aware_until == t
 
 
 # ---------------------------------------------------------------------------
