@@ -13,7 +13,7 @@ description = "Python CLI tools monorepo"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.13.2,<3",
+    "pydantic>=2.13.3,<3",
     "click>=8.3.2,<9",
     "rich>=15.0.0,<16",
     "loguru>=0.7.3,<1",
