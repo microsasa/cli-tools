@@ -98,6 +98,52 @@ class TestLruInsert:
         # "a" should now be at the end (most recently used)
         assert list(cache.keys()) == ["b", "a"]
 
+    @pytest.mark.parametrize(
+        ("max_size", "initial_keys", "update_key", "new_key", "expected_keys"),
+        [
+            pytest.param(
+                2,
+                [("a", 1), ("b", 2)],
+                ("a", 10),
+                ("c", 3),
+                ["a", "c"],
+                id="size-2",
+            ),
+            pytest.param(
+                3,
+                [("a", 1), ("b", 2), ("c", 3)],
+                ("a", 10),
+                ("d", 4),
+                ["c", "a", "d"],
+                id="size-3",
+            ),
+        ],
+    )
+    def test_eviction_after_update_targets_correct_lru(
+        self,
+        max_size: int,
+        initial_keys: list[tuple[str, int]],
+        update_key: tuple[str, int],
+        new_key: tuple[str, int],
+        expected_keys: list[str],
+    ) -> None:
+        """After an update moves a key to MRU, the next new-key insert evicts the LRU."""
+        cache: OrderedDict[str, int] = OrderedDict()
+        for k, v in initial_keys:
+            lru_insert(cache, k, v, max_size=max_size)
+
+        # Update an existing key — moves it to MRU position.
+        lru_insert(cache, update_key[0], update_key[1], max_size=max_size)
+
+        # Insert a brand-new key — must evict the current LRU, not the updated key.
+        lru_insert(cache, new_key[0], new_key[1], max_size=max_size)
+
+        assert list(cache.keys()) == expected_keys
+        assert cache[update_key[0]] == update_key[1]
+        assert cache[new_key[0]] == new_key[1]
+        # The second entry in initial_keys is now LRU and must have been evicted.
+        assert initial_keys[1][0] not in cache
+
     def test_max_size_one(self) -> None:
         cache: OrderedDict[str, int] = OrderedDict()
         lru_insert(cache, "x", 1, max_size=1)
