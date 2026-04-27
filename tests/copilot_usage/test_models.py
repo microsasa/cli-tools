@@ -1049,6 +1049,74 @@ class TestSessionSummaryUserMessageInvariant:
 
 
 # ---------------------------------------------------------------------------
+# Issue #1109 — Validate active_output_tokens == 0 for non-active sessions
+# ---------------------------------------------------------------------------
+
+
+class TestSessionSummaryOutputTokenInvariant:
+    """Tests for the active_output_tokens invariant on non-active sessions."""
+
+    def test_rejects_nonzero_active_output_tokens_when_not_active(self) -> None:
+        """SessionSummary must reject active_output_tokens != 0 when is_active=False."""
+        with pytest.raises(ValidationError):
+            SessionSummary(
+                session_id="inv",
+                active_output_tokens=100,
+                is_active=False,
+            )
+
+    def test_accepts_positive_active_output_tokens_when_active(self) -> None:
+        """SessionSummary allows active_output_tokens > 0 when is_active=True."""
+        s = SessionSummary(
+            session_id="act",
+            active_output_tokens=500,
+            is_active=True,
+        )
+        assert s.active_output_tokens == 500
+
+    def test_accepts_zero_active_output_tokens_when_not_active(self) -> None:
+        """SessionSummary allows active_output_tokens=0 for non-active sessions."""
+        s = SessionSummary(
+            session_id="zero-inactive",
+            active_output_tokens=0,
+            is_active=False,
+        )
+        assert s.active_output_tokens == 0
+
+    def test_accepts_zero_active_output_tokens_when_active(self) -> None:
+        """SessionSummary allows active_output_tokens=0 for active sessions."""
+        s = SessionSummary(
+            session_id="zero-active",
+            active_output_tokens=0,
+            is_active=True,
+        )
+        assert s.active_output_tokens == 0
+
+    def test_double_count_regression(self) -> None:
+        """Regression: completed session with positive active_output_tokens must raise.
+
+        Previously, constructing a non-active SessionSummary with
+        active_output_tokens > 0 and has_shutdown_metrics=True silently
+        caused total_output_tokens() to double-count tokens.  The
+        validator now rejects this at construction time.
+        """
+        with pytest.raises(ValidationError):
+            SessionSummary(
+                session_id="double-count",
+                model_metrics={
+                    "m": ModelMetrics(
+                        usage=TokenUsage(outputTokens=100),
+                        requests=RequestMetrics(count=1),
+                    ),
+                },
+                has_shutdown_metrics=True,
+                active_output_tokens=100,
+                is_active=False,
+                model_calls=1,
+            )
+
+
+# ---------------------------------------------------------------------------
 # shutdown_output_tokens
 # ---------------------------------------------------------------------------
 
@@ -1068,6 +1136,7 @@ class TestShutdownOutputTokens:
             },
             active_output_tokens=999,
             model_calls=1,
+            is_active=True,
         )
         assert shutdown_output_tokens(session) == 100
 
@@ -1077,6 +1146,7 @@ class TestShutdownOutputTokens:
             session_id="s2",
             model_metrics={},
             active_output_tokens=50,
+            is_active=True,
         )
         assert shutdown_output_tokens(session) == 0
 
@@ -1169,6 +1239,7 @@ class TestTotalOutputTokens:
             model_metrics={},
             has_shutdown_metrics=False,
             active_output_tokens=75,
+            is_active=True,
         )
         assert total_output_tokens(session) == 75
 
@@ -1211,6 +1282,9 @@ class TestHasActivePeriodStats:
             kwargs["model_calls"] = value
         if field == "active_user_messages":
             kwargs["user_messages"] = value
+        # non-zero active_output_tokens requires is_active=True
+        if field == "active_output_tokens":
+            kwargs["is_active"] = True
         session = SessionSummary(**kwargs)  # type: ignore[arg-type]
         assert has_active_period_stats(session) is True
 
