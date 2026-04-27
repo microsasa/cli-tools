@@ -6131,6 +6131,84 @@ class TestCostViewActiveNoActivePeriodStats:
 
 
 # ---------------------------------------------------------------------------
+# Issue #1115 — idle-resumed session shows "↳ Since last shutdown" row
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewIdleResumedSession:
+    """Issue #1115: when is_active=True, has_shutdown_metrics=True, and
+    last_resume_time is set (but all active counters are 0), the
+    '↳ Since last shutdown' row must still appear with zero counts."""
+
+    def test_idle_resumed_session_shows_since_last_shutdown_row_with_zeros(
+        self,
+    ) -> None:
+        """Idle-resumed session triggers the '↳ Since last shutdown' row.
+
+        has_active_period_stats returns True via last_resume_time alone, so
+        the active sub-row must render — but with zero cost and zero counters.
+        """
+        session = SessionSummary(
+            session_id="idle-resumed-1115",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime(2025, 1, 1, 18, 0, tzinfo=UTC),
+            model_calls=10,
+            user_messages=10,
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=10, cost=10),
+                    usage=TokenUsage(outputTokens=5000),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # The ↳ row MUST appear (idle-resumed triggers has_active_period_stats)
+        assert "Since last shutdown" in clean
+
+        lines = clean.splitlines()
+        active_row = next(
+            (ln for ln in lines if "Since last shutdown" in ln), None
+        )
+        assert active_row is not None, "Expected '↳ Since last shutdown' row"
+        cols = [c.strip() for c in active_row.split("│")]
+
+        # Model calls on the active row = 0
+        assert cols[5] == "0", (
+            f"Active model calls should be 0, got '{cols[5]}'"
+        )
+        # Output tokens on the active row = 0
+        assert cols[6] == "0", (
+            f"Active output tokens should be 0, got '{cols[6]}'"
+        )
+
+        # Parent per-model row still shows historical totals
+        expected_label = session_display_name(session)
+        model_row = next(
+            (
+                ln
+                for ln in lines
+                if "claude-sonnet-4" in ln
+                and expected_label in ln
+                and "Since last shutdown" not in ln
+            ),
+            None,
+        )
+        assert model_row is not None, "Expected a per-model parent row"
+        model_cols = [c.strip() for c in model_row.split("│")]
+        assert model_cols[5] == "10", (
+            f"Parent model calls should be 10, got '{model_cols[5]}'"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Issue #703 — historical session table shows total model_calls/user_messages
 # ---------------------------------------------------------------------------
 

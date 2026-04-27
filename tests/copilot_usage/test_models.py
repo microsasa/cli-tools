@@ -1125,6 +1125,34 @@ class TestTotalOutputTokens:
         )
         assert total_output_tokens(session) == 150
 
+    def test_case_a2_idle_resumed_with_shutdown_metrics(self) -> None:
+        """Idle-resumed session: last_resume_time set, active_output_tokens=0.
+
+        Same branch as case A (has_active_period_stats=True AND
+        has_shutdown_metrics=True), but the zero active-token addition is an
+        independent invariant: baseline + 0 must equal baseline exactly.
+        """
+        session = SessionSummary(
+            session_id="case-a2",
+            model_metrics={
+                "m": ModelMetrics(
+                    usage=TokenUsage(outputTokens=5000),
+                    requests=RequestMetrics(count=10),
+                ),
+            },
+            has_shutdown_metrics=True,
+            active_output_tokens=0,
+            last_resume_time=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            model_calls=10,
+            active_model_calls=0,
+            active_user_messages=0,
+            user_messages=10,
+        )
+        # has_active_period_stats is True (via last_resume_time)
+        assert has_active_period_stats(session) is True
+        # baseline + 0 == baseline; no double-counting
+        assert total_output_tokens(session) == 5000
+
     def test_case_b_active_no_shutdown_metrics(self) -> None:
         """Active-period stats True but no shutdown metrics: only baseline."""
         session = SessionSummary(
