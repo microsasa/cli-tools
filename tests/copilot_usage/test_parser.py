@@ -3575,6 +3575,57 @@ class TestBuildSessionSummaryEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# has_shutdown_metrics coverage — issue #1113
+# ---------------------------------------------------------------------------
+
+
+class TestHasShutdownMetrics:
+    """Ensure ``has_shutdown_metrics`` is set correctly by the parser."""
+
+    def test_completed_session_with_model_metrics_has_shutdown_metrics_true(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown with non-empty modelMetrics → has_shutdown_metrics is True."""
+        shutdown = json.dumps(
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "totalPremiumRequests": 3,
+                    "totalApiDurationMs": 5000,
+                    "sessionStartTime": 1772895600000,
+                    "modelMetrics": {
+                        "gpt-5.1": {
+                            "requests": {"count": 3, "cost": 2},
+                            "usage": {"outputTokens": 200},
+                        }
+                    },
+                },
+                "id": "ev-sd",
+                "timestamp": "2026-03-07T11:00:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, shutdown)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.has_shutdown_metrics is True
+        assert summary.model_metrics != {}
+        assert summary.is_active is False
+
+    def test_active_session_has_shutdown_metrics_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Active session (no shutdown event) → has_shutdown_metrics is False."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG)
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.has_shutdown_metrics is False
+        assert summary.is_active is True
+
+
+# ---------------------------------------------------------------------------
 # Coverage gap tests — parser.py
 # ---------------------------------------------------------------------------
 
