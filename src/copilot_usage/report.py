@@ -71,12 +71,24 @@ class _EffectiveStats:
 
 
 def _effective_stats(session: SessionSummary) -> _EffectiveStats:
-    """Return active-period stats if available, otherwise session totals."""
+    """Return active-period stats if available, otherwise session totals.
+
+    For resumed sessions (``has_shutdown_metrics=True``) where
+    ``has_active_period_stats`` is ``False``, returns zeros rather than the
+    session totals — the totals represent pre-shutdown history and must not
+    be attributed to the post-shutdown active period.
+    """
     if has_active_period_stats(session):
         return _EffectiveStats(
             model_calls=session.active_model_calls,
             user_messages=session.active_user_messages,
             output_tokens=session.active_output_tokens,
+        )
+    if session.has_shutdown_metrics:
+        return _EffectiveStats(
+            model_calls=0,
+            user_messages=0,
+            output_tokens=0,
         )
     return _EffectiveStats(
         model_calls=session.model_calls,
