@@ -6405,3 +6405,88 @@ class TestRenderCostViewNoRedundantTotalOutputTokens:
             "total_output_tokens should not be called for resumed sessions "
             "with model_metrics"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1108 — render_full_summary and render_live_sessions must not display
+# inflated session totals for resumed sessions with has_active_period_stats=False
+# ---------------------------------------------------------------------------
+
+
+class TestRenderFullSummaryNoInflatedTotals:
+    """Regression #1108: active section must not show pre-shutdown totals
+    when has_active_period_stats is False."""
+
+    def test_active_section_does_not_show_inflated_totals_when_no_active_period_stats(
+        self,
+    ) -> None:
+        """Resumed session with has_active_period_stats=False must not show
+        pre-shutdown totals as active-period stats in the active section."""
+        session = SessionSummary(
+            session_id="resumed-no-activity",
+            name="Stale Resume",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 3, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            user_messages=50,
+            model_calls=30,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=30, cost=30),
+                    usage=TokenUsage(outputTokens=50_000),
+                ),
+            },
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+        )
+        output = _capture_full_summary([session])
+        # Strip ANSI escape sequences for clean text matching
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # Split at the Active Sessions heading
+        assert "Active Sessions" in clean
+        active_section = clean.split("Active Sessions", 1)[1]
+        # Historical model_calls (30) and output tokens (50.0K) must NOT appear
+        # in the active section — they are pre-shutdown totals and should not
+        # be shown as "since last shutdown" activity.
+        assert "50.0K" not in active_section
+        assert re.search(r"\b30\b", active_section) is None
+
+
+class TestRenderLiveSessionsNoInflatedTotals:
+    """Regression #1108: render_live_sessions must not display pre-shutdown
+    totals as active-period Messages or Est. Cost."""
+
+    def test_resumed_session_no_active_period_stats_shows_correct_values(
+        self,
+    ) -> None:
+        """render_live_sessions: resumed session with has_active_period_stats=False
+        must not display pre-shutdown user_messages as 'Messages' or inflate
+        Est. Cost."""
+        session = SessionSummary(
+            session_id="resumed-no-activity",
+            name="Stale Resume",
+            model="claude-sonnet-4",
+            start_time=datetime(2025, 3, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            user_messages=50,
+            model_calls=30,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=30, cost=30),
+                    usage=TokenUsage(outputTokens=50_000),
+                ),
+            },
+            active_model_calls=0,
+            active_user_messages=0,
+            active_output_tokens=0,
+            last_resume_time=None,
+        )
+        output = _capture_output([session])
+        # Strip ANSI escape sequences for clean text matching
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        # user_messages=50 is pre-shutdown; must not appear as active messages
+        assert "50" not in clean
