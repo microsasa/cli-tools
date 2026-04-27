@@ -454,6 +454,11 @@ class SessionSummary(BaseModel):
                 f"active_user_messages ({self.active_user_messages}) must be <= "
                 f"user_messages ({self.user_messages})"
             )
+        if not self.is_active and self.active_output_tokens != 0:
+            raise ValueError(
+                f"active_output_tokens ({self.active_output_tokens}) must be 0 "
+                f"for non-active sessions"
+            )
         return self
 
 
