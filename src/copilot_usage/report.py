@@ -345,16 +345,44 @@ def _render_totals(console: Console, sessions: list[SessionSummary]) -> None:
     console.print(Panel("\n".join(lines), title="Totals", border_style="cyan"))
 
 
+def _no_request_data_models(sessions: list[SessionSummary]) -> set[str]:
+    """Return model names that appear *only* in pure-active sessions.
+
+    A pure-active session is one where ``is_active`` is ``True`` and
+    ``has_shutdown_metrics`` is ``False`` — request counts are unavailable
+    (default zeros, not real data).  Models that also appear in at least one
+    completed or resumed session retain their real counts.
+    """
+    active_only: set[str] = set()
+    has_real_data: set[str] = set()
+    for s in sessions:
+        bucket = (
+            active_only
+            if s.is_active and not s.has_shutdown_metrics
+            else has_real_data
+        )
+        for model_name in s.model_metrics:
+            bucket.add(model_name)
+    return active_only - has_real_data
+
+
 def _render_model_table(
     console: Console,
     sessions: list[SessionSummary],
     *,
     title: str = "Per-Model Breakdown",
 ) -> None:
-    """Render the per-model breakdown table."""
+    """Render the per-model breakdown table.
+
+    Models that appear exclusively in pure-active sessions (no shutdown
+    metrics) display ``"—"`` for Requests and Premium Cost because those
+    values are unavailable defaults, not real zeros.
+    """
     merged = _aggregate_model_metrics(sessions)
     if not merged:
         return
+
+    no_req_models = _no_request_data_models(sessions)
 
     table = Table(title=title, border_style="cyan")
     table.add_column("Model", style="bold")
@@ -367,10 +395,13 @@ def _render_model_table(
 
     for model_name in sorted(merged):
         mm = merged[model_name]
+        hide_requests = (
+            model_name in no_req_models and mm.requests.count == 0
+        )
         table.add_row(
             model_name,
-            str(mm.requests.count),
-            str(mm.requests.cost),
+            "—" if hide_requests else str(mm.requests.count),
+            "—" if hide_requests else str(mm.requests.cost),
             format_tokens(mm.usage.inputTokens),
             format_tokens(mm.usage.outputTokens),
             format_tokens(mm.usage.cacheReadTokens),
