@@ -1414,6 +1414,113 @@ class TestParseVscodeLogFromOffset:
         assert len(reqs) == 1
 
 
+class TestBulkScanCorrectness:
+    """Correctness tests for the bulk content.find() optimisation in
+    _parse_vscode_log_from_offset (issue #1124).
+    """
+
+    @pytest.mark.parametrize(
+        ("total_lines", "matching_lines"),
+        [
+            (1000, 10),
+            (500, 50),
+            (200, 0),
+            (110, 100),
+        ],
+        ids=["1pct", "10pct", "none", "90pct"],
+    )
+    def test_correctness_parity(
+        self, tmp_path: Path, total_lines: int, matching_lines: int
+    ) -> None:
+        """Bulk scan returns the expected requests for synthetic logs
+        with varying match rates (using include_partial_tail=True for
+        full-file semantics matching parse_vscode_log).
+        """
+        log_file = _build_synthetic_log(
+            tmp_path, total_lines=total_lines, matching_lines=matching_lines
+        )
+        reqs, end_offset = _parse_vscode_log_from_offset(
+            log_file, 0, include_partial_tail=True
+        )
+        assert len(reqs) == matching_lines
+        for i, req in enumerate(reqs):
+            assert req.model == "gpt-4o-mini"
+            assert req.category == "panel"
+            assert req.duration_ms == 100 + i
+        assert end_offset == log_file.stat().st_size
+
+    def test_incremental_offset_returns_suffix_only(self, tmp_path: Path) -> None:
+        """Calling with a non-zero offset only returns requests after that byte."""
+        line0 = _make_log_line(req_idx=0)
+        line1 = _make_log_line(req_idx=1)
+        line2 = _make_log_line(req_idx=2)
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(line0 + line1 + line2)
+        offset = len(line0.encode("utf-8")) + len(line1.encode("utf-8"))
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, offset)
+        assert len(reqs) == 1
+        assert reqs[0].request_id == "req00002"
+        assert end_offset == log_file.stat().st_size
+
+    def test_toctou_guard_resets_and_parses_all(self, tmp_path: Path) -> None:
+        """When offset > file size, TOCTOU guard resets to 0 and parses everything."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0) + _make_log_line(req_idx=1))
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 999_999)
+        assert len(reqs) == 2
+        assert end_offset == log_file.stat().st_size
+
+    def test_partial_tail_excluded(self, tmp_path: Path) -> None:
+        """Default include_partial_tail=False excludes a non-newline-terminated tail."""
+        log_file = tmp_path / "chat.log"
+        complete_line = _make_log_line(req_idx=0)
+        partial_line = _make_log_line(req_idx=1).rstrip("\n")
+        log_file.write_text(complete_line + partial_line)
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 1
+        assert reqs[0].request_id == "req00000"
+        assert end_offset == len(complete_line.encode("utf-8"))
+
+    def test_partial_tail_included(self, tmp_path: Path) -> None:
+        """include_partial_tail=True includes a non-newline-terminated tail."""
+        log_file = tmp_path / "chat.log"
+        content = _make_log_line(req_idx=0).rstrip("\n")
+        log_file.write_text(content)
+        reqs, end_offset = _parse_vscode_log_from_offset(
+            log_file, 0, include_partial_tail=True
+        )
+        assert len(reqs) == 1
+        assert end_offset == log_file.stat().st_size
+
+    def test_only_partial_line_no_newline_returns_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """A file with a single partial line and include_partial_tail=False."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0).rstrip("\n"))
+        reqs, end_offset = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 0
+        assert end_offset == 0
+
+    def test_benchmark_50k_lines_under_threshold(self, tmp_path: Path) -> None:
+        """Regression guard: 50K-line file must parse in under 20 ms."""
+        import time
+
+        log_file = _build_synthetic_log(
+            tmp_path, total_lines=50_000, matching_lines=500
+        )
+        # Warm-up run (file system cache).
+        _parse_vscode_log_from_offset(log_file, 0)
+        iterations = 5
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _parse_vscode_log_from_offset(log_file, 0)
+        elapsed_ms = (time.perf_counter() - start) / iterations * 1000
+        assert elapsed_ms < 20, (
+            f"Expected <20 ms per call on 50K-line file, got {elapsed_ms:.1f} ms"
+        )
+
+
 class TestIncrementalCacheLogic:
     """Tests for the 3-path incremental cache in _get_cached_vscode_requests."""
 

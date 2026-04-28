@@ -358,32 +358,57 @@ def _parse_vscode_log_from_offset(
                 offset = 0
                 safe_end = 0
             fb.seek(offset)
-        for raw_line in fb:
-            is_complete = raw_line.endswith(b"\n")
-            if not is_complete and not include_partial_tail:
-                break
-            safe_end += len(raw_line)
-            # Fast pre-filter: only ~1–5% of lines contain "ccreq:"
-            if b"ccreq:" not in raw_line:
-                continue
-            line = raw_line.decode("utf-8", errors="replace")
-            m = _CCREQ_RE.match(line)
-            if m is None:
-                continue
-            ts_str, req_id, model, duration_str, category = m.groups()
-            try:
-                ts = datetime.fromisoformat(ts_str).astimezone(UTC)
-            except ValueError:
-                continue
-            requests.append(
-                VSCodeRequest(
-                    timestamp=ts,
-                    request_id=req_id,
-                    model=model,
-                    duration_ms=int(duration_str),
-                    category=category,
-                )
+        content = fb.read()
+
+    if not content:
+        return requests, safe_end
+
+    # Determine the safe processing boundary (last complete line).
+    if not include_partial_tail and not content.endswith(b"\n"):
+        last_nl = content.rfind(b"\n")
+        if last_nl == -1:
+            return requests, safe_end  # no complete lines
+        safe_end = offset + last_nl + 1
+        process_up_to = last_nl + 1
+    else:
+        safe_end = offset + len(content)
+        process_up_to = len(content)
+
+    # Bulk scan: jump directly to each "ccreq:" occurrence in C,
+    # then extract the surrounding line.  Reduces Python-level
+    # iterations from O(n_lines) to O(n_matching_lines).
+    _marker = b"ccreq:"
+    search_pos = 0
+    while True:
+        ccreq_pos = content.find(_marker, search_pos, process_up_to)
+        if ccreq_pos == -1:
+            break
+        # Locate line boundaries around this match.
+        line_start = content.rfind(b"\n", 0, ccreq_pos) + 1  # +1 skips the \n
+        nl_pos = content.find(b"\n", ccreq_pos, process_up_to)
+        line_end = nl_pos if nl_pos != -1 else process_up_to
+        search_pos = line_end + 1
+
+        raw_line = content[line_start:line_end]
+        line = raw_line.decode("utf-8", errors="replace")
+        m = _CCREQ_RE.match(line)
+        if m is None:
+            continue
+        ts_str, req_id, model, duration_str, category = m.groups()
+        try:
+            ts = datetime.fromisoformat(ts_str).astimezone(UTC)
+        except ValueError:
+            continue
+        requests.append(
+            VSCodeRequest(
+                timestamp=ts,
+                request_id=req_id,
+                model=model,
+                duration_ms=int(duration_str),
+                category=category,
             )
+        )
+
     logger.debug(
         "Parsed {} request(s) from {} (offset {}→{})",
         len(requests),
