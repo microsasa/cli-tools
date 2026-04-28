@@ -3525,6 +3525,73 @@ class TestRenderModelTable:
         output = buf.getvalue()
         assert "Cache Write" in output
 
+    def test_pure_active_session_shows_dash_for_requests(self) -> None:
+        """Pure-active session renders '—' for Requests and Premium Cost."""
+        session = SessionSummary(
+            session_id="active-only",
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_metrics={
+                "gpt-5": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=1200),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        # Requests and Premium Cost should show "—", not "0"
+        lines = [
+            line
+            for line in output.splitlines()
+            if "gpt-5" in line
+        ]
+        assert len(lines) == 1
+        model_line = lines[0]
+        # Strip ANSI codes for reliable matching
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", model_line)
+        cells = clean.split("│")
+        # Columns: Model | Requests | Premium Cost | Input | Output | Cache Read | Cache Write
+        requests_cell = cells[2].strip()
+        premium_cell = cells[3].strip()
+        output_tokens_cell = cells[5].strip()
+        assert requests_cell == "—"
+        assert premium_cell == "—"
+        assert output_tokens_cell == "1.2K"
+
+    def test_completed_session_shows_integer_counts(self) -> None:
+        """Completed session renders integer counts, not '—'."""
+        session = SessionSummary(
+            session_id="completed",
+            is_active=False,
+            has_shutdown_metrics=True,
+            model_metrics={
+                "gpt-5": ModelMetrics(
+                    requests=RequestMetrics(count=7, cost=3),
+                    usage=TokenUsage(outputTokens=2500),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        lines = [
+            line
+            for line in output.splitlines()
+            if "gpt-5" in line
+        ]
+        assert len(lines) == 1
+        model_line = lines[0]
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", model_line)
+        cells = clean.split("│")
+        requests_cell = cells[2].strip()
+        premium_cell = cells[3].strip()
+        assert requests_cell == "7"
+        assert premium_cell == "3"
+
 
 # ---------------------------------------------------------------------------
 # has_active_period_stats
