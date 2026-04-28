@@ -3063,6 +3063,88 @@ class TestRenderShutdownCyclesEdgeCases:
         assert "—" in output
 
 
+class TestRenderShutdownCyclesMultiCycle:
+    """Multi-cycle coverage for _render_shutdown_cycles (issue #1119)."""
+
+    def test_two_cycles_renders_two_rows(self) -> None:
+        """Two shutdown cycles → two rows, each with the correct premium count."""
+        sd1 = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=3,
+            totalApiDurationMs=60_000,
+            modelMetrics={},
+        )
+        sd2 = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=7,
+            totalApiDurationMs=90_000,
+            modelMetrics={},
+        )
+        ts1 = datetime(2025, 1, 1, 10, 0, tzinfo=UTC)
+        ts2 = datetime(2025, 1, 1, 11, 0, tzinfo=UTC)
+        summary = SessionSummary(
+            session_id="multi",
+            shutdown_cycles=[(ts1, sd1), (ts2, sd2)],
+        )
+        output = _capture_console(_render_shutdown_cycles, summary)
+        assert output.count("2025-01-01") == 2  # two date rows
+        assert "3" in output  # premium count from cycle 1
+        assert "7" in output  # premium count from cycle 2
+
+    def test_cycles_appear_in_insertion_order(self) -> None:
+        """Rows are rendered in the order shutdown_cycles was built (first → last)."""
+        ts1 = datetime(2025, 3, 1, tzinfo=UTC)
+        ts2 = datetime(2025, 6, 1, tzinfo=UTC)
+        ts3 = datetime(2025, 9, 1, tzinfo=UTC)
+
+        def make_sd() -> SessionShutdownData:
+            return SessionShutdownData(
+                shutdownType="normal",
+                totalPremiumRequests=0,
+                totalApiDurationMs=0,
+                modelMetrics={},
+            )
+
+        summary = SessionSummary(
+            session_id="ordered",
+            shutdown_cycles=[
+                (ts1, make_sd()),
+                (ts2, make_sd()),
+                (ts3, make_sd()),
+            ],
+        )
+        output = _capture_console(_render_shutdown_cycles, summary)
+        idx1 = output.index("2025-03-01")
+        idx2 = output.index("2025-06-01")
+        idx3 = output.index("2025-09-01")
+        assert idx1 < idx2 < idx3
+
+    def test_per_cycle_multi_model_aggregation(self) -> None:
+        """API Requests and Output Tokens sum across all models in one cycle."""
+        sd = SessionShutdownData(
+            shutdownType="normal",
+            totalPremiumRequests=5,
+            totalApiDurationMs=120_000,
+            modelMetrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(outputTokens=800),
+                ),
+                "gpt-5.1": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=2),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        summary = SessionSummary(
+            session_id="multi-model",
+            shutdown_cycles=[(datetime(2025, 1, 1, tzinfo=UTC), sd)],
+        )
+        output = _capture_console(_render_shutdown_cycles, summary)
+        assert "5" in output  # total API requests (3 + 2)
+        assert "1.2K" in output  # total output tokens (800 + 400)
+
+
 # ---------------------------------------------------------------------------
 # Issue #18 — _event_type_label tests covering all match arms
 # ---------------------------------------------------------------------------
