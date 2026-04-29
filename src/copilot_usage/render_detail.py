@@ -33,6 +33,8 @@ from copilot_usage.models import (
     SessionSummary,
     ToolExecutionData,
     ensure_aware,
+    has_active_period_stats,
+    shutdown_output_tokens,
     total_output_tokens,
 )
 
@@ -204,18 +206,58 @@ def _render_aggregate_stats(
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Print aggregate stats panel (model calls, user msgs, tokens, premium)."""
+    """Print aggregate stats panel (model calls, user msgs, tokens, premium).
+
+    For resumed sessions (``has_active_period_stats`` is ``True`` **and**
+    ``has_shutdown_metrics`` is ``True``), renders two labelled sections —
+    "Since last shutdown" and "Historical (shutdown)" — so that
+    shutdown-only premium/duration metrics are not misleadingly placed
+    beside full-session totals.
+
+    For pure-active sessions (no shutdown data), the premium/duration
+    line is omitted entirely since no shutdown metrics exist.
+    """
     out = target_console or Console()
 
-    total_output = total_output_tokens(summary)
+    active = has_active_period_stats(summary)
 
-    lines = [
-        f"[green]{summary.model_calls}[/green] model calls   "
-        f"[green]{summary.user_messages}[/green] user messages   "
-        f"[green]{format_tokens(total_output)}[/green] output tokens",
-        f"[green]{summary.total_premium_requests}[/green] premium requests   "
-        f"[green]{format_duration(summary.total_api_duration_ms)}[/green] API duration",
-    ]
+    if active and summary.has_shutdown_metrics:
+        # Resumed session — split into active vs. historical sections.
+        active_tokens = format_tokens(summary.active_output_tokens)
+        hist_calls = summary.model_calls - summary.active_model_calls
+        hist_msgs = summary.user_messages - summary.active_user_messages
+        hist_tokens = format_tokens(shutdown_output_tokens(summary))
+        lines = [
+            f"[bold]Since last shutdown:[/bold]  "
+            f"[green]{summary.active_model_calls}[/green] model calls   "
+            f"[green]{summary.active_user_messages}[/green] user messages   "
+            f"[green]{active_tokens}[/green] output tokens",
+            f"[bold]Historical (shutdown):[/bold]  "
+            f"[green]{hist_calls}[/green] model calls   "
+            f"[green]{hist_msgs}[/green] user messages   "
+            f"[green]{hist_tokens}[/green] output tokens",
+            f"  [green]{summary.total_premium_requests}[/green] premium requests   "
+            f"[green]{format_duration(summary.total_api_duration_ms)}[/green] API duration",
+        ]
+    elif active:
+        # Pure-active session — no shutdown metrics; suppress premium/duration.
+        total_output = total_output_tokens(summary)
+        lines = [
+            f"[green]{summary.model_calls}[/green] model calls   "
+            f"[green]{summary.user_messages}[/green] user messages   "
+            f"[green]{format_tokens(total_output)}[/green] output tokens",
+        ]
+    else:
+        # Completed session — both scopes coincide; show everything flat.
+        total_output = total_output_tokens(summary)
+        lines = [
+            f"[green]{summary.model_calls}[/green] model calls   "
+            f"[green]{summary.user_messages}[/green] user messages   "
+            f"[green]{format_tokens(total_output)}[/green] output tokens",
+            f"[green]{summary.total_premium_requests}[/green] premium requests   "
+            f"[green]{format_duration(summary.total_api_duration_ms)}[/green] API duration",
+        ]
+
     out.print(Panel("\n".join(lines), title="Aggregate Stats", border_style="cyan"))
 
 

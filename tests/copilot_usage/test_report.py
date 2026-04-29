@@ -940,6 +940,103 @@ class TestRenderAggregateStatsDirect:
         assert "1m" in output
 
 
+class TestRenderAggregateStats:
+    """Issue #1126 — _render_aggregate_stats scope-mismatch for resumed sessions."""
+
+    def test_resumed_session_shows_split_sections(self) -> None:
+        """Resumed session with active_model_calls < model_calls shows labelled sections."""
+        session = SessionSummary(
+            session_id="resumed-split-1234",
+            model_calls=140,
+            user_messages=93,
+            total_premium_requests=48,
+            total_api_duration_ms=8_040_000,
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            active_model_calls=60,
+            active_user_messages=40,
+            active_output_tokens=1_200_000,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=80, cost=160),
+                    usage=TokenUsage(outputTokens=3_000_000),
+                ),
+            },
+        )
+        output = _capture_console(_render_aggregate_stats, session)
+
+        # Active section is labelled and shows active-period stats
+        assert "Since last shutdown" in output
+        assert "60 model calls" in output
+        assert "40 user messages" in output
+        assert format_tokens(1_200_000) in output
+
+        # Historical section is labelled and shows shutdown-period stats
+        assert "Historical" in output
+        assert "80 model calls" in output  # 140 - 60
+        assert "53 user messages" in output  # 93 - 40
+        assert format_tokens(3_000_000) in output
+
+        # Premium / API duration appear under historical section
+        assert "48 premium requests" in output
+        assert format_duration(8_040_000) in output
+
+    def test_pure_active_session_omits_premium_line(self) -> None:
+        """Pure-active session (no shutdown) does not show misleading premium line."""
+        session = SessionSummary(
+            session_id="pure-active-5678",
+            model_calls=25,
+            user_messages=12,
+            total_premium_requests=0,
+            total_api_duration_ms=0,
+            is_active=True,
+            has_shutdown_metrics=False,
+            active_model_calls=25,
+            active_user_messages=12,
+            active_output_tokens=50_000,
+        )
+        output = _capture_console(_render_aggregate_stats, session)
+
+        # Counts are shown
+        assert "25 model calls" in output
+        assert "12 user messages" in output
+        assert format_tokens(50_000) in output
+
+        # Premium/duration line is absent — no shutdown data exists
+        assert "premium requests" not in output
+        assert "API duration" not in output
+
+    def test_completed_session_unchanged(self) -> None:
+        """Completed session still shows flat totals and premium/duration."""
+        session = SessionSummary(
+            session_id="completed-9999",
+            model_calls=50,
+            user_messages=30,
+            total_premium_requests=20,
+            total_api_duration_ms=120_000,
+            is_active=False,
+            has_shutdown_metrics=True,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=50, cost=100),
+                    usage=TokenUsage(outputTokens=500_000),
+                ),
+            },
+        )
+        output = _capture_console(_render_aggregate_stats, session)
+
+        # Flat totals (no section labels)
+        assert "50 model calls" in output
+        assert "30 user messages" in output
+        assert format_tokens(500_000) in output
+        assert "20 premium requests" in output
+        assert format_duration(120_000) in output
+        # No split labels
+        assert "Since last shutdown" not in output
+        assert "Historical" not in output
+
+
 # ---------------------------------------------------------------------------
 # format_tokens tests
 # ---------------------------------------------------------------------------
@@ -4524,14 +4621,12 @@ class TestTotalOutputTokens:
 
 
 class TestRenderAggregateStatsResumedTokens:
-    """Issue #290 — _render_aggregate_stats includes active tokens for resumed sessions."""
+    """Issue #290 / #1126 — _render_aggregate_stats splits sections for resumed sessions."""
 
-    def test_aggregate_stats_shows_total_output_tokens_for_resumed_session(
+    def test_aggregate_stats_shows_split_sections_for_resumed_session(
         self,
     ) -> None:
-        """Output tokens in Aggregate Stats panel include active_output_tokens for resumed sessions."""
-        from copilot_usage.render_detail import _render_aggregate_stats
-
+        """Resumed session shows active and historical sections with labelled rows."""
         session = SessionSummary(
             session_id="agg-resumed-1234",
             model_calls=5,
@@ -4550,15 +4645,14 @@ class TestRenderAggregateStatsResumedTokens:
             },
         )
 
-        expected_total = total_output_tokens(session)  # 350 + 250 = 600
-        assert expected_total == 600
-
         output = _capture_console(_render_aggregate_stats, session)
-        assert format_tokens(expected_total) in output
-        # Ensure the shutdown-only baseline is NOT shown
-        shutdown_only = format_tokens(350)
-        if shutdown_only != format_tokens(expected_total):
-            assert shutdown_only not in output
+        # Active section shows active_output_tokens
+        assert "Since last shutdown" in output
+        assert format_tokens(250) in output
+        # Historical section shows shutdown-only tokens and premium
+        assert "Historical" in output
+        assert format_tokens(350) in output
+        assert "2 premium requests" in output
 
 
 class TestComputeSessionTotalsResumed:
