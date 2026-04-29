@@ -254,11 +254,11 @@ If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, no
 
 ```python
 except (ValueError, OSError):
-    fallback_queue = _start_input_reader_thread()
+    fallback_queue, fallback_thread = _start_input_reader_thread()
     line = None
 ```
 
-The daemon thread calls `input()` in a loop, placing stripped lines on the queue. When stdin is exhausted or an unrecoverable error occurs, it posts the `_FALLBACK_EOF` sentinel and exits. The main loop then reads from `fallback_queue.get(timeout=0.5)` instead of `_read_line_nonblocking`, so that `change_event` auto-refresh keeps working during the fallback. The queue is created lazily on first `ValueError`/`OSError` and is local to that `_interactive_loop` call. The reader thread is also started lazily, but because it is a daemon thread that can block in `input()`, there is no explicit teardown path here: it may remain alive after `_interactive_loop` returns until stdin reaches EOF/errors or the process exits. Being a daemon means it does not prevent process shutdown.
+The daemon thread calls `input()` in a loop, placing stripped lines on the queue. When stdin is exhausted or an unrecoverable error occurs, it posts the `_FALLBACK_EOF` sentinel and exits. The main loop then reads from `fallback_queue.get(timeout=0.5)` instead of `_read_line_nonblocking`, so that `change_event` auto-refresh keeps working during the fallback. The queue is created lazily on first `ValueError`/`OSError` and is local to that `_interactive_loop` call. The reader thread is also started lazily; it is torn down in the `finally` block by posting `_FALLBACK_EOF` on the queue and joining with a 1-second timeout, ensuring the thread does not outlive the function call.
 
 ### Watchdog file observer
 

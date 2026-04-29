@@ -2270,6 +2270,56 @@ def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
 
 
 # ---------------------------------------------------------------------------
+# Issue #1130 — fallback thread must not outlive _interactive_loop
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_thread_does_not_outlive_interactive_loop(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """After _interactive_loop exits, no thread named 'input-fallback' remains.
+
+    Regression for issue #1130: the daemon thread handle was discarded so the
+    caller could not join it.  This test forces the fallback path and verifies
+    cleanup.
+    """
+    _write_session(tmp_path, "fb_life0-0000-0000-0000-000000000000", name="Lifecycle")
+
+    import copilot_usage.cli as cli_mod
+
+    def _raise_value_error(timeout: float = 0.5) -> str | None:  # noqa: ARG001
+        raise ValueError("stdin not selectable")
+
+    monkeypatch.setattr(cli_mod, "_read_line_nonblocking", _raise_value_error)
+
+    call_count = 0
+
+    def _fake_input(*_args: str, **_kwargs: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "q"
+        # After main loop exits, the finally block signals the thread via
+        # _FALLBACK_EOF on the queue; the thread is blocked here in input().
+        # Raise EOFError to simulate stdin closure so the thread exits.
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # After the call returns, no 'input-fallback' thread should remain alive.
+    alive_fallback = [
+        t for t in threading.enumerate() if t.name == "input-fallback" and t.is_alive()
+    ]
+    assert alive_fallback == [], (
+        f"Leaked input-fallback threads: {alive_fallback}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Issue #1012 — auto-refresh must fire in OSError fallback mode
 # ---------------------------------------------------------------------------
 
