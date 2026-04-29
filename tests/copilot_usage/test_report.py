@@ -6405,3 +6405,83 @@ class TestRenderCostViewNoRedundantTotalOutputTokens:
             "total_output_tokens should not be called for resumed sessions "
             "with model_metrics"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1131 — render_cost_view Grand Total undercounts Premium Cost for
+# sessions with total_premium_requests > 0 but empty model_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestCostViewGrandTotalEmptyMetricsPremium:
+    """Issue #1131 — Grand Total Premium Cost must include sessions with
+    total_premium_requests > 0 and empty model_metrics."""
+
+    def test_grand_total_premium_includes_empty_metrics_session(self) -> None:
+        """Grand Total 'Premium Cost' cell equals total_premium_requests
+        for a completed session with empty model_metrics."""
+        session = SessionSummary(
+            session_id="premium-no-metrics-1131",
+            name="Premium No Metrics",
+            model="gpt-4",
+            start_time=datetime(2025, 5, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            has_shutdown_metrics=False,
+            total_premium_requests=9,
+            model_metrics={},
+            model_calls=4,
+            user_messages=2,
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        # Column 4 is "Premium Cost" (1-indexed: Session, Model, Requests, Premium Cost)
+        assert grand_cols[4] == "9", (
+            f"Grand Total Premium Cost: expected '9', got '{grand_cols[4]}'"
+        )
+
+    def test_grand_total_premium_combines_metrics_and_empty_metrics(self) -> None:
+        """Grand Total accumulates premium from both metric-rich and
+        empty-metrics sessions."""
+        session_with_metrics = SessionSummary(
+            session_id="with-metrics-1131",
+            name="With Metrics",
+            model="gpt-4",
+            start_time=datetime(2025, 5, 2, 10, 0, tzinfo=UTC),
+            is_active=False,
+            has_shutdown_metrics=True,
+            total_premium_requests=10,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=200),
+                ),
+            },
+            model_calls=5,
+            user_messages=3,
+        )
+        session_empty_metrics = SessionSummary(
+            session_id="empty-metrics-1131",
+            name="Empty Metrics",
+            model="gpt-4",
+            start_time=datetime(2025, 5, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            has_shutdown_metrics=False,
+            total_premium_requests=7,
+            model_metrics={},
+            model_calls=3,
+            user_messages=1,
+        )
+        output = _capture_cost_view([session_with_metrics, session_empty_metrics])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        grand_row = next(line for line in lines if "Grand Total" in line)
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        # 10 (from model_metrics cost) + 7 (from empty-metrics session) = 17
+        assert grand_cols[4] == "17", (
+            f"Grand Total Premium Cost: expected '17', got '{grand_cols[4]}'"
+        )

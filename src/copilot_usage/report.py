@@ -716,6 +716,10 @@ def render_cost_view(
                 str(s.model_calls),
                 format_tokens(session_output) if session_output else "—",
             )
+            # Accumulate premium totals so the Grand Total row is correct
+            # even when model_metrics is empty but premium requests exist.
+            if not s.is_active or s.has_shutdown_metrics:
+                grand_premium += s.total_premium_requests
 
         grand_output += session_output
         grand_model_calls += s.model_calls
