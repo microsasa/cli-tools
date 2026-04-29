@@ -36,7 +36,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 | `cli.py` | Click command group — routes commands to parser/report functions, handles CLI options, error display. Contains the interactive loop (invoked when no subcommand is given) which uses helpers from `interactive.py`. |
 | `interactive.py` | Interactive-mode UI helpers — session list rendering, file-watching (watchdog with 2-second debounce), version header, and session index building. Extracted from `cli.py` to separate interactive concerns from CLI routing. |
 | `parser.py` | Discovers sessions, reads events.jsonl line by line, builds SessionSummary per session via focused helpers: `_first_pass()` (extract identity/shutdowns/counters/post-shutdown resume data in a single pass), `_build_completed_summary()`, `_build_active_summary()`. |
-| `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls and user_messages fields). Runtime validation at parse boundary. |
+| `models.py` | Pydantic v2 models for all event types + SessionSummary aggregate (includes model_calls, user_messages, and post-last-shutdown sub-totals `active_model_calls` / `active_user_messages` / `active_output_tokens`). Also carries `shutdown_cycles` (pre-computed list of shutdown data so renderers never re-scan events), `has_shutdown_metrics` flag, and a `_check_active_counters` model validator enforcing `active_* ≤ total_*` invariants. Runtime validation at parse boundary. |
 | `report.py` | Rich-formatted terminal output — summary tables (with Model Calls and User Msgs columns), live view, premium request breakdown. Shows raw counts and `~`-prefixed premium cost estimates for live/active sessions; historical post-shutdown views display exact API-provided numbers. |
 | `render_detail.py` | Session detail rendering — extracted from report.py. Displays event timeline, per-event metadata, and session-level aggregates. |
 | `_formatting.py` | Shared formatting utilities — `format_duration()` and `format_tokens()` with doctest-verified examples. Used by report.py and render_detail.py. |
@@ -54,7 +54,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 4. **Summarization** — `build_session_summary()` orchestrates focused helpers:
    - `_first_pass()`: single pass over events — extracts session metadata from `session.start`, counts raw events (model calls, user messages, output tokens), collects all shutdown data, and tracks rolling post-shutdown accumulators (reset on each shutdown) for resume detection
    - `_build_completed_summary()`: merges all shutdown cycles (metrics, premium requests, code changes) into a SessionSummary. Sets `is_active=True` if resumed.
-   - `_build_active_summary()`: for sessions with no shutdowns — infers model from `tool.execution_complete` events or `~/.copilot/config.json`, builds synthetic metrics from output tokens
+   - `_build_active_summary()`: for sessions with no shutdowns — infers model from `tool.execution_complete` events or `~/.copilot/config.json`, builds synthetic metrics from output tokens. For these pure-active sessions, `active_*` fields are populated to equal the full-session totals (since there is no pre-shutdown period to split off).
    - Two frozen dataclasses (`_FirstPassResult`, `_ResumeInfo`) carry state between helpers
 5. **Rendering** — Report functions receive `SessionSummary` objects and render Rich output
 
@@ -64,7 +64,7 @@ Monorepo containing Python CLI utilities that share tooling, CI, and common depe
 
 **Shutdown event as source of truth.** The `session.shutdown` event contains pre-aggregated metrics (total tokens, premium requests, model breakdown). We use these directly instead of re-summing individual events — more accurate and faster.
 
-**Resumed session detection.** Sessions can be shut down and resumed. The parser checks for events after the last `session.shutdown` to detect this. Resumed sessions get `is_active = True` with shutdown metrics preserved as historical data.
+**Resumed session detection.** Sessions can be shut down and resumed. The parser checks for events after the last `session.shutdown` to detect this. Resumed sessions get `is_active = True` with shutdown metrics preserved as historical data. The `active_model_calls` / `active_user_messages` / `active_output_tokens` counters track post-resume sub-totals separately from full-session totals, so renderers can split "since last shutdown" from historical data without re-scanning the event list. `shutdown_cycles` is pre-computed by the parser for the same reason — renderers receive the list directly and never walk the raw events. A `_check_active_counters` validator enforces the invariant `active_model_calls ≤ model_calls` (and likewise for user_messages). For pure-active sessions (no shutdowns at all), `active_*` equals the full-session totals.
 
 **Graceful degradation.** Unknown event types still validate as `SessionEvent`, but production code skips them. `GenericEventData(extra="allow")` remains available for optional best-effort payload validation when a caller explicitly chooses to use it. Missing fields get defaults. The tool never crashes on unexpected data.
 
@@ -91,7 +91,7 @@ tests/
     └── test_e2e.py             Full pipeline: CLI → parser → models → report → output
 ```
 
-- **Unit tests**: 99% coverage, test individual functions with synthetic data
+- **Unit tests**: Run `make test` to see current coverage; test individual functions with synthetic data
 - **Doctests**: `_formatting.py` functions have `>>>` examples executed via `--doctest-modules`
 - **E2e tests**: Run actual CLI commands against anonymized fixture sessions, assert on output content
 - Test counts grow regularly — run `make test` to see the current numbers
