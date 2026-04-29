@@ -181,7 +181,7 @@ def _show_session_by_index(
 _FALLBACK_EOF: Final[str] = "\x00__EOF__"
 
 
-def _start_input_reader_thread() -> queue.SimpleQueue[str]:
+def _start_input_reader_thread() -> tuple[queue.SimpleQueue[str], threading.Thread]:
     """Start a daemon thread reading user input via ``input()`` into a queue.
 
     Used by ``_interactive_loop`` as a fallback when
@@ -189,6 +189,9 @@ def _start_input_reader_thread() -> queue.SimpleQueue[str]:
     stdin is not selectable on Windows, or a detached stdin buffer in
     tests).  Puts :data:`_FALLBACK_EOF` on the queue when stdin is
     exhausted or an unrecoverable error occurs (see issue #1012).
+
+    Returns the queue and the thread handle so the caller can signal
+    shutdown and join the thread (see issue #1130).
     """
     q: queue.SimpleQueue[str] = queue.SimpleQueue()
 
@@ -208,7 +211,7 @@ def _start_input_reader_thread() -> queue.SimpleQueue[str]:
 
     thread = threading.Thread(target=_reader, daemon=True, name="input-fallback")
     thread.start()
-    return q
+    return q, thread
 
 
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
@@ -250,6 +253,7 @@ def _interactive_loop(path: Path | None) -> None:
     # in tests, or an unexpected runtime error).  Initialised lazily on the
     # first error so auto-refresh via change_event keeps working.
     fallback_queue: queue.SimpleQueue[str] | None = None
+    fallback_thread: threading.Thread | None = None
 
     sessions = get_all_sessions(path)
     session_index = _build_session_index(sessions)
@@ -322,7 +326,7 @@ def _interactive_loop(path: Path | None) -> None:
                 except (ValueError, OSError):
                     # stdin not selectable — start a threaded input() reader
                     # so change_event auto-refresh keeps working.
-                    fallback_queue = _start_input_reader_thread()
+                    fallback_queue, fallback_thread = _start_input_reader_thread()
                     line = None
 
             if line is None:
@@ -383,6 +387,9 @@ def _interactive_loop(path: Path | None) -> None:
         pass  # User pressed Ctrl-C; observer cleanup runs in finally
     finally:
         _stop_observer(observer)
+        if fallback_thread is not None and fallback_queue is not None:
+            fallback_queue.put(_FALLBACK_EOF)
+            fallback_thread.join(timeout=1.0)
 
 
 @click.group(invoke_without_command=True)
