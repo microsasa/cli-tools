@@ -278,6 +278,31 @@ def test_implementation_md_symbols_exist_in_expected_modules() -> None:
             )
 
 
+def test_key_design_decisions_mentions_active_counters_and_shutdown_cycles() -> None:
+    """The Key Design Decisions section in architecture.md must mention
+    active_model_calls (or active_*) and shutdown_cycles so the active-counter
+    architecture description cannot silently regress."""
+    section_match = re.search(
+        r"^###\s+Key Design Decisions\b.*?(?=^#{1,3}\s+|\Z)",
+        _ARCH_MD,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert section_match, (
+        "Could not find '### Key Design Decisions' section in architecture.md"
+    )
+    section = section_match.group(0)
+    assert "active_model_calls" in section, (
+        "Key Design Decisions in architecture.md must mention "
+        "'active_model_calls' — the active-counter architecture "
+        "is a key design decision"
+    )
+    assert "shutdown_cycles" in section, (
+        "Key Design Decisions in architecture.md must mention "
+        "'shutdown_cycles' — the pre-computed shutdown list "
+        "is a key design decision"
+    )
+
+
 def test_active_fields_document_pure_active_semantics() -> None:
     """The active_model_calls / active_user_messages / active_output_tokens
     field descriptions must mention pure-active session semantics — not just
