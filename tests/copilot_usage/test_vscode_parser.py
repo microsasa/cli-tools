@@ -3045,6 +3045,70 @@ class TestScanChildIdsEdgeCases:
         assert "link_window" not in names
 
 
+class TestCachedDiscoverResolvesSymlinks:
+    """Regression: _cached_discover_vscode_logs must resolve paths before cache lookup.
+
+    When a symlink or non-canonical path (containing ``..``) is passed as a
+    candidate, the function must resolve it so that both the symlink and the
+    real path share the same cache entry.
+    """
+
+    def test_symlink_and_real_path_share_cache_entry(self, tmp_path: Path) -> None:
+        """Calling via symlink then real path must produce one cache entry."""
+        real_dir = tmp_path / "real_logs"
+        log_dir = (
+            real_dir
+            / "20260313T211400"
+            / "window1"
+            / "exthost"
+            / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        (log_dir / "GitHub Copilot Chat.log").write_text(_make_log_line(req_idx=0))
+
+        symlink = tmp_path / "link_logs"
+        try:
+            symlink.symlink_to(real_dir)
+        except OSError as exc:
+            pytest.skip(f"Symlinks not supported: {exc}")
+
+        paths_via_symlink = _cached_discover_vscode_logs(symlink)
+        paths_via_real = _cached_discover_vscode_logs(real_dir)
+
+        # Both calls must return identical log paths.
+        assert paths_via_symlink == paths_via_real
+
+        # Only one cache entry should exist (keyed by resolved path).
+        resolved = real_dir.resolve()
+        assert resolved in _VSCODE_DISCOVERY_CACHE
+        assert len(_VSCODE_DISCOVERY_CACHE) == 1
+
+    def test_dotdot_path_shares_cache_entry(self, tmp_path: Path) -> None:
+        """A path containing ``..`` components resolves to the same cache key."""
+        real_dir = tmp_path / "real_logs"
+        log_dir = (
+            real_dir
+            / "20260313T211400"
+            / "window1"
+            / "exthost"
+            / "GitHub.copilot-chat"
+        )
+        log_dir.mkdir(parents=True)
+        (log_dir / "GitHub Copilot Chat.log").write_text(_make_log_line(req_idx=0))
+
+        dotdot_path = tmp_path / "subdir" / ".." / "real_logs"
+        (tmp_path / "subdir").mkdir()
+
+        paths_via_dotdot = _cached_discover_vscode_logs(dotdot_path)
+        paths_via_real = _cached_discover_vscode_logs(real_dir)
+
+        assert paths_via_dotdot == paths_via_real
+
+        resolved = real_dir.resolve()
+        assert resolved in _VSCODE_DISCOVERY_CACHE
+        assert len(_VSCODE_DISCOVERY_CACHE) == 1
+
+
 class TestCachedDiscoverOsErrors:
     """Cover OSError paths in _cached_discover_vscode_logs."""
 

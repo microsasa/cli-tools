@@ -263,6 +263,7 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
     candidates = [base_path] if base_path is not None else _default_log_candidates()
     result: list[Path] = []
     for candidate in candidates:
+        candidate = candidate.resolve()
         try:
             st = candidate.stat()
         except OSError as exc:
