@@ -2922,6 +2922,65 @@ class TestGetAllSessions:
 
 
 # ---------------------------------------------------------------------------
+# Fallback session_id for sessions lacking session.start (issue #1139)
+# ---------------------------------------------------------------------------
+
+
+class TestNoSessionStartFallbackId:
+    """Sessions without a session.start event get a fallback session_id.
+
+    Verifies that the directory name is used as a stable fallback so that
+    build_session_index does not collapse multiple such sessions into a
+    single key.
+    """
+
+    def test_single_session_gets_directory_name_as_id(self, tmp_path: Path) -> None:
+        """A session with no session.start derives session_id from its dir name."""
+        session_dir = tmp_path / "abc-uuid-1234"
+        events_path = session_dir / "events.jsonl"
+        _write_events(events_path, _USER_MSG, _ASSISTANT_MSG)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 1
+        assert result[0].session_id == "abc-uuid-1234"
+
+    def test_two_no_start_sessions_have_distinct_ids(self, tmp_path: Path) -> None:
+        """Two sessions without session.start produce distinct session_ids."""
+        dir_a = tmp_path / "dir-aaa"
+        dir_b = tmp_path / "dir-bbb"
+        _write_events(dir_a / "events.jsonl", _USER_MSG, _ASSISTANT_MSG)
+        _write_events(dir_b / "events.jsonl", _USER_MSG, _ASSISTANT_MSG)
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 2
+        ids = {s.session_id for s in result}
+        assert ids == {"dir-aaa", "dir-bbb"}
+
+    def test_no_start_sessions_no_index_collision(self, tmp_path: Path) -> None:
+        """build_session_index contains distinct keys for no-start sessions."""
+        from copilot_usage.interactive import build_session_index
+
+        dir_a = tmp_path / "session-x"
+        dir_b = tmp_path / "session-y"
+        _write_events(dir_a / "events.jsonl", _USER_MSG)
+        _write_events(dir_b / "events.jsonl", _USER_MSG)
+        sessions = get_all_sessions(tmp_path)
+        assert len(sessions) == 2
+        index = build_session_index(sessions)
+        assert len(index) == 2
+        assert "session-x" in index
+        assert "session-y" in index
+
+    def test_normal_session_start_not_overridden(self, tmp_path: Path) -> None:
+        """Sessions with a session.start event still use the event's sessionId."""
+        session_dir = tmp_path / "some-dir-name"
+        _write_events(
+            session_dir / "events.jsonl", _START_EVENT, _USER_MSG, _ASSISTANT_MSG
+        )
+        result = get_all_sessions(tmp_path)
+        assert len(result) == 1
+        assert result[0].session_id == "test-session-001"
+
+
+# ---------------------------------------------------------------------------
 # Real data smoke test (against ~/.copilot/session-state/)
 # ---------------------------------------------------------------------------
 
