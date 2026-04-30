@@ -1496,6 +1496,83 @@ class TestIncrementalCacheLogic:
         assert len(result) == 1
         assert result[0].request_id == "req00009"
 
+        # Verify the cache entry is consistent after truncation handling.
+        entry = _VSCODE_LOG_CACHE[log_file]
+        assert entry.end_offset == log_file.stat().st_size
+        assert entry.file_id is not None
+        assert entry.file_id[1] == entry.end_offset
+
+    def test_incremental_truncation_post_stat_none(self, tmp_path: Path) -> None:
+        """After truncation-reparse, post-stat returns None → resolved_id is stored."""
+        log_file = tmp_path / "chat.log"
+        # Write a large initial file so end_offset is well beyond the truncated size.
+        log_file.write_text("".join(_make_log_line(req_idx=i) for i in range(20)))
+        _get_cached_vscode_requests(log_file)
+        old_end = _VSCODE_LOG_CACHE[log_file].end_offset
+        assert old_end > 500  # sanity: 20 lines × ~100 bytes
+
+        # Fabricate a bigger_id that triggers the incremental path.
+        bigger_id = (99999, old_end + 1000)
+
+        # Truncate the file to a single line (much smaller than old_end).
+        log_file.write_text(_make_log_line(req_idx=9))
+        assert log_file.stat().st_size < old_end
+
+        # Mock safe_file_identity: post-parse call returns None
+        # (file deleted between parse and post-stat).
+        # With file_id=bigger_id, resolved_id is set directly — no initial call.
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            return_value=None,
+        ):
+            result = _get_cached_vscode_requests(log_file, file_id=bigger_id)
+
+        assert len(result) == 1
+        assert result[0].request_id == "req00009"
+        entry = _VSCODE_LOG_CACHE[log_file]
+        # trunc_id falls back to resolved_id (bigger_id, not None).
+        assert entry.file_id is not None
+        assert entry.file_id == bigger_id
+
+    def test_incremental_truncation_post_stat_size_mismatch(
+        self, tmp_path: Path
+    ) -> None:
+        """After truncation-reparse, if file grew between parse and post-stat,
+        stored file_id size is clamped to end_offset."""
+        log_file = tmp_path / "chat.log"
+        # Write a large initial file so end_offset is well beyond the truncated size.
+        log_file.write_text("".join(_make_log_line(req_idx=i) for i in range(20)))
+        _get_cached_vscode_requests(log_file)
+        old_end = _VSCODE_LOG_CACHE[log_file].end_offset
+        assert old_end > 500  # sanity: 20 lines × ~100 bytes
+
+        # Fabricate a bigger_id that triggers the incremental path.
+        bigger_id = (99999, old_end + 1000)
+
+        # Truncate the file to a single line (much smaller than old_end).
+        log_file.write_text(_make_log_line(req_idx=9))
+        truncated_size = log_file.stat().st_size
+        assert truncated_size < old_end
+
+        real_id = safe_file_identity(log_file)
+        assert real_id is not None
+        # Mock post-stat to return a BIGGER size (file grew during parse).
+        # With file_id=bigger_id, resolved_id is set directly — no initial call.
+        grown_id = (real_id[0] + 1, truncated_size + 500)
+        with patch(
+            "copilot_usage.vscode_parser.safe_file_identity",
+            return_value=grown_id,
+        ):
+            result = _get_cached_vscode_requests(log_file, file_id=bigger_id)
+
+        assert len(result) == 1
+        assert result[0].request_id == "req00009"
+        entry = _VSCODE_LOG_CACHE[log_file]
+        # Stored file_id size should be clamped to end_offset, not grown size.
+        assert entry.file_id is not None
+        assert entry.file_id[1] == entry.end_offset
+        assert entry.file_id[1] != grown_id[1]
+
     def test_incremental_post_stat_none(self, tmp_path: Path) -> None:
         """If post-parse safe_file_identity returns None, resolved_id is used."""
         log_file = tmp_path / "chat.log"
