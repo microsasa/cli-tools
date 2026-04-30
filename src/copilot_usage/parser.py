@@ -1036,6 +1036,18 @@ def _build_session_summary_with_meta(
 ) -> _BuildMeta:
     """Build a summary and report whether the config fallback was used."""
     fp = _first_pass(events)
+
+    # Derive a fallback session_id from the directory name when the events
+    # file lacks a session.start event (avoids build_session_index collisions).
+    if not fp.session_id:
+        fallback_id = ""
+        if session_dir is not None:
+            fallback_id = session_dir.name
+        elif events_path is not None:
+            fallback_id = events_path.parent.name
+        if fallback_id:
+            fp = dataclasses.replace(fp, session_id=fallback_id)
+
     name = (
         _extract_session_name(session_dir, plan_exists=plan_exists)
         if session_dir
