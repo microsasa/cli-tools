@@ -230,13 +230,15 @@ Add `V=1` for verbose output: `make check V=1`
 cli-tools/
 ├── src/
 │   └── copilot_usage/
-│       ├── cli.py              # Click commands + interactive loop + watchdog auto-refresh
+│       ├── cli.py              # Click command group, _interactive_loop driver; watchdog helpers are in interactive.py
+│       ├── interactive.py      # Interactive-mode UI helpers — session list, file-watching, version header, session index
 │       ├── models.py           # Pydantic data models and session-level helpers
 │       ├── parser.py           # events.jsonl parsing and session summary builder
 │       ├── pricing.py          # Model cost multipliers and lookup helpers
 │       ├── report.py           # Rich terminal output (summary, cost, live views)
 │       ├── render_detail.py    # Session-detail rendering (extracted from report.py)
 │       ├── _formatting.py      # Shared pure formatting utilities (tokens, durations)
+│       ├── _fs_utils.py        # Shared filesystem/caching utilities — lru_insert and safe_file_identity
 │       ├── vscode_parser.py    # VS Code Copilot Chat log parser
 │       ├── vscode_report.py    # Rich rendering for VS Code usage data
 │       ├── logging_config.py   # Loguru configuration
