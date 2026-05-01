@@ -1897,8 +1897,8 @@ class TestRenderFullSummary:
 
     @pytest.mark.parametrize(
         "trigger",
-        ["has_shutdown_metrics", "premium_requests"],
-        ids=["via-shutdown-metrics", "via-premium-requests"],
+        ["shutdown_cycles", "premium_requests"],
+        ids=["via-shutdown-cycles", "via-premium-requests"],
     )
     def test_resumed_session_appears_in_both_sections(self, trigger: str) -> None:
         """Resumed session must appear in both Historical and Active sections.
@@ -1908,14 +1908,14 @@ class TestRenderFullSummary:
         both lists.  If someone refactors ``if`` to ``elif``, this test fails.
 
         Parametrized over the two conditions that qualify an active session for
-        the historical list: ``has_shutdown_metrics=True`` and
+        the historical list: non-empty ``shutdown_cycles`` and
         ``total_premium_requests > 0``.
         """
         active_tokens = 350
         # When premium_requests triggers historical inclusion the real parser
         # produces model_metrics={} (shutdown cycles exist but no metrics
         # were recorded yet), so the shutdown-token baseline is 0.
-        if trigger == "has_shutdown_metrics":
+        if trigger == "shutdown_cycles":
             shutdown_tokens = 2000
             model_metrics_map: dict[str, ModelMetrics] = {
                 "claude-sonnet-4": ModelMetrics(
@@ -1928,6 +1928,12 @@ class TestRenderFullSummary:
             }
         else:
             model_metrics_map = {}
+        shutdown_cycle: list[tuple[datetime | None, SessionShutdownData]] = [
+            (
+                datetime(2025, 6, 1, 8, 30, tzinfo=UTC),
+                SessionShutdownData(shutdownType="normal"),
+            )
+        ]
         session = SessionSummary(
             session_id="resumed-dual-abcdef",
             name="DualSection",
@@ -1935,7 +1941,7 @@ class TestRenderFullSummary:
             start_time=datetime(2025, 6, 1, 8, 0, tzinfo=UTC),
             last_resume_time=datetime(2025, 6, 1, 9, 0, tzinfo=UTC),
             is_active=True,
-            has_shutdown_metrics=trigger == "has_shutdown_metrics",
+            has_shutdown_metrics=trigger == "shutdown_cycles",
             total_premium_requests=15 if trigger == "premium_requests" else 0,
             user_messages=10,
             model_calls=8,
@@ -1943,6 +1949,7 @@ class TestRenderFullSummary:
             active_user_messages=2,
             active_output_tokens=active_tokens,
             model_metrics=model_metrics_map,
+            shutdown_cycles=shutdown_cycle,
         )
         output = _capture_full_summary([session])
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
@@ -3606,10 +3613,10 @@ class TestHistoricalSectionZeroPremiumWithMetrics:
 
 
 class TestHistoricalSectionResumedFreeSessions:
-    """Issue #377 — resumed sessions with 0 premium requests and has_shutdown_metrics."""
+    """Issue #377 — resumed sessions with 0 premium requests and shutdown_cycles."""
 
     def test_resumed_free_session_appears_in_historical(self) -> None:
-        """Resumed session (is_active=True, has_shutdown_metrics=True, total_premium_requests=0)
+        """Resumed session (is_active=True, shutdown_cycles non-empty, total_premium_requests=0)
         must appear in the historical section."""
         session = SessionSummary(
             session_id="resumed-free-model-1234",
@@ -3629,6 +3636,12 @@ class TestHistoricalSectionResumedFreeSessions:
                     usage=TokenUsage(outputTokens=8000),
                 )
             },
+            shutdown_cycles=[
+                (
+                    datetime(2025, 1, 15, 11, 0, tzinfo=UTC),
+                    SessionShutdownData(shutdownType="normal"),
+                )
+            ],
         )
         output = _capture_full_summary([session])
         assert "Historical Totals" in output
@@ -3654,6 +3667,12 @@ class TestHistoricalSectionResumedFreeSessions:
                     usage=TokenUsage(outputTokens=8000),
                 )
             },
+            shutdown_cycles=[
+                (
+                    datetime(2025, 1, 15, 11, 0, tzinfo=UTC),
+                    SessionShutdownData(shutdownType="normal"),
+                )
+            ],
         )
         output = _capture_full_summary([session])
         # Active section table title should indicate it is scoped to the period
@@ -3682,6 +3701,79 @@ class TestHistoricalSectionResumedFreeSessions:
         )
         output = _capture_full_summary([session])
         assert "No historical shutdown data" in output
+
+
+class TestHistoricalPartitionEmptyModelMetrics:
+    """Issue #1147 — resumed sessions with empty modelMetrics must appear in historical."""
+
+    def test_resumed_session_empty_metrics_in_historical(self) -> None:
+        """Resumed session with shutdown_cycles but has_shutdown_metrics=False.
+
+        When a user shuts down without making API calls, ``modelMetrics`` is
+        empty so ``has_shutdown_metrics`` is ``False``.  The partition must
+        still include the session in the historical section because
+        ``shutdown_cycles`` is non-empty.
+        """
+        session = SessionSummary(
+            session_id="resumed-empty-metrics-01",
+            name="EmptyMetricsResumed",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 3, 10, 9, 0, tzinfo=UTC),
+            last_resume_time=datetime(2025, 3, 10, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            total_premium_requests=0,
+            user_messages=4,
+            model_calls=2,
+            active_model_calls=2,
+            active_user_messages=4,
+            active_output_tokens=200,
+            shutdown_cycles=[
+                (
+                    datetime(2025, 3, 10, 9, 30, tzinfo=UTC),
+                    SessionShutdownData(shutdownType="normal"),
+                )
+            ],
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "Historical Totals" in clean
+        assert "No historical shutdown data" not in clean
+        assert "EmptyMetricsResumed" in clean
+
+        # Session must appear in both historical and active sections.
+        assert "Active Sessions" in clean
+        hist_part, active_part = clean.split("Active Sessions", 1)
+        assert "EmptyMetricsResumed" in hist_part
+        assert "EmptyMetricsResumed" in active_part
+
+    def test_pure_active_no_shutdown_cycles_not_in_historical(self) -> None:
+        """Pure-active session (shutdown_cycles=[]) must NOT appear in historical.
+
+        This is the counterpart to the above test: an active session that has
+        never been shut down should only appear in the active section.
+        """
+        session = SessionSummary(
+            session_id="pure-active-no-cycles-01",
+            name="PureActiveNoCycles",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 3, 10, 9, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            total_premium_requests=0,
+            user_messages=3,
+            model_calls=1,
+            active_model_calls=1,
+            active_user_messages=3,
+            active_output_tokens=150,
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "No historical shutdown data" in clean
+        assert "Active Sessions" in clean
+        assert "PureActiveNoCycles" in clean
 
 
 class TestBuildEventDetailsCatchAll:
