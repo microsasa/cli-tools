@@ -276,6 +276,10 @@ def _parse_events_from_offset(
                         )
                 safe_offset = current_offset
     except UnicodeDecodeError as exc:
+        # Defensive guard: under pydantic>=2.13.2, model_validate_json
+        # wraps UTF-8 failures as ValidationError(type="json_invalid"),
+        # so this branch cannot trigger today.  It remains as insurance
+        # against future pydantic-core changes.
         logger.warning(
             "{} — UTF-8 decode error at offset {}; returning {} new events (partial): {}",
             events_path,
@@ -283,6 +287,7 @@ def _parse_events_from_offset(
             len(new_events),
             exc,
         )
+        safe_offset = current_offset
     return new_events, safe_offset
 
 
@@ -663,9 +668,10 @@ def parse_events(events_path: Path) -> list[SessionEvent]:
     Lines that fail JSON decoding or Pydantic validation are skipped with
     a warning.
 
-    If a ``UnicodeDecodeError`` is raised during parsing (e.g. from a
-    Pydantic validator), parsing stops early and the events parsed so
-    far are returned as a partial session.
+    If a ``UnicodeDecodeError`` is raised during parsing, parsing stops
+    early and the events parsed so far are returned as a partial
+    session.  The offset advances past the offending line so that
+    incremental callers make forward progress.
 
     Raises:
         OSError: If the file cannot be opened or read (e.g., deleted
