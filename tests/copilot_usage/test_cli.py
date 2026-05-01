@@ -24,11 +24,13 @@ from copilot_usage import __version__
 from copilot_usage.cli import (
     _build_session_index,
     _DateTimeOrDate,
+    _FALLBACK_EOF,
     _normalize_until,
     _ParsedDateArg,
     _print_version_header,
     _read_line_nonblocking,
     _show_session_by_index,
+    _start_input_reader_thread,
     _start_observer,
     _stop_observer,
     _validate_since_until,
@@ -2267,6 +2269,94 @@ def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
     runner = CliRunner()
     result = runner.invoke(main, ["--path", str(tmp_path)])
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #1143 — _start_input_reader_thread except-Exception recovery path
+# ---------------------------------------------------------------------------
+
+
+class TestStartInputReaderThreadExceptionPath:
+    """Direct unit tests for the ``except Exception`` branch in
+    ``_start_input_reader_thread._reader``.
+
+    These verify that an unexpected error from ``input()`` (neither
+    ``EOFError`` nor ``KeyboardInterrupt``) correctly enqueues the
+    ``_FALLBACK_EOF`` sentinel and logs a warning — preventing the
+    interactive loop from hanging indefinitely.
+    """
+
+    def test_runtime_error_puts_fallback_eof(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When input() raises RuntimeError, _FALLBACK_EOF is queued
+        and the thread exits — preventing an infinite hang in
+        _interactive_loop."""
+        import builtins
+
+        monkeypatch.setattr(
+            builtins,
+            "input",
+            lambda *_a, **_kw: (_ for _ in ()).throw(
+                RuntimeError("stdin broken")
+            ),
+        )
+        q = _start_input_reader_thread()
+        sentinel = q.get(timeout=2.0)
+        assert sentinel == _FALLBACK_EOF
+
+    def test_blocking_io_error_puts_fallback_eof(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """BlockingIOError (a subclass of OSError) also triggers the
+        generic except-Exception path and enqueues _FALLBACK_EOF."""
+        import builtins
+
+        monkeypatch.setattr(
+            builtins,
+            "input",
+            lambda *_a, **_kw: (_ for _ in ()).throw(
+                BlockingIOError("EAGAIN")
+            ),
+        )
+        q = _start_input_reader_thread()
+        sentinel = q.get(timeout=2.0)
+        assert sentinel == _FALLBACK_EOF
+
+    def test_exception_logs_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The unexpected-exception path logs a WARNING containing the
+        error message."""
+        import builtins
+
+        monkeypatch.setattr(
+            builtins,
+            "input",
+            lambda *_a, **_kw: (_ for _ in ()).throw(
+                BlockingIOError("EAGAIN")
+            ),
+        )
+
+        log_messages: list[str] = []
+        handler_id = logger.add(
+            lambda m: log_messages.append(str(m)),
+            level="WARNING",
+        )
+        try:
+            q = _start_input_reader_thread()
+            q.get(timeout=2.0)
+        finally:
+            logger.remove(handler_id)
+
+        assert any(
+            "Unexpected stdin error in fallback reader thread" in m
+            for m in log_messages
+        )
+        assert any("EAGAIN" in m for m in log_messages)
 
 
 # ---------------------------------------------------------------------------
