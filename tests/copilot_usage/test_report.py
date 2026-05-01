@@ -59,6 +59,7 @@ from copilot_usage.report import (
     _filter_sessions,
     _format_elapsed_since,
     _format_session_running_time,
+    _render_active_section_from,
     _render_model_table,
     _render_session_table,
     render_cost_view,
@@ -2094,6 +2095,146 @@ class TestRenderFullSummary:
             "Active row must NOT display shutdown output tokens"
         )
 
+    def test_active_title_no_since_last_shutdown_for_pure_active(self) -> None:
+        """Pure-active sessions (no shutdown history) omit 'Since Last Shutdown'.
+
+        Regression test for issue #1146: the title should not claim a temporal
+        scope that does not exist for sessions that have never been shut down.
+        """
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="pure-active-title-abcdef",
+            name="PureActive",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=5),
+            is_active=True,
+            has_shutdown_metrics=False,
+            user_messages=2,
+            model_calls=1,
+            active_model_calls=1,
+            active_user_messages=2,
+            active_output_tokens=100,
+            shutdown_cycles=[],
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "Active Sessions" in clean
+        assert "Since Last Shutdown" not in clean
+
+    def test_active_title_since_last_shutdown_for_resumed(self) -> None:
+        """Resumed sessions (non-empty shutdown_cycles) show 'Since Last Shutdown'.
+
+        Regression test for issue #1146: when at least one active session has
+        shutdown history, the title should clarify the temporal scope.
+        """
+        now = datetime.now(tz=UTC)
+        sd = SessionShutdownData(
+            shutdownType="explicit",
+            totalPremiumRequests=5,
+            totalApiDurationMs=1000,
+        )
+        session = SessionSummary(
+            session_id="resumed-title-abcdef",
+            name="Resumed",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(hours=1),
+            last_resume_time=now - timedelta(minutes=10),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=5,
+            user_messages=8,
+            model_calls=6,
+            active_model_calls=2,
+            active_user_messages=3,
+            active_output_tokens=200,
+            shutdown_cycles=[(now - timedelta(minutes=30), sd)],
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=5),
+                    usage=TokenUsage(outputTokens=500),
+                )
+            },
+        )
+        output = _capture_full_summary([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "Since Last Shutdown" in clean
+
+
+# ---------------------------------------------------------------------------
+# _render_active_section_from direct tests (issue #1146)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderActiveSectionFromTitle:
+    """Verify _render_active_section_from title depends on shutdown_cycles."""
+
+    def _capture(self, active: list[SessionSummary]) -> str:
+        """Capture Rich output from _render_active_section_from."""
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        _render_active_section_from(console, active)
+        return buf.getvalue()
+
+    def test_pure_active_no_since_last_shutdown(self) -> None:
+        """Title omits 'Since Last Shutdown' for pure-active sessions."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="direct-pure-abcdef",
+            name="DirectPure",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(minutes=5),
+            is_active=True,
+            has_shutdown_metrics=False,
+            user_messages=1,
+            model_calls=1,
+            active_model_calls=1,
+            active_user_messages=1,
+            active_output_tokens=50,
+            shutdown_cycles=[],
+        )
+        output = self._capture([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "Active Sessions" in clean
+        assert "Since Last Shutdown" not in clean
+
+    def test_resumed_session_shows_since_last_shutdown(self) -> None:
+        """Title includes 'Since Last Shutdown' when shutdown_cycles is non-empty."""
+        now = datetime.now(tz=UTC)
+        sd = SessionShutdownData(
+            shutdownType="explicit",
+            totalPremiumRequests=3,
+            totalApiDurationMs=500,
+        )
+        session = SessionSummary(
+            session_id="direct-resumed-abcdef",
+            name="DirectResumed",
+            model="claude-sonnet-4",
+            start_time=now - timedelta(hours=1),
+            last_resume_time=now - timedelta(minutes=5),
+            is_active=True,
+            has_shutdown_metrics=True,
+            total_premium_requests=3,
+            user_messages=5,
+            model_calls=4,
+            active_model_calls=2,
+            active_user_messages=1,
+            active_output_tokens=100,
+            shutdown_cycles=[(now - timedelta(minutes=30), sd)],
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=2, cost=3),
+                    usage=TokenUsage(outputTokens=300),
+                )
+            },
+        )
+        output = self._capture([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        assert "Since Last Shutdown" in clean
+
 
 # ---------------------------------------------------------------------------
 # render_cost_view capture helper
@@ -3636,6 +3777,17 @@ class TestHistoricalSectionResumedFreeSessions:
 
     def test_resumed_free_session_appears_in_active_section(self) -> None:
         """Same resumed session must also appear in the active section."""
+        sd = SessionShutdownData(
+            shutdownType="routine",
+            totalPremiumRequests=0,
+            totalApiDurationMs=1000,
+            modelMetrics={
+                "gpt-5-mini": ModelMetrics(
+                    requests=RequestMetrics(count=17, cost=0),
+                    usage=TokenUsage(outputTokens=8000),
+                )
+            },
+        )
         session = SessionSummary(
             session_id="resumed-free-model-1234",
             name="ResumedFreeSession",
@@ -3648,6 +3800,7 @@ class TestHistoricalSectionResumedFreeSessions:
             model_calls=20,
             active_model_calls=3,
             active_output_tokens=500,
+            shutdown_cycles=[(datetime(2025, 1, 15, 10, 30, tzinfo=UTC), sd)],
             model_metrics={
                 "gpt-5-mini": ModelMetrics(
                     requests=RequestMetrics(count=17, cost=0),
