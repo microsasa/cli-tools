@@ -9239,7 +9239,7 @@ class TestParseEventsFromOffset:
         assert safe_end == p.stat().st_size
 
     def test_unicode_decode_error_returns_partial(self, tmp_path: Path) -> None:
-        """A UnicodeDecodeError stops parsing and returns events so far."""
+        """A UnicodeDecodeError stops parsing, returns events so far, and advances offset."""
         p = tmp_path / "events.jsonl"
         line1 = _make_event_line("session.start", "s1") + "\n"
         line2 = _make_event_line("assistant.message", "m1") + "\n"
@@ -9262,7 +9262,68 @@ class TestParseEventsFromOffset:
         with patch.object(_SE, "model_validate_json", _boom):
             events, safe_end = _parse_events_from_offset(p, 0)
             assert len(events) == 1
-            assert safe_end == len(line1.encode("utf-8"))
+            # safe_end must advance *past* the bad line so callers don't
+            # retry the same offset indefinitely.
+            assert safe_end == p.stat().st_size
+
+    def test_unicode_decode_error_offset_advances_past_bad_line(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: UnicodeDecodeError handler must not stall the cursor.
+
+        A file has three valid lines; ``model_validate_json`` raises
+        ``UnicodeDecodeError`` on line 2.  After the fix:
+
+        * Events parsed before the error are returned.
+        * ``safe_offset`` advances past the bad line.
+        * A warning is emitted.
+        * A subsequent call starting at the returned offset picks up
+          line 3 without re-encountering line 2.
+        """
+        p = tmp_path / "events.jsonl"
+        line1 = _make_event_line("session.start", "s1") + "\n"
+        line2 = _make_event_line("assistant.message", "m1") + "\n"
+        line3 = _make_event_line("assistant.message", "m2") + "\n"
+        p.write_text(line1 + line2 + line3, encoding="utf-8")
+
+        from copilot_usage.models import SessionEvent as _SE
+
+        real_validate = _SE.model_validate_json
+        call_count = [0]
+
+        @classmethod  # type: ignore[misc]
+        def _boom(
+            cls: type[object], *args: str | bytes | bytearray, **kwargs: object
+        ) -> object:
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "simulated")
+            return real_validate(args[0], **kwargs)  # type: ignore[arg-type]
+
+        line1_len = len(line1.encode("utf-8"))
+        line2_len = len(line2.encode("utf-8"))
+
+        with patch.object(_parser_module.logger, "warning") as warning_spy:
+            with patch.object(_SE, "model_validate_json", _boom):
+                events, safe_end = _parse_events_from_offset(p, 0)
+
+        # Only line 1 was successfully parsed.
+        assert len(events) == 1
+        assert events[0].type == "session.start"
+
+        # Cursor must have advanced past line 2.
+        assert safe_end == line1_len + line2_len
+
+        # A warning was emitted about the decode error.
+        warning_spy.assert_called_once()
+        assert "UTF-8 decode error" in warning_spy.call_args.args[0]
+
+        # A second call from the returned offset must parse line 3
+        # without revisiting line 2.
+        events2, safe_end2 = _parse_events_from_offset(p, safe_end)
+        assert len(events2) == 1
+        assert events2[0].type == "assistant.message"
+        assert safe_end2 == p.stat().st_size
 
 
 class TestParseEventsPartialTailParity:
