@@ -610,7 +610,7 @@ def render_full_summary(
     historical: list[SessionSummary] = []
     active: list[SessionSummary] = []
     for s in sessions:
-        if s.total_premium_requests > 0 or not s.is_active or s.has_shutdown_metrics:
+        if s.total_premium_requests > 0 or not s.is_active or bool(s.shutdown_cycles):
             historical.append(s)
         if s.is_active:
             active.append(s)
