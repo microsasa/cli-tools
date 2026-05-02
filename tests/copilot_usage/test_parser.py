@@ -2123,6 +2123,99 @@ class TestBuildSessionSummaryResumed:
         assert summary.active_output_tokens == 120
         assert summary.active_user_messages == 0
 
+    def test_turn_start_alone_marks_resumed(self, tmp_path: Path) -> None:
+        """Shutdown → ASSISTANT_TURN_START (no ASSISTANT_MESSAGE) → is_active=True."""
+        post_turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "99", "interactionId": "int-inflight"},
+                "id": "ev-ts-noresume",
+                "timestamp": "2026-03-07T12:01:01.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_turn_start,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.active_model_calls == 1
+        assert summary.active_output_tokens == 0
+        assert summary.last_resume_time is None
+
+    def test_turn_start_then_assistant_message_marks_resumed(
+        self, tmp_path: Path
+    ) -> None:
+        """Shutdown → ASSISTANT_TURN_START + ASSISTANT_MESSAGE → is_active=True."""
+        post_turn_start = json.dumps(
+            {
+                "type": "assistant.turn_start",
+                "data": {"turnId": "99", "interactionId": "int-inflight"},
+                "id": "ev-ts-combined",
+                "timestamp": "2026-03-07T12:01:01.000Z",
+                "parentId": "ev-shutdown",
+            }
+        )
+        post_asst = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "m-combined",
+                    "content": "done",
+                    "toolRequests": [],
+                    "interactionId": "int-inflight",
+                    "outputTokens": 200,
+                },
+                "id": "ev-a-combined",
+                "timestamp": "2026-03-07T12:01:05.000Z",
+                "parentId": "ev-ts-combined",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _ASSISTANT_MSG,
+            _SHUTDOWN_EVENT,
+            post_turn_start,
+            post_asst,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.active_model_calls == 1
+        assert summary.active_output_tokens == 200
+
+    def test_pure_active_session_unaffected_by_turn_start_fix(
+        self, tmp_path: Path
+    ) -> None:
+        """Session with no shutdown → is_active=True with correct totals."""
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(
+            p,
+            _START_EVENT,
+            _USER_MSG,
+            _TURN_START_1,
+            _ASSISTANT_MSG,
+            _TURN_START_2,
+            _ASSISTANT_MSG_2,
+        )
+        events = parse_events(p)
+        summary = build_session_summary(events)
+        assert summary.is_active is True
+        assert summary.model_calls == 2
+        assert summary.active_model_calls == 2
+        assert summary.user_messages == 1
+        assert summary.active_user_messages == 1
+
     def test_model_inferred_from_highest_request_count(self, tmp_path: Path) -> None:
         """Shutdown with multiple models, no currentModel → picks highest requests.count."""
         shutdown_multi = json.dumps(
