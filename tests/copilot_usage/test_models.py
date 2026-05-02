@@ -1172,6 +1172,26 @@ class TestTotalOutputTokens:
         )
         assert total_output_tokens(session) == 75
 
+    def test_case_e_unknown_model_active_tokens(self) -> None:
+        """Issue #1152: model=None with active_output_tokens and empty
+        model_metrics falls through the ``not model_metrics`` branch.
+
+        This is the exact state produced by ``_build_active_summary`` when
+        model detection fails.  ``total_output_tokens`` must return the
+        active tokens (250), not zero.
+        """
+        session = SessionSummary(
+            session_id="case-e",
+            model=None,
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=250,
+            model_metrics={},
+            has_shutdown_metrics=False,
+        )
+        assert total_output_tokens(session) == 250
+
 
 # ---------------------------------------------------------------------------
 # has_active_period_stats
