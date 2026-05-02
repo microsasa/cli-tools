@@ -494,6 +494,30 @@ class TestRenderLiveSessions:
         output = _capture_output([session])
         assert "~0" in output
 
+    def test_est_cost_light_tier_model(self) -> None:
+        """Live session with claude-haiku-4.5 (0.33× multiplier) shows ~1."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="live-light-12345678",
+            name="Light Live",
+            model="claude-haiku-4.5",
+            is_active=True,
+            start_time=now - timedelta(minutes=10),
+            user_messages=5,
+            model_calls=3,
+            active_model_calls=3,
+            active_user_messages=5,
+            active_output_tokens=500,
+            model_metrics={
+                "claude-haiku-4.5": ModelMetrics(
+                    usage=TokenUsage(outputTokens=500),
+                )
+            },
+        )
+        output = _capture_output([session])
+        # 3 calls × 0.33 multiplier = round(0.99) = ~1
+        assert "~1" in output
+
 
 # ---------------------------------------------------------------------------
 # Helpers for session detail tests
@@ -2805,6 +2829,12 @@ class TestEstimatePremiumCost:
         result = _estimate_premium_cost("Claude-Opus-4.6", 10)
         assert result == "~30"
 
+    def test_light_tier_model_uses_fractional_multiplier(self) -> None:
+        """claude-haiku-4.5 has a 0.33× multiplier — rounding must be verified."""
+        assert _estimate_premium_cost("claude-haiku-4.5", 3) == "~1"  # round(0.99)
+        assert _estimate_premium_cost("claude-haiku-4.5", 1) == "~0"  # round(0.33)
+        assert _estimate_premium_cost("claude-haiku-4.5", 10) == "~3"  # round(3.3)
+
 
 class TestRenderFullSummaryHelperReuse:
     """Verify _render_historical_section_from delegates to shared table helpers."""
@@ -3955,6 +3985,31 @@ class TestComputeSessionTotals:
             user_messages=30,
             is_active=False,
             has_shutdown_metrics=True,
+        )
+        totals = _compute_session_totals([session], shutdown_only=True)
+        assert totals.model_calls == 80
+        assert totals.user_messages == 30
+
+    def test_shutdown_only_no_subtraction_for_idle_resumed_session(self) -> None:
+        """shutdown_only=True: is_active=True, has_shutdown_metrics=True,
+        has_active_period_stats=False → no subtraction (else branch)."""
+        session = SessionSummary(
+            session_id="idle-resumed-so",
+            total_premium_requests=5,
+            model_calls=80,
+            active_model_calls=0,
+            user_messages=30,
+            active_user_messages=0,
+            active_output_tokens=0,
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=None,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=5),
+                    usage=TokenUsage(outputTokens=1_000_000),
+                ),
+            },
         )
         totals = _compute_session_totals([session], shutdown_only=True)
         assert totals.model_calls == 80
