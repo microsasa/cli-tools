@@ -199,7 +199,7 @@ def _start_input_reader_thread() -> queue.SimpleQueue[str]:
             except (EOFError, KeyboardInterrupt):
                 q.put(_FALLBACK_EOF)
                 break
-            except Exception as exc:
+            except (ValueError, OSError) as exc:
                 logger.warning(
                     "Unexpected stdin error in fallback reader thread: {}", exc
                 )

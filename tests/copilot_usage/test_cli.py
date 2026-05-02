@@ -24,11 +24,13 @@ from copilot_usage import __version__
 from copilot_usage.cli import (
     _build_session_index,
     _DateTimeOrDate,
+    _FALLBACK_EOF,
     _normalize_until,
     _ParsedDateArg,
     _print_version_header,
     _read_line_nonblocking,
     _show_session_by_index,
+    _start_input_reader_thread,
     _start_observer,
     _stop_observer,
     _validate_since_until,
@@ -4064,3 +4066,22 @@ class TestSingleConsolePerCommand:
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
         assert "VS Code Copilot Chat" in output
+
+
+# ---------------------------------------------------------------------------
+# _start_input_reader_thread
+# ---------------------------------------------------------------------------
+
+
+class TestStartInputReaderThread:
+    """Tests for _start_input_reader_thread."""
+
+    def test_value_error_puts_fallback_eof(self) -> None:
+        """ValueError from input() (closed stdin) enqueues _FALLBACK_EOF."""
+        with patch(
+            "builtins.input",
+            side_effect=ValueError("I/O operation on closed file"),
+        ):
+            q = _start_input_reader_thread()
+            result = q.get(timeout=2)
+        assert result == _FALLBACK_EOF
