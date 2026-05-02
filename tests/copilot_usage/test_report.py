@@ -4813,11 +4813,11 @@ class TestRenderCostViewModelCallsConsistency:
         since_cols = [col.strip() for col in since_row[0].split("│")]
         assert since_cols[5] == "3"
 
-        # Grand total shows the full session total (10)
+        # Grand total shows only shutdown-only model calls (7)
         grand_row = [ln for ln in lines if "Grand Total" in ln]
         assert grand_row, "Expected a Grand Total row"
         grand_cols = [col.strip() for col in grand_row[0].split("│")]
-        assert grand_cols[5] == "10"
+        assert grand_cols[5] == "7"
 
     def test_completed_session_no_regression(self) -> None:
         """Completed session (active_model_calls=0) still shows full model_calls."""
@@ -4910,13 +4910,14 @@ class TestRenderCostViewModelCallsConsistency:
         active_calls = get_model_calls(since_row[0])
         total_calls = get_model_calls(grand_row[0])
 
-        # Check individual expected values and the visual sum invariant
+        # Check individual expected values — grand total matches per-row
+        # (shutdown-only) calls, not the full session total.
         assert shutdown_calls == 7, f"Expected 7 shutdown calls, got {shutdown_calls}"
         assert active_calls == 3, f"Expected 3 active calls, got {active_calls}"
-        assert total_calls == 10, f"Expected 10 total calls, got {total_calls}"
-        assert shutdown_calls + active_calls == total_calls, (
-            f"Expected shutdown ({shutdown_calls}) + active ({active_calls}) "
-            f"to equal total ({total_calls})"
+        assert total_calls == 7, f"Expected 7 total calls, got {total_calls}"
+        assert total_calls == shutdown_calls, (
+            f"Expected grand total ({total_calls}) to match "
+            f"shutdown calls ({shutdown_calls})"
         )
 
     def test_negative_shutdown_model_calls_rejected_by_validator(self) -> None:
@@ -4942,6 +4943,102 @@ class TestRenderCostViewModelCallsConsistency:
                     ),
                 },
             )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1156 — render_cost_view Grand Total Model Calls overcounts for
+# resumed sessions
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCostViewGrandTotalModelCallsOvercount:
+    """Issue #1156 — Grand Total Model Calls must equal sum of per-row values."""
+
+    def test_resumed_session_grand_total_matches_per_row(self) -> None:
+        """Grand Total Model Calls equals shutdown-only calls, not full total."""
+        session = SessionSummary(
+            session_id="gt-overcount-1156",
+            name="Resumed 1156",
+            model="gpt-4",
+            start_time=datetime(2025, 8, 1, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=6,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=200,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        # Per-session row shows shutdown-only model calls: 10 - 5 = 5
+        model_row = [ln for ln in lines if "gpt-4" in ln and "Resumed 1156" in ln]
+        assert model_row, "Expected a per-model row with session name"
+        model_cols = [col.strip() for col in model_row[0].split("│")]
+        assert model_cols[5] == "5"
+
+        # Grand Total must match the per-row value (5), not the full total (10)
+        grand_row = [ln for ln in lines if "Grand Total" in ln]
+        assert grand_row, "Expected a Grand Total row"
+        grand_cols = [col.strip() for col in grand_row[0].split("│")]
+        assert grand_cols[5] == "5"
+
+    def test_multiple_sessions_grand_total_sums_per_row_values(self) -> None:
+        """Grand Total Model Calls sums per-row values across sessions."""
+        resumed = SessionSummary(
+            session_id="gt-overcount-multi-1156a",
+            name="Resumed Multi",
+            model="gpt-4",
+            start_time=datetime(2025, 8, 1, 12, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=True,
+            last_resume_time=datetime.now(tz=UTC),
+            model_calls=10,
+            user_messages=6,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=200,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=5, cost=10),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        completed = SessionSummary(
+            session_id="gt-overcount-multi-1156b",
+            name="Completed Multi",
+            model="gpt-4",
+            start_time=datetime(2025, 8, 1, 10, 0, tzinfo=UTC),
+            is_active=False,
+            has_shutdown_metrics=True,
+            model_calls=8,
+            user_messages=4,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    requests=RequestMetrics(count=8, cost=16),
+                    usage=TokenUsage(outputTokens=400),
+                ),
+            },
+        )
+        output = _capture_cost_view([resumed, completed])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+
+        # Grand Total: resumed shows 5 (10-5) + completed shows 8 = 13
+        grand_row = [ln for ln in lines if "Grand Total" in ln]
+        assert grand_row, "Expected a Grand Total row"
+        grand_cols = [col.strip() for col in grand_row[0].split("│")]
+        assert grand_cols[5] == "13"
 
 
 # ---------------------------------------------------------------------------
