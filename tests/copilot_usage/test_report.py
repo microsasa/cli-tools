@@ -939,6 +939,33 @@ class TestRenderAggregateStatsDirect:
         output = _capture_console(_render_aggregate_stats, summary)
         assert "1m" in output
 
+    def test_pure_active_session_output_tokens_not_double_counted(self) -> None:
+        """Pure-active session: Aggregate Stats shows model_metrics tokens, not 2× that value."""
+        summary = SessionSummary(
+            session_id="pure-active-agg",
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=4,
+            user_messages=3,
+            active_model_calls=4,
+            active_user_messages=3,
+            active_output_tokens=800,
+            model_metrics={
+                "gpt-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=800),
+                )
+            },
+        )
+
+        output = _capture_console(_render_aggregate_stats, summary)
+
+        # Should show 800, NOT 1600 (double-count)
+        assert "800" in output, "Expected 800 output tokens in Aggregate Stats"
+        assert "1600" not in output, "Double-counted token value must not appear"
+        assert (
+            "1.6K" not in output
+        ), "Double-counted token value must not appear as formatted K value"
+
 
 # ---------------------------------------------------------------------------
 # format_tokens tests
