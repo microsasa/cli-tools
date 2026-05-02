@@ -854,6 +854,7 @@ def _first_pass(events: list[SessionEvent]) -> _FirstPassResult:
             total_turn_starts += 1
             if _shutdowns:
                 _ps_turn_starts += 1
+                _ps_resumed = True
 
         elif etype == EventType.ASSISTANT_MESSAGE:
             if (tokens := _extract_output_tokens(ev)) is not None:
