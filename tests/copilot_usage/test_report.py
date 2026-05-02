@@ -61,6 +61,7 @@ from copilot_usage.report import (
     _format_session_running_time,
     _render_model_table,
     _render_session_table,
+    _UNKNOWN_MODEL_LABEL,
     render_cost_view,
     render_full_summary,
     render_live_sessions,
@@ -6405,3 +6406,126 @@ class TestRenderCostViewNoRedundantTotalOutputTokens:
             "total_output_tokens should not be called for resumed sessions "
             "with model_metrics"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1152 — unknown-model active sessions must appear in model breakdown
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSummaryUnknownModelTokens:
+    """Fix #1152: pure-active sessions with model=None and active_output_tokens
+    must surface an ``(unknown)`` row in the model breakdown table so that the
+    totals panel and model table agree."""
+
+    @staticmethod
+    def _unknown_model_session() -> SessionSummary:
+        """Mirror the exact state produced by ``_build_active_summary``
+        when model detection fails entirely."""
+        return SessionSummary(
+            session_id="no-model-active-unk",
+            model=None,
+            is_active=True,
+            model_calls=3,
+            active_model_calls=3,
+            active_output_tokens=250,
+            model_metrics={},
+        )
+
+    def test_totals_panel_shows_output_tokens(self) -> None:
+        """Totals panel must include the 250 active output tokens."""
+        session = self._unknown_model_session()
+        output = _capture_summary([session])
+        expected = format_tokens(250)
+        assert expected in output, (
+            f"Expected totals panel to contain '{expected}', got:\n{output}"
+        )
+
+    def test_model_breakdown_shows_unknown_row(self) -> None:
+        """Model breakdown table must contain an '(unknown)' row with 250 tokens."""
+        session = self._unknown_model_session()
+        output = _capture_summary([session])
+        assert _UNKNOWN_MODEL_LABEL in output, (
+            f"Expected model breakdown to contain '{_UNKNOWN_MODEL_LABEL}', "
+            f"got:\n{output}"
+        )
+        expected = format_tokens(250)
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        lines = clean.splitlines()
+        unknown_row = next(
+            (line for line in lines if _UNKNOWN_MODEL_LABEL in line), None
+        )
+        assert unknown_row is not None, (
+            f"No row containing '{_UNKNOWN_MODEL_LABEL}' found"
+        )
+        assert expected in unknown_row, (
+            f"Expected '{expected}' in unknown row, got: {unknown_row}"
+        )
+
+    def test_known_model_session_no_unknown_row(self) -> None:
+        """A completed session with a known model must NOT get an (unknown) row."""
+        session = _make_summary_session()
+        output = _capture_summary([session])
+        assert _UNKNOWN_MODEL_LABEL not in output, (
+            f"Known-model session should not produce '{_UNKNOWN_MODEL_LABEL}' row"
+        )
+        assert "claude-opus-4.6-1m" in output
+
+    def test_aggregate_model_metrics_unknown_bucket(self) -> None:
+        """_aggregate_model_metrics must create an (unknown) entry for
+        sessions with empty model_metrics, no shutdown, and active tokens."""
+        session = self._unknown_model_session()
+        merged = _aggregate_model_metrics([session])
+        assert _UNKNOWN_MODEL_LABEL in merged
+        assert merged[_UNKNOWN_MODEL_LABEL].usage.outputTokens == 250
+
+    def test_aggregate_model_metrics_accumulates_unknown(self) -> None:
+        """Multiple unknown-model sessions accumulate into one (unknown) bucket."""
+        s1 = SessionSummary(
+            session_id="unk-1",
+            model=None,
+            is_active=True,
+            model_calls=1,
+            active_model_calls=1,
+            active_output_tokens=100,
+            model_metrics={},
+        )
+        s2 = SessionSummary(
+            session_id="unk-2",
+            model=None,
+            is_active=True,
+            model_calls=2,
+            active_model_calls=2,
+            active_output_tokens=150,
+            model_metrics={},
+        )
+        merged = _aggregate_model_metrics([s1, s2])
+        assert _UNKNOWN_MODEL_LABEL in merged
+        assert merged[_UNKNOWN_MODEL_LABEL].usage.outputTokens == 250
+
+    def test_aggregate_skips_zero_active_tokens(self) -> None:
+        """Sessions with empty model_metrics but zero active tokens must NOT
+        produce an (unknown) row."""
+        session = SessionSummary(
+            session_id="unk-zero",
+            model=None,
+            is_active=True,
+            model_metrics={},
+            active_output_tokens=0,
+        )
+        merged = _aggregate_model_metrics([session])
+        assert _UNKNOWN_MODEL_LABEL not in merged
+
+    def test_aggregate_skips_session_with_shutdown_metrics(self) -> None:
+        """Sessions with has_shutdown_metrics=True are NOT eligible for
+        the (unknown) bucket even if model_metrics is empty."""
+        session = SessionSummary(
+            session_id="unk-shutdown",
+            model=None,
+            is_active=False,
+            has_shutdown_metrics=True,
+            model_metrics={},
+            active_output_tokens=100,
+        )
+        merged = _aggregate_model_metrics([session])
+        assert _UNKNOWN_MODEL_LABEL not in merged

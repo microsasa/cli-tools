@@ -482,9 +482,16 @@ def total_output_tokens(session: SessionSummary) -> int:
     When ``model_metrics`` is empty the baseline is zero, so the active
     tokens are the only source and are included unconditionally.
 
-    Pure-active sessions (no shutdown data) already mirror
-    ``active_output_tokens`` inside ``model_metrics``, so adding them again
+    Pure-active sessions (no shutdown data) where model detection succeeded
+    mirror ``active_output_tokens`` inside ``model_metrics``, so
+    ``not model_metrics`` is ``False`` and the function returns only the
+    baseline (the mirrored value) — adding ``active_output_tokens`` again
     would double-count.
+
+    When model detection fails (``model`` is ``None``), however,
+    ``model_metrics`` is ``{}`` and ``not model_metrics`` is ``True``, so
+    the function returns ``baseline + active_output_tokens = 0 + active``.
+    Neither path double-counts.
     """
     baseline = shutdown_output_tokens(session)
     if (

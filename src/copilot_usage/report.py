@@ -26,6 +26,7 @@ from copilot_usage._formatting import (
 from copilot_usage.models import (
     ModelMetrics,
     SessionSummary,
+    TokenUsage,
     add_to_model_metrics,
     copy_model_metrics,
     ensure_aware,
@@ -257,6 +258,9 @@ def _filter_sessions(
     return filtered
 
 
+_UNKNOWN_MODEL_LABEL: Final[str] = "(unknown)"
+
+
 def _aggregate_model_metrics(
     sessions: list[SessionSummary],
 ) -> dict[str, ModelMetrics]:
@@ -264,6 +268,11 @@ def _aggregate_model_metrics(
 
     Accumulates in-place so each unique model name is copied at most once,
     reducing copy overhead from O(n × m) to O(m).
+
+    Sessions with empty ``model_metrics``, no shutdown metrics, and positive
+    ``active_output_tokens`` contribute their tokens under an ``"(unknown)"``
+    synthetic key so the model breakdown table accounts for all tokens visible
+    in the totals panel.
     """
     result: dict[str, ModelMetrics] = {}
     for s in sessions:
@@ -272,6 +281,20 @@ def _aggregate_model_metrics(
                 add_to_model_metrics(result[model_name], mm)
             else:
                 result[model_name] = copy_model_metrics(mm)
+
+        # Surface unattributed active tokens that would otherwise be invisible.
+        if (
+            not s.model_metrics
+            and not s.has_shutdown_metrics
+            and s.active_output_tokens > 0
+        ):
+            unknown_mm = ModelMetrics(
+                usage=TokenUsage(outputTokens=s.active_output_tokens),
+            )
+            if _UNKNOWN_MODEL_LABEL in result:
+                add_to_model_metrics(result[_UNKNOWN_MODEL_LABEL], unknown_mm)
+            else:
+                result[_UNKNOWN_MODEL_LABEL] = unknown_mm
     return result
 
 
