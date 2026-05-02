@@ -86,13 +86,47 @@ RAW_USER_MESSAGE = json.loads(
 # ---------------------------------------------------------------------------
 
 
-def test_event_type_values() -> None:
-    assert EventType.SESSION_START == "session.start"
-    assert EventType.SESSION_SHUTDOWN == "session.shutdown"
-    assert EventType.ASSISTANT_MESSAGE == "assistant.message"
-    assert EventType.TOOL_EXECUTION_COMPLETE == "tool.execution_complete"
-    assert EventType.USER_MESSAGE == "user.message"
-    assert EventType.ABORT == "abort"
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        (EventType.SESSION_START, "session.start"),
+        (EventType.SESSION_SHUTDOWN, "session.shutdown"),
+        (EventType.SESSION_RESUME, "session.resume"),
+        (EventType.SESSION_ERROR, "session.error"),
+        (EventType.SESSION_PLAN_CHANGED, "session.plan_changed"),
+        (EventType.SESSION_WORKSPACE_FILE_CHANGED, "session.workspace_file_changed"),
+        (EventType.ASSISTANT_MESSAGE, "assistant.message"),
+        (EventType.ASSISTANT_TURN_START, "assistant.turn_start"),
+        (EventType.ASSISTANT_TURN_END, "assistant.turn_end"),
+        (EventType.TOOL_EXECUTION_START, "tool.execution_start"),
+        (EventType.TOOL_EXECUTION_COMPLETE, "tool.execution_complete"),
+        (EventType.USER_MESSAGE, "user.message"),
+        (EventType.ABORT, "abort"),
+    ],
+)
+def test_event_type_string_values(member: EventType, expected: str) -> None:
+    """Every EventType member must equal its documented wire-format string."""
+    assert member == expected
+
+
+def test_event_type_all_members_covered() -> None:
+    """Parametrized test above must cover every member (fails if a new one is added without updating)."""
+    documented = {
+        "session.start",
+        "session.shutdown",
+        "session.resume",
+        "session.error",
+        "session.plan_changed",
+        "session.workspace_file_changed",
+        "assistant.message",
+        "assistant.turn_start",
+        "assistant.turn_end",
+        "tool.execution_start",
+        "tool.execution_complete",
+        "user.message",
+        "abort",
+    }
+    assert {str(m) for m in EventType} == documented
 
 
 # ---------------------------------------------------------------------------
