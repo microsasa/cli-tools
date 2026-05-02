@@ -850,6 +850,37 @@ class TestRenderSessionDetailActivePeriod:
         output = _strip_ansi(buf.getvalue())
         assert "Active Period" in output
 
+    def test_pure_active_session_aggregate_stats_token_count(self) -> None:
+        """render_session_detail Aggregate Stats panel shows correct (non-doubled) tokens."""
+        summary = SessionSummary(
+            session_id="pure-active-e2e-tok",
+            start_time=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=2,
+            user_messages=1,
+            active_model_calls=2,
+            active_user_messages=1,
+            active_output_tokens=500,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=500),
+                )
+            },
+        )
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 4, 1, 10, 5, 0, tzinfo=UTC),
+            data={"content": "test"},
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+
+        assert "Aggregate Stats" in output
+        assert "500" in output
+        assert "1000" not in output  # double-count must not appear
+
 
 # ---------------------------------------------------------------------------
 # _event_type_label — parametrized unit tests (issue #879)
