@@ -210,6 +210,39 @@ class TestParseVscodeLog:
         result = parse_vscode_log(log_path)
         assert result == []
 
+    def test_parse_vscode_log_includes_partial_tail_single_line(
+        self, tmp_path: Path
+    ) -> None:
+        """parse_vscode_log returns the request even when the only line lacks '\\n'."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0).rstrip("\n"))
+        result = parse_vscode_log(log_file)
+        assert len(result) == 1
+        assert result[0].request_id == "req00000"
+
+    def test_parse_vscode_log_includes_partial_tail_after_complete_lines(
+        self, tmp_path: Path
+    ) -> None:
+        """parse_vscode_log returns all lines including a final unterminated ccreq line."""
+        log_file = tmp_path / "chat.log"
+        content = (
+            _make_log_line(req_idx=0)
+            + _make_log_line(req_idx=1)
+            + _make_log_line(req_idx=2).rstrip("\n")  # partial tail
+        )
+        log_file.write_text(content)
+        result = parse_vscode_log(log_file)
+        assert len(result) == 3
+        assert result[-1].request_id == "req00002"
+
+    def test_private_default_excludes_partial_tail(self, tmp_path: Path) -> None:
+        """_parse_vscode_log_from_offset with default include_partial_tail=False
+        drops the unterminated final line — confirming the public API adds value."""
+        log_file = tmp_path / "chat.log"
+        log_file.write_text(_make_log_line(req_idx=0).rstrip("\n"))
+        reqs, _ = _parse_vscode_log_from_offset(log_file, 0)
+        assert len(reqs) == 0  # private default excludes partial tail
+
 
 # ---------------------------------------------------------------------------
 # build_vscode_summary
