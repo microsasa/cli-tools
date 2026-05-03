@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import re
 from pathlib import Path
 
@@ -305,3 +306,31 @@ def test_active_fields_document_pure_active_semantics() -> None:
             f"'resumed sessions only' — the field is also populated "
             f"for pure-active sessions"
         )
+
+
+def test_read_line_nonblocking_doc_snippet_matches_implementation() -> None:
+    """The _read_line_nonblocking and fallback-reader snippets in
+    implementation.md must reflect the EOFError handling present in the
+    actual implementation."""
+    from copilot_usage import cli as cli_mod
+
+    # _read_line_nonblocking must mention EOFError (source or docstring)
+    read_src = inspect.getsource(cli_mod._read_line_nonblocking)
+    assert "EOFError" in read_src, (
+        "_read_line_nonblocking source must reference EOFError — "
+        "the function raises EOFError when stdin is closed"
+    )
+
+    # _interactive_loop must have 'except EOFError' near the
+    # ValueError/OSError fallback logic
+    loop_src = inspect.getsource(cli_mod._interactive_loop)
+    assert "except EOFError" in loop_src, (
+        "_interactive_loop source must contain 'except EOFError' — "
+        "the loop breaks immediately when stdin is closed"
+    )
+
+    # implementation.md must also mention EOFError in both snippets
+    assert "EOFError" in _IMPL_MD, (
+        "implementation.md must mention EOFError in the interactive "
+        "loop architecture section"
+    )

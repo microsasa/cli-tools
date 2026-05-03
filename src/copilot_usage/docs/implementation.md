@@ -242,18 +242,24 @@ The loop uses `select.select()` on stdin (in `cli.py`) with a 500ms timeout:
 def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     ready, _, _ = select.select([sys.stdin], [], [], timeout)
     if ready:
-        return sys.stdin.readline().strip()
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError("stdin closed")
+        return line.strip()
     return None
 ```
 
-This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms timeout allows the main loop to check for file-change events between input polls.
+This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms timeout allows the main loop to check for file-change events between input polls. When `readline()` returns an empty string (stdin closed), `_read_line_nonblocking` raises `EOFError` to prevent an infinite polling loop.
 
 ### Fallback to threaded `_start_input_reader_thread()`
 
-If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, or stdin is detached during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
+If `_read_line_nonblocking` raises `EOFError` (stdin closed), the main loop breaks immediately — no fallback reader is started. If it raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, or stdin is detached during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
 
 ```python
+except EOFError:
+    break
 except (ValueError, OSError):
+    # stdin not selectable — start a threaded input() reader
     fallback_queue = _start_input_reader_thread()
     line = None
 ```
