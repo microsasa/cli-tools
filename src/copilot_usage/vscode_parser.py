@@ -131,8 +131,7 @@ class _VSCodeDiscoveryCache:
     *newest_child_path* / *newest_child_id* store the most recently
     modified immediate child at population time; re-stat'ing this single
     sentinel on a hit detects new window directories added inside an
-    existing session.  *child_ids* is recorded at population time and
-    retained for diagnostics but is not fully rescanned on cache hits.
+    existing session.
 
     **Limitation:** only changes under the cached newest session directory
     are detected by the sentinel.  If a different (older) session directory
@@ -144,7 +143,6 @@ class _VSCodeDiscoveryCache:
     """
 
     root_id: tuple[int, int]  # (st_mtime_ns, st_size) of the logs root
-    child_ids: _ChildIds
     newest_child_path: Path | None  # most-recently-modified session dir
     newest_child_id: tuple[int, int] | None  # its identity at population
     log_paths: tuple[Path, ...]
@@ -298,7 +296,6 @@ def _cached_discover_vscode_logs(base_path: Path | None) -> list[Path]:
         found = sorted(candidate.glob(_GLOB_PATTERN))
         _VSCODE_DISCOVERY_CACHE[candidate] = _VSCodeDiscoveryCache(
             root_id=root_id,
-            child_ids=child_ids,
             newest_child_path=newest_path,
             newest_child_id=newest_id,
             log_paths=tuple(found),
