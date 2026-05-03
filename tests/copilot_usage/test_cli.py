@@ -2168,10 +2168,32 @@ class TestReadLineNonblocking:
             r_file.close()
             os.close(w_fd)
 
+    def test_none_stdin_raises_value_error(self) -> None:
+        """When sys.stdin is None, _read_line_nonblocking raises ValueError."""
+        with patch("copilot_usage.cli.sys.stdin", None):
+            with pytest.raises(ValueError, match="stdin is None"):
+                _read_line_nonblocking(timeout=0.05)
+
 
 # ---------------------------------------------------------------------------
 # Gap 3 — _interactive_loop stdin fallback (issue #258)
 # ---------------------------------------------------------------------------
+
+
+def test_interactive_loop_none_stdin_falls_back_to_input(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When sys.stdin is None, _interactive_loop must fall back to threaded input()."""
+    _write_session(tmp_path, "fb_none0-0000-0000-0000-000000000000", name="NoneStdin")
+
+    import copilot_usage.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys, "stdin", None)
+    monkeypatch.setattr("builtins.input", lambda *_: "q")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--path", str(tmp_path)])
+    assert result.exit_code == 0
 
 
 def test_interactive_loop_select_value_error_falls_back_to_input(
