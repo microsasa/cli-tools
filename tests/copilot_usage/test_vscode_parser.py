@@ -2716,7 +2716,6 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
         _VSCODE_DISCOVERY_CACHE[tmp_path] = _VSCodeDiscoveryCache(
             root_id=(cached.root_id[0] + 1_000_000_000, cached.root_id[1]),
-            child_ids=cached.child_ids,
             newest_child_path=cached.newest_child_path,
             newest_child_id=cached.newest_child_id,
             log_paths=cached.log_paths,
@@ -2753,7 +2752,8 @@ class TestVscodeDiscoveryCacheSkipsGlob:
         cached = _VSCODE_DISCOVERY_CACHE[tmp_path]
         assert len(cached.log_paths) == 1
         assert cached.root_id == safe_file_identity(tmp_path)
-        assert cached.child_ids == _scan_child_ids(tmp_path)
+        assert cached.newest_child_path is not None
+        assert cached.newest_child_id is not None
 
     def test_new_window_under_existing_session_triggers_rediscovery(
         self, tmp_path: Path
@@ -3267,7 +3267,6 @@ class TestVSCodeDiscoveryCacheIsFrozen:
         """Assigning to a field after construction raises FrozenInstanceError."""
         cache = _VSCodeDiscoveryCache(
             root_id=(0, 0),
-            child_ids=frozenset(),
             newest_child_path=None,
             newest_child_id=None,
             log_paths=(),
