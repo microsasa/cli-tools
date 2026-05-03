@@ -6868,6 +6868,83 @@ class TestSessionCacheMtime:
             assert len(result2) == 2
             assert spy.call_count == 1
             spy.assert_called_once_with(p1, ANY)
+            # Verify incremental offset was used (not a full reparse from 0).
+            assert spy.call_args is not None
+            assert spy.call_args[0][1] > 0, (
+                "expected incremental parse from cached offset, got full reparse from 0"
+            )
+
+        # Verify merged summary reflects the appended event data.
+        # The session had a shutdown, so the appended assistant.message makes
+        # it a resumed session with active_output_tokens reflecting the 42
+        # tokens from the appended event.
+        sess_a = next(s for s in result2 if s.events_path == p1)
+        assert sess_a.is_active is True
+        assert sess_a.active_output_tokens == 42, (
+            "appended outputTokens must appear in the merged session summary"
+        )
+
+    def test_incremental_merge_preserves_cached_events(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: incremental parse must merge cached events with new ones.
+
+        If the merge line ``list(ev_cached.events) + new_events`` were
+        replaced with just ``new_events``, the summary would lose data from
+        the initial parse (e.g. the shutdown model_metrics).  This test
+        anchors that behaviour.
+        """
+        p1 = self._make_session(tmp_path, "sess-a", "a")
+
+        # First call — populates cache with the completed session.
+        result1 = get_all_sessions(tmp_path)
+        assert len(result1) == 1
+        sess_before = result1[0]
+        # The session has shutdown metrics from the fixture.
+        assert sess_before.has_shutdown_metrics is True
+        assert "gpt-5.1" in sess_before.model_metrics
+
+        # Append an extra event (bumps size → triggers incremental path).
+        extra = json.dumps(
+            {
+                "type": "assistant.message",
+                "data": {
+                    "messageId": "msg-extra",
+                    "content": "extra",
+                    "toolRequests": [],
+                    "interactionId": "int-1",
+                    "outputTokens": 77,
+                },
+                "id": "ev-extra",
+                "timestamp": "2026-03-07T10:02:00.000Z",
+            }
+        )
+        with p1.open("a", encoding="utf-8") as fh:
+            fh.write(extra + "\n")
+
+        stat = p1.stat()
+        os.utime(p1, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        # Second call — incremental parse merges cached + new events.
+        result2 = get_all_sessions(tmp_path)
+        assert len(result2) == 1
+        sess_after = result2[0]
+
+        # The merged summary must still contain shutdown model_metrics
+        # (from the cached prefix events) — proving the merge kept them.
+        assert sess_after.has_shutdown_metrics is True
+        assert "gpt-5.1" in sess_after.model_metrics
+        assert sess_after.model_metrics["gpt-5.1"].usage.outputTokens == 50
+
+        # The appended event's tokens appear as active_output_tokens.
+        assert sess_after.is_active is True
+        assert sess_after.active_output_tokens == 77, (
+            "incremental merge must include new event data"
+        )
+
+        # Total user messages includes the original user.message from the
+        # cached prefix — proves cached events were not dropped.
+        assert sess_after.user_messages >= 1
 
     def test_cache_returns_correct_summaries(self, tmp_path: Path) -> None:
         """Cached entries produce the same summaries as a fresh parse."""
