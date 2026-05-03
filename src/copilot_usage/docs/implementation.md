@@ -250,7 +250,7 @@ This is **Unix only** — `select()` on stdin doesn't work on Windows. The 500ms
 
 ### Fallback to threaded `_start_input_reader_thread()`
 
-If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, or stdin is detached during testing), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
+If `select()` raises `ValueError` or `OSError` (e.g. stdin is not selectable, notably on Windows, stdin is detached during testing, or `sys.stdin is None`), the loop starts a daemon thread via `_start_input_reader_thread()` (in `cli.py`) that feeds lines into a `queue.SimpleQueue`:
 
 ```python
 except (ValueError, OSError):

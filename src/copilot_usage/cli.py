@@ -215,13 +215,15 @@ def _read_line_nonblocking(timeout: float = 0.5) -> str | None:
     """Return a line from stdin if available within *timeout*, else ``None``.
 
     Uses ``select.select`` to poll stdin.  Raises :class:`ValueError` or
-    :class:`OSError` when stdin is not selectable (e.g. Windows, or a
-    detached stdin buffer in tests); callers should fall back to a threaded
-    reader in that case.
+    :class:`OSError` when stdin is not selectable (e.g. Windows, detached
+    stdin buffer in tests, or ``sys.stdin is None``); callers should fall
+    back to a threaded reader in that case.
 
     Raises :class:`EOFError` when stdin is closed (``readline()`` returns
     an empty string), preventing an infinite polling loop.
     """
+    if sys.stdin is None:
+        raise ValueError("stdin is None")
     ready, _, _ = select.select([sys.stdin], [], [], timeout)
     if ready:
         line = sys.stdin.readline()
