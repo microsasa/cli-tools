@@ -4064,3 +4064,21 @@ class TestSingleConsolePerCommand:
         assert "Copilot Usage" in output
         assert f"v{__version__}" in output
         assert "VS Code Copilot Chat" in output
+
+
+# ---------------------------------------------------------------------------
+# Regression: vscode imports are module-level (not deferred)
+# ---------------------------------------------------------------------------
+
+
+def test_vscode_imports_are_module_level() -> None:
+    """``get_vscode_summary`` and ``render_vscode_summary`` are module-level imports.
+
+    Regression test for GitHub issue #1183: the ``vscode`` command previously
+    used lazy in-function imports, which deferred ``ImportError`` discovery to
+    invocation time instead of failing fast at process start.
+    """
+    import copilot_usage.cli as cli_module
+
+    assert hasattr(cli_module, "get_vscode_summary")
+    assert hasattr(cli_module, "render_vscode_summary")
