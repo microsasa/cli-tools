@@ -999,6 +999,92 @@ class TestBuildEventDetailsSessionShutdown:
 
 
 # ---------------------------------------------------------------------------
+# _build_event_details — TOOL_EXECUTION_COMPLETE arm (issue #1180)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEventDetailsToolExecutionComplete:
+    """Tests for the TOOL_EXECUTION_COMPLETE branch of _build_event_details."""
+
+    def test_success_with_tool_name_and_model(self) -> None:
+        """success=True, tool_name='bash', model='claude-sonnet-4' → joined output."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc1",
+                "model": "claude-sonnet-4",
+                "interactionId": "int1",
+                "success": True,
+                "toolTelemetry": {"properties": {"tool_name": "bash"}},
+            },
+        )
+        assert _build_event_details(ev) == "bash  ✓  model=claude-sonnet-4"
+
+    def test_failure_indicator(self) -> None:
+        """success=False, no telemetry → output contains '✗' and no '✓'."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc2",
+                "success": False,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "✗" in detail
+        assert "✓" not in detail
+
+    def test_model_absent(self) -> None:
+        """model=None → output does NOT contain 'model='."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc3",
+                "model": None,
+                "success": True,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "model=" not in detail
+        assert "✓" in detail
+
+    def test_model_empty_string(self) -> None:
+        """model='' (empty string) → output does NOT contain 'model='."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc3b",
+                "model": "",
+                "success": True,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert "model=" not in detail
+        assert "✓" in detail
+
+    def test_tool_name_absent_no_telemetry(self) -> None:
+        """toolTelemetry=None → detail starts with '✓' (or '✗'), no leading '  '."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={
+                "toolCallId": "tc4",
+                "success": True,
+                "toolTelemetry": None,
+            },
+        )
+        detail = _build_event_details(ev)
+        assert detail.startswith("✓")
+        assert not detail.startswith("  ")
+
+    def test_malformed_data_returns_empty(self) -> None:
+        """Invalid data triggers ValidationError → returns ''."""
+        ev = SessionEvent(
+            type=EventType.TOOL_EXECUTION_COMPLETE,
+            data={"toolTelemetry": "not_a_dict"},
+        )
+        assert _build_event_details(ev) == ""
+
+
+# ---------------------------------------------------------------------------
 # _render_shutdown_cycles — None timestamp path (issue #1058)
 # ---------------------------------------------------------------------------
 
