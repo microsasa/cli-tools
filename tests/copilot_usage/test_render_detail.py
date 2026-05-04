@@ -234,6 +234,46 @@ class TestRenderSessionDetailBothTimestampsNone:
 
 
 # ---------------------------------------------------------------------------
+# session_start fallback scans all events for first non-None timestamp (#1182)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderSessionDetailFirstNoneTimestampFallback:
+    """When start_time is None and events[0].timestamp is None, the renderer
+    must scan forward to the first event with a non-None timestamp rather
+    than falling back to datetime.now(tz=UTC), which would clamp every
+    relative-time column to +0:00.
+    """
+
+    def test_relative_times_correct_when_first_event_has_no_timestamp(self) -> None:
+        """events[1] anchors at +0:00, events[2] shows +5:00."""
+        t = datetime(2026, 3, 15, 12, 0, 0, tzinfo=UTC)
+        ev0 = SessionEvent(
+            type=EventType.SESSION_START,
+            timestamp=None,
+            data={},
+        )
+        ev1 = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=t,
+            data={"content": "first"},
+        )
+        ev2 = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=t + timedelta(minutes=5),
+            data={"content": "second"},
+        )
+        summary = SessionSummary(session_id="null-head-test", start_time=None)
+
+        buf, console = _buf_console()
+        render_session_detail([ev0, ev1, ev2], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+
+        assert "+5:00" in output
+        assert "+0:00" in output
+
+
+# ---------------------------------------------------------------------------
 # Gap — render_session_detail start_time fallback from events (#954)
 # ---------------------------------------------------------------------------
 
