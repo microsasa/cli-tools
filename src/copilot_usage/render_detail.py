@@ -387,10 +387,9 @@ def render_session_detail(
     session_start = (
         ensure_aware(summary.start_time)
         if summary.start_time is not None
-        else (
-            ensure_aware(events[0].timestamp)
-            if events and events[0].timestamp is not None
-            else datetime.now(tz=UTC)
+        else next(
+            (ensure_aware(ev.timestamp) for ev in events if ev.timestamp is not None),
+            datetime.now(tz=UTC),
         )
     )
     _render_recent_events(events, session_start, target_console=out)
