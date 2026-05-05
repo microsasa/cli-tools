@@ -494,6 +494,27 @@ class TestRenderLiveSessions:
         output = _capture_output([session])
         assert "~0" in output
 
+    def test_est_cost_ultra_premium_model(self) -> None:
+        """Live session with claude-opus-4.6-1m (6× multiplier) shows correct estimate."""
+        now = datetime.now(tz=UTC)
+        session = SessionSummary(
+            session_id="live-ultraprem-1234",
+            name="Ultra Premium",
+            model="claude-opus-4.6-1m",
+            is_active=True,
+            start_time=now - timedelta(minutes=10),
+            user_messages=5,
+            model_calls=5,
+            model_metrics={
+                "claude-opus-4.6-1m": ModelMetrics(
+                    usage=TokenUsage(outputTokens=2000),
+                )
+            },
+        )
+        output = _capture_output([session])
+        assert "~30" in output  # 5 calls × 6.0 = ~30
+        assert "~15" not in output  # must not be capped at 3×
+
 
 # ---------------------------------------------------------------------------
 # Helpers for session detail tests
@@ -2804,6 +2825,12 @@ class TestEstimatePremiumCost:
         """
         result = _estimate_premium_cost("Claude-Opus-4.6", 10)
         assert result == "~30"
+
+    def test_ultra_premium_tier_model_uses_6x_multiplier(self) -> None:
+        """claude-opus-4.6-1m has a 6× multiplier — must not be capped at 3×."""
+        assert _estimate_premium_cost("claude-opus-4.6-1m", 5) == "~30"  # round(5 * 6.0)
+        assert _estimate_premium_cost("claude-opus-4.6-1m", 1) == "~6"  # round(1 * 6.0)
+        assert _estimate_premium_cost("claude-opus-4.6-1m", 0) == "~0"  # round(0 * 6.0)
 
 
 class TestRenderFullSummaryHelperReuse:
