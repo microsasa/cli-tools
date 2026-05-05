@@ -2742,6 +2742,74 @@ class TestRenderCostViewPureActiveNoShutdownRow:
         assert cols[3] == "—", f"Requests column should be '—', got '{cols[3]}'"
         assert cols[4] == "—", f"Premium Cost column should be '—', got '{cols[4]}'"
 
+    def test_cost_view_multi_model_pure_active(self) -> None:
+        """Pure-active session with two models shows '—' for both model rows
+        and grand total includes output tokens from both models."""
+        session = SessionSummary(
+            session_id="multi-pure-active-01",
+            name="MultiPureActive",
+            model="gpt-4o-mini",
+            start_time=datetime(2025, 6, 1, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=6,
+            active_model_calls=6,
+            active_output_tokens=800,
+            model_metrics={
+                "gpt-4o-mini": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=500),
+                ),
+                "claude-haiku-4.5": ModelMetrics(
+                    requests=RequestMetrics(count=0, cost=0),
+                    usage=TokenUsage(outputTokens=300),
+                ),
+            },
+        )
+        output = _capture_cost_view([session])
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+        # Both model rows must appear
+        assert "gpt-4o-mini" in output
+        assert "claude-haiku-4.5" in output
+
+        # Both Requests/Premium Cost cells must show '—'
+        lines = [
+            ln
+            for ln in clean.splitlines()
+            if "│" in ln and "Grand Total" not in ln
+        ]
+        model_rows = [
+            ln
+            for ln in lines
+            if "gpt-4o-mini" in ln or "claude-haiku-4.5" in ln
+        ]
+        assert len(model_rows) == 2
+        for row in model_rows:
+            cols = [c.strip() for c in row.split("│")]
+            req_col = cols[3]
+            prem_col = cols[4]
+            assert req_col in ("—", ""), (
+                f"Requests should be '—' or blank, got {req_col!r}"
+            )
+            assert prem_col in ("—", ""), (
+                f"Premium should be '—' or blank, got {prem_col!r}"
+            )
+
+        # Grand total must NOT include the synthetic zero requests/premium
+        grand_row = next(
+            ln for ln in clean.splitlines() if "Grand Total" in ln
+        )
+        grand_cols = [c.strip() for c in grand_row.split("│")]
+        assert grand_cols[3] == "0", "Grand Requests should be 0 for pure-active"
+        assert grand_cols[4] == "0", "Grand Premium should be 0 for pure-active"
+
+        # Grand total output tokens = 500 + 300 = 800 → "800"
+        assert "800" in grand_row
+
+        # No '↳ Since last shutdown' row
+        assert "Since last shutdown" not in output
+
     def test_resumed_session_shows_shutdown_row(self) -> None:
         """Resumed session (has_shutdown_metrics=True) must render
         the '↳ Since last shutdown' sub-row."""
@@ -3959,6 +4027,24 @@ class TestComputeSessionTotals:
         totals = _compute_session_totals([session], shutdown_only=True)
         assert totals.model_calls == 80
         assert totals.user_messages == 30
+
+    def test_shutdown_only_no_effect_for_pure_active_session(self) -> None:
+        """shutdown_only=True does NOT subtract active counters for pure-active
+        sessions (has_shutdown_metrics=False) — the subtraction branch requires
+        has_shutdown_metrics=True."""
+        session = SessionSummary(
+            session_id="pure-active-so",
+            model_calls=8,
+            user_messages=4,
+            active_model_calls=5,
+            active_user_messages=2,
+            is_active=True,
+            has_shutdown_metrics=False,
+            last_resume_time=None,
+        )
+        totals = _compute_session_totals([session], shutdown_only=True)
+        assert totals.model_calls == 8  # full total, not 8-5=3
+        assert totals.user_messages == 4  # full total, not 4-2=2
 
     def test_frozen_dataclass(self) -> None:
         """_SessionTotals instances are immutable."""
