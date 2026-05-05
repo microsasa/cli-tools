@@ -2270,6 +2270,84 @@ def test_interactive_loop_fallback_unexpected_exception_exits_cleanly(
 
 
 # ---------------------------------------------------------------------------
+# Issue #1188 — fallback-queue path: navigation commands
+# ---------------------------------------------------------------------------
+
+
+class TestInteractiveLoopFallbackNavigation:
+    """Navigation commands delivered via the builtins.input fallback are
+    handled identically to the normal _read_line_nonblocking path."""
+
+    def _patch_fallback(
+        self,
+        monkeypatch: Any,
+        cli_mod: Any,
+        commands: list[str],
+    ) -> None:
+        """Make _read_line_nonblocking always raise ValueError; feed commands."""
+        monkeypatch.setattr(
+            cli_mod,
+            "_read_line_nonblocking",
+            lambda timeout=0.5: (_ for _ in ()).throw(
+                ValueError("stdin not selectable")
+            ),
+        )
+        call_count = iter(commands)
+
+        def _fake_input(*_a: str, **_kw: str) -> str:
+            return next(call_count)
+
+        monkeypatch.setattr("builtins.input", _fake_input)
+
+    def test_cost_command_via_fallback(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """'c' via fallback shows cost view and any subsequent input returns home."""
+        _write_session(tmp_path, "fb-cmd-c0-0000-0000-0000-0000", name="CostFb")
+        import copilot_usage.cli as cli_mod
+
+        self._patch_fallback(monkeypatch, cli_mod, ["c", "q"])
+        result = CliRunner().invoke(main, ["--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Cost Breakdown" in result.output
+
+    def test_refresh_command_via_fallback(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """'r' via fallback refreshes home view without crashing."""
+        _write_session(tmp_path, "fb-cmd-r0-0000-0000-0000-0000", name="RefFb")
+        import copilot_usage.cli as cli_mod
+
+        self._patch_fallback(monkeypatch, cli_mod, ["r", "q"])
+        result = CliRunner().invoke(main, ["--path", str(tmp_path)])
+        assert result.exit_code == 0
+
+    def test_session_number_via_fallback(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """A valid session number via fallback opens detail view without crash."""
+        _write_session(tmp_path, "fb-cmd-10-0000-0000-0000-0000", name="DetailFb")
+        import copilot_usage.cli as cli_mod
+
+        self._patch_fallback(monkeypatch, cli_mod, ["1", "q"])
+        result = CliRunner().invoke(main, ["--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Session Detail" in result.output
+
+    def test_unknown_command_via_fallback(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """An unrecognised command via fallback prints 'Unknown command'."""
+        _write_session(tmp_path, "fb-cmd-u0-0000-0000-0000-0000", name="UnkFb")
+        import copilot_usage.cli as cli_mod
+
+        self._patch_fallback(monkeypatch, cli_mod, ["foo", "q"])
+        result = CliRunner().invoke(main, ["--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Unknown command" in result.output
+
+
+# ---------------------------------------------------------------------------
 # Issue #1012 — auto-refresh must fire in OSError fallback mode
 # ---------------------------------------------------------------------------
 
