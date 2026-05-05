@@ -798,10 +798,11 @@ class TestRenderActivePeriod:
     """Direct unit tests for _render_active_period covering active / inactive."""
 
     def test_active_session_renders_panel(self) -> None:
-        """Active session must render an 'Active Period' panel with stats."""
+        """Active resumed session must render an 'Active Period' panel with stats."""
         summary = SessionSummary(
             session_id="active-test",
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=3,
             user_messages=2,
             active_model_calls=3,
@@ -822,18 +823,35 @@ class TestRenderActivePeriod:
         _render_active_period(summary, target_console=console)
         assert buf.getvalue() == ""
 
+    def test_pure_active_session_suppressed(self) -> None:
+        """Pure-active session (no shutdown) → panel suppressed (issue #1190)."""
+        summary = SessionSummary(
+            session_id="pure-active",
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=4,
+            user_messages=2,
+            active_model_calls=4,
+            active_user_messages=2,
+            active_output_tokens=800,
+        )
+        buf, console = _buf_console()
+        _render_active_period(summary, target_console=console)
+        assert buf.getvalue() == ""
+
 
 class TestRenderSessionDetailActivePeriod:
-    """Integration test: render_session_detail with is_active=True must
-    render the Active Period panel (issue #879)."""
+    """Integration test: render_session_detail with is_active=True and
+    has_shutdown_metrics=True must render the Active Period panel (issue #879)."""
 
     def test_active_session_shows_active_period_panel(self) -> None:
-        """render_session_detail with is_active=True must include the
-        Active Period panel in its output."""
+        """render_session_detail with is_active=True and has_shutdown_metrics=True
+        must include the Active Period panel in its output."""
         summary = SessionSummary(
             session_id="active-e2e",
             start_time=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
             is_active=True,
+            has_shutdown_metrics=True,
             model_calls=5,
             user_messages=3,
             active_model_calls=5,
@@ -849,6 +867,30 @@ class TestRenderSessionDetailActivePeriod:
         render_session_detail([ev], summary, target_console=console)
         output = _strip_ansi(buf.getvalue())
         assert "Active Period" in output
+
+    def test_pure_active_session_omits_active_period_panel(self) -> None:
+        """render_session_detail on a pure-active session must NOT include
+        'since last shutdown' in its output (issue #1190)."""
+        summary = SessionSummary(
+            session_id="pure-active-e2e",
+            start_time=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            model_calls=5,
+            user_messages=3,
+            active_model_calls=5,
+            active_user_messages=3,
+            active_output_tokens=2000,
+        )
+        ev = SessionEvent(
+            type=EventType.USER_MESSAGE,
+            timestamp=datetime(2026, 4, 1, 10, 5, 0, tzinfo=UTC),
+            data={"content": "hello"},
+        )
+        buf, console = _buf_console()
+        render_session_detail([ev], summary, target_console=console)
+        output = _strip_ansi(buf.getvalue())
+        assert "since last shutdown" not in output
 
 
 # ---------------------------------------------------------------------------
