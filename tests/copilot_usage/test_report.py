@@ -1223,6 +1223,57 @@ class TestRenderSummary:
         # Body should still render the session
         assert "abc123deadbe" in output  # session_display_name truncates to 12 chars
 
+    def test_pure_active_session_shows_dash_for_requests_and_cost(self) -> None:
+        """render_summary shows '—' (not '0') for Requests/Premium Cost on pure-active sessions.
+
+        A pure-active session has is_active=True, has_shutdown_metrics=False,
+        a known model, and non-zero output tokens.  The Requests and Premium
+        Cost values are unknown (not zero) until a shutdown event arrives.
+        """
+        session = SessionSummary(
+            session_id="active-001",
+            start_time=datetime(2026, 4, 10, 12, 0, tzinfo=UTC),
+            name="Active Session",
+            model="claude-sonnet-4",
+            is_active=True,
+            has_shutdown_metrics=False,
+            user_messages=3,
+            model_calls=2,
+            active_user_messages=3,
+            active_model_calls=2,
+            active_output_tokens=2500,
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    usage=TokenUsage(outputTokens=2500),
+                )
+            },
+        )
+        output = _capture_summary([session])
+
+        # The model name and output tokens are present.
+        assert "claude-sonnet-4" in output
+        assert "2.5K" in output
+
+        # Requests and Premium Cost must show "—" not "0".
+        # Split output into lines and find the model table row.
+        lines = output.splitlines()
+        model_row = next(
+            (line for line in lines if "claude-sonnet-4" in line), None
+        )
+        assert model_row is not None
+        # The row should contain "—" for the request/cost columns.
+        assert "—" in model_row
+        # The row must NOT show "0" as the requests count (which would be
+        # between the model name and the "—" or the output tokens).
+        # Split by the model name and check the numeric columns that follow.
+        after_model = model_row.split("claude-sonnet-4", 1)[1]
+        # Strip leading/trailing and split by whitespace for column values
+        cols = after_model.split()
+        # cols should be: [Requests, PremiumCost, InputTokens, OutputTokens,
+        #                   CacheRead, CacheWrite]
+        assert cols[0] == "—", f"Requests column should be '—', got '{cols[0]}'"
+        assert cols[1] == "—", f"Premium Cost column should be '—', got '{cols[1]}'"
+
     def test_render_summary_rejects_positional_since(self) -> None:
         """render_summary requires since/until as keyword-only arguments."""
         sessions: list[SessionSummary] = []

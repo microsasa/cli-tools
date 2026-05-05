@@ -351,10 +351,19 @@ def _render_model_table(
     *,
     title: str = "Per-Model Breakdown",
 ) -> None:
-    """Render the per-model breakdown table."""
+    """Render the per-model breakdown table.
+
+    When all *sessions* are pure-active (no shutdown metrics and still
+    running), Requests and Premium Cost columns display ``"—"`` instead of
+    misleading zeros — mirroring the behaviour of :func:`render_cost_view`.
+    """
     merged = _aggregate_model_metrics(sessions)
     if not merged:
         return
+
+    # Request/cost data is only meaningful when at least one session has
+    # completed shutdown metrics or is no longer active.
+    show_requests = any(s.has_shutdown_metrics or not s.is_active for s in sessions)
 
     table = Table(title=title, border_style="cyan")
     table.add_column("Model", style="bold")
@@ -367,10 +376,12 @@ def _render_model_table(
 
     for model_name in sorted(merged):
         mm = merged[model_name]
+        requests_display = str(mm.requests.count) if show_requests else "—"
+        premium_display = str(mm.requests.cost) if show_requests else "—"
         table.add_row(
             model_name,
-            str(mm.requests.count),
-            str(mm.requests.cost),
+            requests_display,
+            premium_display,
             format_tokens(mm.usage.inputTokens),
             format_tokens(mm.usage.outputTokens),
             format_tokens(mm.usage.cacheReadTokens),
