@@ -261,10 +261,14 @@ def _render_active_period(
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Show model calls / messages / tokens since last shutdown (if active)."""
+    """Show model calls / messages / tokens since last shutdown (if active).
+
+    Suppressed for pure-active sessions (no shutdown ever occurred) to avoid
+    a misleading title and duplicate stats already shown in Aggregate Stats.
+    """
     out = target_console or Console()
 
-    if not summary.is_active:
+    if not summary.is_active or not summary.has_shutdown_metrics:
         return
 
     content = (
