@@ -6754,6 +6754,43 @@ class TestFirstPassToolModel:
         assert summary.model == "claude-sonnet-4"
         assert summary.is_active is True
 
+    def test_active_summary_uses_tool_model_directly_without_fp_model(
+        self, tmp_path: Path
+    ) -> None:
+        """Active session model comes from tool_model alone (fp.model is None).
+
+        Confirms that _build_active_summary does not depend on fp.model
+        (which is only set during SESSION_SHUTDOWN processing).  A session
+        with TOOL_EXECUTION_COMPLETE but no SESSION_SHUTDOWN must resolve
+        the model from fp.tool_model.
+        """
+        tool = json.dumps(
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-1",
+                    "model": "gpt-5.1",
+                    "success": True,
+                },
+                "id": "ev-t1",
+                "timestamp": "2026-03-07T10:01:00.000Z",
+            }
+        )
+        p = tmp_path / "s" / "events.jsonl"
+        _write_events(p, _START_EVENT, _USER_MSG, _ASSISTANT_MSG, tool)
+        events = parse_events(p)
+
+        # Confirm the invariant: fp.model is None when no shutdown exists
+        fp = _first_pass(events)
+        assert fp.model is None
+        assert fp.all_shutdowns == ()
+        assert fp.tool_model == "gpt-5.1"
+
+        # The summary model must match tool_model
+        summary = build_session_summary(events, config_path=tmp_path / "no-config.json")
+        assert summary.model == "gpt-5.1"
+        assert summary.is_active is True
+
     def test_malformed_tool_event_skipped(self, tmp_path: Path) -> None:
         """A malformed tool.execution_complete is skipped; next valid one wins."""
         bad_tool = json.dumps(
