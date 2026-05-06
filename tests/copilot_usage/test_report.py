@@ -1229,6 +1229,40 @@ class TestRenderSummary:
         with pytest.raises(TypeError):
             render_summary(sessions, datetime.now(tz=UTC))  # type: ignore[misc]
 
+    def test_pure_active_empty_metrics_shows_active_output_tokens(self) -> None:
+        """Pure-active session with empty model_metrics shows active_output_tokens in Totals."""
+        session = SessionSummary(
+            session_id="pure-actv-abc",
+            name="Pure Active",
+            is_active=True,
+            model_metrics={},
+            active_output_tokens=1_500,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_calls=3,
+            user_messages=2,
+        )
+        output = _capture_summary([session])
+        assert "1.5K" in output  # format_tokens(1500) == "1.5K"
+
+    def test_pure_active_empty_metrics_no_model_table(self) -> None:
+        """Pure-active session with empty model_metrics must not render per-model table."""
+        session = SessionSummary(
+            session_id="pure-actv-abc",
+            name="Pure Active",
+            is_active=True,
+            model_metrics={},
+            active_output_tokens=1_500,
+            active_model_calls=3,
+            active_user_messages=2,
+            model_calls=3,
+            user_messages=2,
+        )
+        output = _capture_summary([session])
+        # _aggregate_model_metrics returns {} for empty model_metrics,
+        # so no per-model breakdown table should appear.
+        assert "claude-" not in output
+
 
 # ---------------------------------------------------------------------------
 # Coverage gap tests — report.py
