@@ -14,6 +14,7 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from watchdog.observers import Observer
 
 from copilot_usage import __version__
 from copilot_usage.models import SessionSummary
@@ -132,8 +133,6 @@ def start_observer(
     treat a ``None`` return as "auto-refresh unavailable" and continue
     without it.
     """
-    from watchdog.observers import Observer
-
     handler: FileChangeEventHandler = FileChangeHandler(change_event)
     observer = Observer()
     observer.schedule(handler, str(session_path), recursive=True)  # pyright: ignore[reportArgumentType]
