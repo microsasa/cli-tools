@@ -3478,10 +3478,10 @@ class TestFilterSessionsNaiveStartTime:
 
 
 class TestRenderModelTable:
-    """Verify _render_model_table renders the Cache Write column."""
+    """Verify _render_model_table renders both Cache Read and Cache Write columns."""
 
     def test_cache_write_column_present(self) -> None:
-        """Cache Write header and formatted value appear in output."""
+        """Cache Write and Cache Read headers and formatted values appear in output."""
         session = SessionSummary(
             session_id="cw-test",
             model_metrics={
@@ -3502,6 +3502,8 @@ class TestRenderModelTable:
         output = buf.getvalue()
         assert "Cache Write" in output
         assert "5.0K" in output
+        assert "Cache Read" in output
+        assert "8.0K" in output
 
     def test_cache_write_zero_renders(self) -> None:
         """Zero cacheWriteTokens still produces a Cache Write column."""
@@ -3524,6 +3526,52 @@ class TestRenderModelTable:
         _render_model_table(console, [session])
         output = buf.getvalue()
         assert "Cache Write" in output
+
+    def test_cache_read_column_present(self) -> None:
+        """Cache Read header and formatted value appear in output."""
+        session = SessionSummary(
+            session_id="cr-test",
+            model_metrics={
+                "claude-sonnet-4": ModelMetrics(
+                    requests=RequestMetrics(count=3, cost=2),
+                    usage=TokenUsage(
+                        inputTokens=6_000,
+                        outputTokens=1_500,
+                        cacheReadTokens=8_000,
+                        cacheWriteTokens=1_000,
+                    ),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        assert "Cache Read" in output
+        assert "8.0K" in output
+
+    def test_cache_read_zero_renders(self) -> None:
+        """Zero cacheReadTokens still produces a Cache Read column header."""
+        session = SessionSummary(
+            session_id="cr-zero",
+            model_metrics={
+                "gpt-5.1": ModelMetrics(
+                    requests=RequestMetrics(count=1, cost=1),
+                    usage=TokenUsage(
+                        inputTokens=100,
+                        outputTokens=50,
+                        cacheReadTokens=0,
+                        cacheWriteTokens=0,
+                    ),
+                )
+            },
+        )
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        _render_model_table(console, [session])
+        output = buf.getvalue()
+        assert "Cache Read" in output
+        assert "0" in output
 
 
 # ---------------------------------------------------------------------------
