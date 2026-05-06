@@ -976,7 +976,7 @@ def _build_active_summary(
     events_path: Path | None = None,
 ) -> SessionSummary:
     """Build a :class:`SessionSummary` for a session with no shutdown data."""
-    model = fp.model or fp.tool_model
+    model = fp.tool_model
 
     # Fall back to ~/.copilot/config.json for active sessions
     if model is None:
@@ -1055,7 +1055,7 @@ def _build_session_summary_with_meta(
             used_config_fallback=False,
         )
 
-    used_config = fp.model is None and fp.tool_model is None
+    used_config = fp.tool_model is None
     return _BuildMeta(
         _build_active_summary(fp, name, config_path, events_path=events_path),
         used_config_fallback=used_config,
