@@ -6879,7 +6879,7 @@ class TestSessionCacheMtime:
 
         # Ensure that all fields of the summaries are identical between
         # the initial parse and the cached results.
-        assert [s.model_dump() for s in first] == [s.model_dump() for s in second]
+        assert first == second
 
     def test_cache_refreshes_session_name_on_plan_rename(self, tmp_path: Path) -> None:
         """Cached summaries pick up plan.md edits without re-parsing events."""

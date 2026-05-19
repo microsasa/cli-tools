@@ -1,5 +1,6 @@
 """Tests for copilot_usage.models — Pydantic v2 event parsing."""
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -979,7 +980,7 @@ class TestSessionSummaryCallCountInvariant:
 
     def test_rejects_active_calls_exceeding_total(self) -> None:
         """SessionSummary must reject active_model_calls > model_calls."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError, match="active_model_calls"):
             SessionSummary(
                 session_id="inv",
                 model_calls=3,
@@ -1016,7 +1017,7 @@ class TestSessionSummaryUserMessageInvariant:
 
     def test_rejects_active_messages_exceeding_total(self) -> None:
         """SessionSummary must reject active_user_messages > user_messages."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError, match="active_user_messages"):
             SessionSummary(
                 session_id="inv",
                 user_messages=3,
@@ -1046,6 +1047,33 @@ class TestSessionSummaryUserMessageInvariant:
         s = SessionSummary(session_id="zero")
         assert s.user_messages == 0
         assert s.active_user_messages == 0
+
+
+class TestSessionSummaryFrozen:
+    """Tests that SessionSummary is a frozen dataclass."""
+
+    def test_field_assignment_raises(self) -> None:
+        """Assigning a field on a constructed SessionSummary raises FrozenInstanceError."""
+        s = SessionSummary(session_id="frozen")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            s.name = "mutated"  # type: ignore[misc]
+
+    def test_post_init_rejects_active_calls_exceeding_total(self) -> None:
+        """__post_init__ raises ValueError when active_model_calls > model_calls."""
+        with pytest.raises(ValueError, match="active_model_calls"):
+            SessionSummary(
+                session_id="inv",
+                model_calls=2,
+                active_model_calls=3,
+            )
+
+    def test_dataclass_replace_produces_new_instance(self) -> None:
+        """dataclasses.replace creates a new instance with updated fields."""
+        original = SessionSummary(session_id="orig", name="old")
+        updated = dataclasses.replace(original, name="new")
+        assert updated.name == "new"
+        assert original.name == "old"
+        assert updated is not original
 
 
 # ---------------------------------------------------------------------------

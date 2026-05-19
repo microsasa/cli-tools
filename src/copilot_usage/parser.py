@@ -1172,7 +1172,7 @@ def get_all_sessions(base_path: Path | None = None) -> list[SessionSummary]:
         if cached is not None and cached.file_id == file_id and not config_is_stale:
             if plan_id != cached.plan_id:
                 fresh_name = _extract_session_name(events_path.parent)
-                summary = cached.summary.model_copy(update={"name": fresh_name})
+                summary = dataclasses.replace(cached.summary, name=fresh_name)
                 deferred_sessions.append(
                     (
                         events_path,
