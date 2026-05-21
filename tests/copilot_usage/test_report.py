@@ -3656,9 +3656,9 @@ class TestHistoricalSectionResumedFreeSessions:
             },
         )
         output = _capture_full_summary([session])
-        # Active section table title should indicate it is scoped to the period
-        # since the last shutdown, which distinguishes it from the historical table.
-        assert "Since Last Shutdown" in output
+        # Active section table title should NOT contain the misleading
+        # "Since Last Shutdown" qualifier (issue #1072).
+        assert "Since Last Shutdown" not in output
         # The same resumed session should appear in both the historical and active sections.
         assert output.count("ResumedFreeSession") == 2
         # And the generic empty-active message should not be shown.
@@ -3682,6 +3682,27 @@ class TestHistoricalSectionResumedFreeSessions:
         )
         output = _capture_full_summary([session])
         assert "No historical shutdown data" in output
+
+    def test_pure_active_section_title_no_since_last_shutdown(self) -> None:
+        """Issue #1072 — pure-active session (has_shutdown_metrics=False)
+        must NOT show 'Since Last Shutdown' in the active-section title."""
+        session = SessionSummary(
+            session_id="pure-active-title-1234",
+            name="PureActiveTitle",
+            model="gpt-5-mini",
+            start_time=datetime(2025, 1, 15, 10, 0, tzinfo=UTC),
+            is_active=True,
+            has_shutdown_metrics=False,
+            total_premium_requests=0,
+            user_messages=2,
+            model_calls=1,
+            active_model_calls=1,
+            active_output_tokens=100,
+        )
+        output = _capture_full_summary([session])
+        assert "Since Last Shutdown" not in output
+        # The generic title should still be present.
+        assert "Active Sessions" in output
 
 
 class TestBuildEventDetailsCatchAll:
