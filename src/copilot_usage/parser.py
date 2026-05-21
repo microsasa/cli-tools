@@ -920,7 +920,9 @@ def _build_completed_summary(
             all_files_modified.update(sd.codeChanges.filesModified)
         for model_name, mm in sd.modelMetrics.items():
             if model_name in merged_metrics:
-                add_to_model_metrics(merged_metrics[model_name], mm)
+                merged_metrics[model_name] = add_to_model_metrics(
+                    merged_metrics[model_name], mm
+                )
             else:
                 merged_metrics[model_name] = copy_model_metrics(mm)
         shutdown_cycles.append(

@@ -6,6 +6,7 @@ flexible fallback for unknown ones.
 """
 
 import builtins
+import dataclasses
 import math
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -103,7 +104,8 @@ class SessionContext(BaseModel):
     cwd: str | None = None
 
 
-class TokenUsage(BaseModel):
+@dataclasses.dataclass(frozen=True, slots=True)
+class TokenUsage:
     """Token usage breakdown for a single model."""
 
     inputTokens: int = 0
@@ -112,46 +114,48 @@ class TokenUsage(BaseModel):
     cacheWriteTokens: int = 0
 
 
-class RequestMetrics(BaseModel):
+@dataclasses.dataclass(frozen=True, slots=True)
+class RequestMetrics:
     """Request count and cost for a single model."""
 
     count: int = 0
     cost: int = 0
 
 
-class ModelMetrics(BaseModel):
+@dataclasses.dataclass(frozen=True, slots=True)
+class ModelMetrics:
     """Combined request + usage metrics for one model."""
 
-    requests: RequestMetrics = Field(default_factory=RequestMetrics)
-    usage: TokenUsage = Field(default_factory=TokenUsage)
+    requests: RequestMetrics = dataclasses.field(default_factory=RequestMetrics)
+    usage: TokenUsage = dataclasses.field(default_factory=TokenUsage)
 
 
-def add_to_model_metrics(target: ModelMetrics, source: ModelMetrics) -> None:
-    """Add *source* fields into *target* in-place."""
-    target.requests.count += source.requests.count
-    target.requests.cost += source.requests.cost
-    target.usage.inputTokens += source.usage.inputTokens
-    target.usage.outputTokens += source.usage.outputTokens
-    target.usage.cacheReadTokens += source.usage.cacheReadTokens
-    target.usage.cacheWriteTokens += source.usage.cacheWriteTokens
+def add_to_model_metrics(target: ModelMetrics, source: ModelMetrics) -> ModelMetrics:
+    """Return a new ``ModelMetrics`` with *source* fields added to *target*."""
+    return ModelMetrics(
+        requests=RequestMetrics(
+            count=target.requests.count + source.requests.count,
+            cost=target.requests.cost + source.requests.cost,
+        ),
+        usage=TokenUsage(
+            inputTokens=target.usage.inputTokens + source.usage.inputTokens,
+            outputTokens=target.usage.outputTokens + source.usage.outputTokens,
+            cacheReadTokens=target.usage.cacheReadTokens + source.usage.cacheReadTokens,
+            cacheWriteTokens=target.usage.cacheWriteTokens
+            + source.usage.cacheWriteTokens,
+        ),
+    )
 
 
 def copy_model_metrics(mm: ModelMetrics) -> ModelMetrics:
-    """Create an independent copy of *mm* via explicit construction.
+    """Create a shallow copy of *mm*.
 
-    Builds new ``ModelMetrics``/``RequestMetrics``/``TokenUsage`` instances
-    instead of using Pydantic's ``model_copy(deep=True)`` which delegates to
-    ``copy.deepcopy`` and is significantly slower for simple int fields.
+    With frozen dataclasses every instance is already immutable, so a
+    shallow ``dataclasses.replace`` (no field overrides) is sufficient —
+    the nested ``RequestMetrics`` and ``TokenUsage`` references are shared,
+    which is safe because they are themselves frozen.
     """
-    return ModelMetrics(
-        requests=RequestMetrics(count=mm.requests.count, cost=mm.requests.cost),
-        usage=TokenUsage(
-            inputTokens=mm.usage.inputTokens,
-            outputTokens=mm.usage.outputTokens,
-            cacheReadTokens=mm.usage.cacheReadTokens,
-            cacheWriteTokens=mm.usage.cacheWriteTokens,
-        ),
-    )
+    return dataclasses.replace(mm)
 
 
 def merge_model_metrics(
@@ -162,7 +166,7 @@ def merge_model_metrics(
     result = {name: copy_model_metrics(mm) for name, mm in base.items()}
     for name, mm in additional.items():
         if name in result:
-            add_to_model_metrics(result[name], mm)
+            result[name] = add_to_model_metrics(result[name], mm)
         else:
             result[name] = copy_model_metrics(mm)
     return result

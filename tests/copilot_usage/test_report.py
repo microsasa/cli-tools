@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import dataclasses
 import json
 import re
 import warnings
@@ -5720,7 +5721,7 @@ class TestMergeAndAggregateConsistency:
             m = merged[model_name]
             a = aggregated[model_name]
             # Compare full ModelMetrics contents to catch any future field additions
-            assert m.model_dump() == a.model_dump()
+            assert dataclasses.asdict(m) == dataclasses.asdict(a)
 
 
 # ---------------------------------------------------------------------------
