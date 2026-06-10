@@ -261,10 +261,16 @@ def _render_active_period(
     *,
     target_console: Console | None = None,
 ) -> None:
-    """Show model calls / messages / tokens since last shutdown (if active)."""
+    """Show model calls / messages / tokens since last shutdown (if active).
+
+    The panel is only rendered when *summary* has prior shutdown data
+    (``has_shutdown_metrics=True``).  For pure-active sessions the
+    numbers would duplicate the aggregate stats panel, and the "since
+    last shutdown" label would be factually wrong.
+    """
     out = target_console or Console()
 
-    if not summary.is_active:
+    if not summary.is_active or not summary.has_shutdown_metrics:
         return
 
     content = (
